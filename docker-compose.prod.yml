@@ -1,0 +1,54 @@
+services:
+  api:
+    build: ./backend
+    env_file: .env
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    volumes: []
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 1G}
+    networks: [app]
+  worker:
+    build: ./backend
+    env_file: .env
+    command: celery -A app.worker.celery_app worker --loglevel=INFO --concurrency=2
+    volumes: [documents:/data/documents]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 1G}
+    networks: [app]
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 512M}
+    networks: [edge, app]
+  db:
+    restart: unless-stopped
+    networks: [app, data]
+  redis:
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    networks: [app, data]
+
+networks:
+  edge: {}
+  app: {internal: true}
+  data: {internal: true}

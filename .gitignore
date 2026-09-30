@@ -1,0 +1,22 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+.pytest_cache/
+.venv/
+node_modules/
+.next/
+playwright-report/
+test-results/
+dist/
+uploads/
+*.pyc
+
+# Local test documents
+documento_*.pdf
+documento_*.txt
+
+# Generated artifacts
+*.log
+*.egg-info/
+*.tsbuildinfo
