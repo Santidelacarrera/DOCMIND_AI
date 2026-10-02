@@ -172,3 +172,11 @@ def test_register_creates_no_orphan_user(client) -> None:
     assert response.status_code == 422
     with SessionLocal() as db:
         assert db.scalars(select(User)).all() == []
+
+
+def test_document_list_reports_latest_job_status(client, register) -> None:
+    acct, _, body = _upload(register)
+    url = f"/api/v1/documents?organization_id={acct.org}"
+    assert client.get(url, headers=acct.headers).json()[0]["status"] == "QUEUED"
+    _run_job(body["job_id"])
+    assert client.get(url, headers=acct.headers).json()[0]["status"] == "COMPLETED"

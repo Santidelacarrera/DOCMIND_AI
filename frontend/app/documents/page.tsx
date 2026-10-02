@@ -8,7 +8,7 @@ import { API_URL, api, csrfHeaders } from "../../lib/api";
 
 type Organization = { id: string; name: string };
 type Project = { id: string; name: string };
-type Document = { id: string; filename: string };
+type Document = { id: string; filename: string; status: string | null };
 
 const UPLOAD_ERRORS: Record<string, string> = {
   FILE_TOO_LARGE: "The file is too large.",
@@ -139,6 +139,7 @@ export default function Documents() {
           {documents.map((document) => (
             <li key={document.id}>
               <Link href={`/documents/${document.id}`}>{document.filename}</Link>
+              <small> {document.status ?? ""}</small>
               <button type="button" className="linkbutton" onClick={() => remove(document.id)} aria-label={`Delete ${document.filename}`}>Delete</button>
             </li>
           ))}

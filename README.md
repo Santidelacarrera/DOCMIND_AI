@@ -47,6 +47,7 @@ DocMind AI turns PDFs (invoices, contracts, forms…) into reviewable, exportabl
 - **Text first, OCR when needed** — `pypdf` extraction with Tesseract fallback for scans.
 - **Pluggable LLMs** — deterministic mock for development/tests, OpenAI Responses API with structured output for real extraction.
 - **Your schema, your fields** — define JSON Schemas per organization or project; the newest active one drives extraction.
+- **Visible progress** — live processing status, failure reporting and one-click retry.
 - **Human in the loop** — edit values in the browser, side by side with the original PDF; edits are flagged as manually verified.
 - **Exports** — JSON, CSV and XLSX, hardened against spreadsheet formula injection.
 

@@ -18,6 +18,8 @@ export default function DocumentDetail() {
   const [message, setMessage] = useState("Loading document…");
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [failed, setFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -41,10 +43,25 @@ export default function DocumentDetail() {
         setFields((await data.json()).fields);
         setMessage("");
       } else {
-        setMessage(
-          "Extraction is not ready yet. Keep this page open and retry after processing completes.",
+        const status = await api(
+          `/api/v1/documents/${params.id}/status?organization_id=${list[0].id}`,
         );
-        timer = setTimeout(load, 1000);
+        if (cancelled) return;
+        if (!status.ok) {
+          setMessage("Document not found or not available.");
+          return;
+        }
+        const info = (await status.json()) as { status: string };
+        if (info?.status === "FAILED") {
+          setFailed(true);
+          setMessage("Processing failed. You can retry it.");
+          return;
+        }
+        setFailed(false);
+        setMessage(
+          `Processing (${info.status.toLowerCase().replace("_", " ")})… this page updates automatically.`,
+        );
+        timer = setTimeout(load, 1500);
       }
     };
     void load();
@@ -52,7 +69,7 @@ export default function DocumentDetail() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [params.id, router]);
+  }, [params.id, router, reloadKey]);
   async function save(field: Field) {
     if (!org) return;
     let value: unknown = draft;
@@ -72,6 +89,19 @@ export default function DocumentDetail() {
       setEditing(null);
     } else setMessage("Could not save the field.");
   }
+  async function retry() {
+    if (!org) return;
+    const res = await api(
+      `/api/v1/documents/${params.id}/process?organization_id=${org}`,
+      { method: "POST" },
+    );
+    if (res.ok) {
+      setFailed(false);
+      setMessage("Processing restarted…");
+      setReloadKey((n) => n + 1);
+    } else setMessage("Could not restart processing.");
+  }
+
   function download(format: string) {
     if (org)
       window.open(
@@ -113,7 +143,8 @@ export default function DocumentDetail() {
               <button onClick={() => download("xlsx")}>XLSX</button>
             </span>
           </div>
-          {message && <p>{message}</p>}
+          {message && <p role="status">{message}</p>}
+          {failed && <button onClick={retry}>Retry processing</button>}
           {fields.map((field) => (
             <article className="field" key={field.id}>
               <label>{field.name}</label>
