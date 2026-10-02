@@ -26,6 +26,15 @@ services:
       resources:
         limits: {cpus: "1.0", memory: 1G}
     networks: [app]
+  scheduler:
+    volumes: []
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 256M}
+    networks: [app]
   web:
     build: ./frontend
     restart: unless-stopped

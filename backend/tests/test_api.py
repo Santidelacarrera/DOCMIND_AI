@@ -196,7 +196,8 @@ def test_api_key_lifecycle_and_scope_enforcement(client: TestClient, register) -
     acct = register()
     project = acct.project()
     created = client.post(
-        f"/api/v1/api-keys?organization_id={acct.org}&name=ci&scopes=documents:read",
+        f"/api/v1/api-keys?organization_id={acct.org}&name=ci",
+        json=["documents:read"],
         headers=acct.headers,
     )
     assert created.status_code == 201
@@ -219,9 +220,10 @@ def test_api_key_lifecycle_and_scope_enforcement(client: TestClient, register) -
         ("post", "/api/v1/organizations?name=x"),
         ("get", f"/api/v1/api-keys?organization_id={acct.org}"),
         ("get", f"/api/v1/audit-logs?organization_id={acct.org}"),
-        ("post", f"/api/v1/api-keys?organization_id={acct.org}&name=n&scopes=documents:read"),
+        ("post", f"/api/v1/api-keys?organization_id={acct.org}&name=n"),
     ):
-        assert getattr(client, method)(path, headers=key).status_code == 403, path
+        extra = {"json": ["documents:read"]} if "api-keys" in path and method == "post" else {}
+        assert getattr(client, method)(path, headers=key, **extra).status_code == 403, path
     assert (
         client.delete(
             f"/api/v1/api-keys/{key_id}?organization_id={acct.org}", headers=acct.headers
@@ -234,12 +236,14 @@ def test_api_key_lifecycle_and_scope_enforcement(client: TestClient, register) -
 def test_api_key_cannot_cross_tenants_and_rejects_unknown_scopes(client: TestClient, register) -> None:
     a, b = register("a"), register("b")
     bad = client.post(
-        f"/api/v1/api-keys?organization_id={a.org}&name=n&scopes=admin:everything",
+        f"/api/v1/api-keys?organization_id={a.org}&name=n",
+        json=["admin:everything"],
         headers=a.headers,
     )
     assert bad.status_code == 422
     secret = client.post(
-        f"/api/v1/api-keys?organization_id={a.org}&name=n&scopes=documents:read",
+        f"/api/v1/api-keys?organization_id={a.org}&name=n",
+        json=["documents:read"],
         headers=a.headers,
     ).json()["key"]
     other = client.get(

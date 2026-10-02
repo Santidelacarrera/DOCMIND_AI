@@ -55,6 +55,11 @@ celery_app.conf.update(
     task_soft_time_limit=max(1, settings().processing_timeout_seconds - 15),
 )
 
+# `celery -A app.worker.celery_app beat` (the `scheduler` compose service) runs this.
+celery_app.conf.beat_schedule = {
+    "recover-stuck-jobs": {"task": "app.worker.recover_stuck_jobs", "schedule": 60.0},
+}
+
 MAX_RETRIES = 3
 
 

@@ -26,10 +26,12 @@ services:
     build: ./backend
     env_file: .env
     environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # Development convenience: apply migrations before serving. Production runs them as a separate release step.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     ports: ["8000:8000"]
     volumes: [./backend:/app, documents:/data/documents]
     depends_on:
@@ -40,6 +42,7 @@ services:
     build: ./backend
     env_file: .env
     environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
@@ -49,10 +52,23 @@ services:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
       storage-init: {condition: service_completed_successfully}
-  web:
-    build: ./frontend
+  scheduler:
+    build: ./backend
+    env_file: .env
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    # Runs periodic maintenance (stuck-job recovery). Exactly one instance must run.
+    command: celery -A app.worker.celery_app beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
+    volumes: [./backend:/app]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+  web:
+    build:
+      context: ./frontend
+      # NEXT_PUBLIC_* values are inlined into the browser bundle at build time.
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports: ["3000:3000"]
     depends_on: [api]
 volumes:

@@ -407,7 +407,7 @@ def schemas(
 def create_api_key(
     organization_id: str,
     name: str = Name,
-    scopes: list[str] = Query(min_length=1, max_length=len(ALLOWED_SCOPES)),
+    scopes: list[str] = Body(min_length=1, max_length=len(ALLOWED_SCOPES)),
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
