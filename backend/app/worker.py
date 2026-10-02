@@ -1,5 +1,5 @@
-from datetime import timedelta
 import ssl
+from datetime import timedelta
 
 from celery import Celery
 from sqlalchemy import delete, select
@@ -22,20 +22,28 @@ from app.ocr import TesseractProvider, needs_ocr
 from app.processing import extract_pdf_text, llm
 from app.storage import storage
 
-
 celery_app = Celery(
     "docmind",
     broker=settings().effective_redis_url,
     backend=settings().effective_redis_url,
 )
 
+# TLS options only apply to rediss:// URLs; plain redis:// (local development) would
+# otherwise fail the handshake.
+_tls = (
+    {
+        "broker_use_ssl": {"ssl_cert_reqs": ssl.CERT_REQUIRED},
+        "redis_backend_use_ssl": {"ssl_cert_reqs": ssl.CERT_REQUIRED},
+    }
+    if settings().effective_redis_url.startswith("rediss://")
+    else {}
+)
+
 celery_app.conf.update(
-    broker_use_ssl={
-        "ssl_cert_reqs": ssl.CERT_REQUIRED,
-    },
-    redis_backend_use_ssl={
-        "ssl_cert_reqs": ssl.CERT_REQUIRED,
-    },
+    **_tls,
+    task_serializer="json",
+    accept_content=["json"],
+    result_expires=3600,
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,

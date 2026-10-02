@@ -1,5 +1,6 @@
-﻿from functools import lru_cache
+from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,7 +40,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 60
     cookie_secure: bool | None = None
-    cookie_samesite: str = "lax"
+    cookie_samesite: Literal["lax", "strict", "none"] = "lax"
     csrf_enabled: bool = True
     antivirus_provider: str = "disabled"
     clamav_host: str = "localhost"
@@ -65,6 +66,8 @@ class Settings(BaseSettings):
                 raise ValueError("Missing required production settings: " + ", ".join(missing))
             if len(self.jwt_secret or "") < 32:
                 raise ValueError("JWT_SECRET must be at least 32 characters in staging/production")
+            if self.cookie_samesite == "none" and self.cookie_secure is not True:
+                raise ValueError("COOKIE_SAMESITE=none requires COOKIE_SECURE=true")
             if self.cookie_secure is not True:
                 raise ValueError("COOKIE_SECURE=true is required in staging/production")
             origins = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

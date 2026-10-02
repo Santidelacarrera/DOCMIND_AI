@@ -1,6 +1,6 @@
 import json
 import threading
-from typing import Protocol
+from typing import Any, Protocol
 
 from pypdf import PdfReader
 
@@ -10,11 +10,11 @@ _llm_slots = threading.BoundedSemaphore(settings().openai_max_concurrency)
 
 
 class LLMProvider(Protocol):
-    def extract(self, text: str, schema: dict) -> dict: ...
+    def extract(self, text: str, schema: dict[str, Any]) -> dict[str, Any]: ...
 
 
 class MockLLMProvider:
-    def extract(self, text: str, schema: dict) -> dict:
+    def extract(self, text: str, schema: dict[str, Any]) -> dict[str, Any]:
         # This provider is selected only by LLM_PROVIDER=mock. Its deterministic
         # fixture lets local and browser integration tests exercise persistence
         # without invoking an external model.
@@ -29,7 +29,7 @@ class MockLLMProvider:
 
 
 class OpenAIProvider:
-    def extract(self, text: str, schema: dict) -> dict:
+    def extract(self, text: str, schema: dict[str, Any]) -> dict[str, Any]:
         from openai import OpenAI
 
         if not settings().openai_api_key:
