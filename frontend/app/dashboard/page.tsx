@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import Nav from "../../components/Nav";
 import { api } from "../../lib/api";
 type Org = { id: string; name: string; role: string };
 type Doc = {
@@ -41,11 +42,7 @@ export default function Dashboard() {
   }, [router]);
   return (
     <main>
-      <nav>
-        <strong>DocMind AI</strong>
-        <Link href="/documents">Documents</Link>
-        <Link href="/schemas">Schemas</Link>
-      </nav>
+      <Nav />
       <section className="dashboard">
         <div>
           <p className="eyebrow">WORKSPACE OVERVIEW</p>

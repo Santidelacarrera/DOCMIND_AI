@@ -2,7 +2,7 @@
 
 ## Required scheduling and monitoring
 
-Run `app.worker.recover_stuck_jobs` through Celery Beat (or the platform scheduler) at least every minute. Alert on API 5xx, worker availability, queue depth, retries, failed jobs, stuck-job recoveries, database/Redis connection errors, antivirus unavailability and LLM latency/errors. Export container logs to the platform's structured logging system; never include request bodies, documents, prompts, tokens, passwords, JWTs or API keys.
+The `scheduler` compose service runs Celery beat and triggers `app.worker.recover_stuck_jobs` every 60 seconds (run exactly one instance, or use the platform scheduler instead). Alert on API 5xx, worker availability, queue depth, retries, failed jobs, stuck-job recoveries, database/Redis connection errors, antivirus unavailability and LLM latency/errors. Export container logs to the platform's structured logging system; never include request bodies, documents, prompts, tokens, passwords, JWTs or API keys.
 
 ## Retention
 

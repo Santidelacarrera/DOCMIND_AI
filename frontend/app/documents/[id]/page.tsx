@@ -1,7 +1,7 @@
 "use client";
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import Nav from "../../../components/Nav";
 import { API_URL, api } from "../../../lib/api";
 type Field = {
   id: string;
@@ -77,14 +77,12 @@ export default function DocumentDetail() {
       window.open(
         `${API_URL}/api/v1/documents/${params.id}/export?organization_id=${org}&format=${format}`,
         "_blank",
+        "noopener,noreferrer",
       );
   }
   return (
     <main>
-      <nav>
-        <Link href="/dashboard">DocMind AI</Link>
-        <Link href="/documents">Documents</Link>
-      </nav>
+      <Nav current="documents" />
       <div className="detail">
         <section className="viewer">
           <div className="viewerbar">
@@ -100,7 +98,7 @@ export default function DocumentDetail() {
           {org ? (
             <iframe
               title="PDF document"
-              src={`${API_URL}/api/v1/documents/${params.id}/download?organization_id=${org}`}
+              src={`${API_URL}/api/v1/documents/${params.id}/download?organization_id=${org}&inline=true`}
             />
           ) : (
             <p>{message}</p>

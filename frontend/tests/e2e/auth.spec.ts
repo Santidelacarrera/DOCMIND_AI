@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+const API = process.env.E2E_API_URL ?? "http://localhost:8000";
+
 test("a registered user can sign in and reach the dashboard", async ({ page, request }) => {
   const email = `e2e-${Date.now()}@example.com`;
   const password = "correct-horse-battery-staple";
-  const registration = await request.post("http://localhost:8000/api/v1/auth/register", {
+  const registration = await request.post(`${API}/api/v1/auth/register`, {
     data: { email, password, organization_name: "Browser E2E" },
   });
   expect(registration.status()).toBe(201);

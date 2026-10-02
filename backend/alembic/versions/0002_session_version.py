@@ -4,8 +4,6 @@ Revision ID: 0002_session_version
 Revises: 0001_initial
 """
 
-from alembic import op
-import sqlalchemy as sa
 
 revision = "0002_session_version"
 down_revision = "0001_initial"

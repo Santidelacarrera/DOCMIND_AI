@@ -1,262 +1,294 @@
+<div align="center">
+
 # DocMind AI
 
+**Secure, multi-tenant document intelligence: upload PDFs, extract structured data with an LLM, review it, export it.**
+
+[![CI](https://github.com/Santidelacarrera/DOCMIND_AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Santidelacarrera/DOCMIND_AI/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Santidelacarrera/DOCMIND_AI/actions/workflows/codeql.yml/badge.svg)](https://github.com/Santidelacarrera/DOCMIND_AI/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)](https://nextjs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)](https://redis.io/)
-[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 
-DocMind AI is a multi-tenant document-processing application. It accepts PDF uploads, processes them asynchronously, extracts structured fields through a configurable LLM provider, supports review/editing, and exports results as JSON, CSV, or XLSX.
+[Quick start](#quick-start) · [Architecture](#architecture) · [Security](#security) · [API](#api) · [Configuration](#configuration) · [Testing](#testing) · [Deployment](#deployment) · [Roadmap](#roadmap)
 
-The repository includes a local Docker stack and a production-oriented Compose overlay. External infrastructure and credentials are intentionally not included.
+</div>
 
-## Overview
+---
 
-FastAPI is the authorization boundary for organizations, projects, documents, extraction data, and exports. PDFs are stored through a provider abstraction; a Celery worker then extracts text, optionally runs OCR, invokes the selected LLM provider, and persists results in PostgreSQL.
+## Table of contents
+
+1. [What it does](#what-it-does)
+2. [Quick start](#quick-start)
+3. [Architecture](#architecture)
+4. [Processing pipeline](#processing-pipeline)
+5. [Security](#security)
+6. [API](#api)
+7. [Configuration](#configuration)
+8. [Development](#development)
+9. [Testing](#testing)
+10. [Deployment](#deployment)
+11. [Operations](#operations)
+12. [Design decisions](#design-decisions)
+13. [Troubleshooting](#troubleshooting)
+14. [Roadmap](#roadmap)
+15. [Contributing and license](#contributing-and-license)
+
+## What it does
+
+DocMind AI turns PDFs (invoices, contracts, forms…) into reviewable, exportable data.
+
+- **Multi-tenant by construction** — organizations, roles (owner/admin/member/viewer), projects, scoped API keys, usage quotas and audit logs.
+- **Safe ingestion** — magic-byte, size, page-count and parse validation, optional ClamAV scanning, checksum de-duplication, opaque storage keys.
+- **Asynchronous pipeline** — Celery workers with idempotent jobs, retries, time limits and automatic stuck-job recovery.
+- **Text first, OCR when needed** — `pypdf` extraction with Tesseract fallback for scans.
+- **Pluggable LLMs** — deterministic mock for development/tests, OpenAI Responses API with structured output for real extraction.
+- **Your schema, your fields** — define JSON Schemas per organization or project; the newest active one drives extraction.
+- **Human in the loop** — edit values in the browser, side by side with the original PDF; edits are flagged as manually verified.
+- **Exports** — JSON, CSV and XLSX, hardened against spreadsheet formula injection.
+
+## Quick start
+
+Requirements: Docker Engine with Compose v2.
+
+```bash
+git clone https://github.com/Santidelacarrera/DOCMIND_AI.git
+cd DOCMIND_AI
+cp .env.example .env          # safe local defaults, mock LLM, local storage
+docker compose up --build     # applies migrations automatically
+```
+
+| Service | URL |
+|---|---|
+| Web app | <http://localhost:3000> |
+| API + interactive docs (development only) | <http://localhost:8000/docs> |
+| Liveness / readiness | <http://localhost:8000/health> · <http://localhost:8000/ready> |
+
+1. Open the web app, **create an account** (password ≥ 12 characters).
+2. In **Documents**, create a project and upload a PDF.
+3. The worker processes it; open the document to review, edit and export the result.
+
+> The default `.env.example` uses `LLM_PROVIDER=mock`, which returns a fixed fixture so the whole flow works offline. Set `LLM_PROVIDER=openai` and `OPENAI_API_KEY` for real extraction.
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    U[Browser user] --> W[Next.js web]
-    W --> A[FastAPI /api/v1]
+    U[Browser] --> W[Next.js web]
+    W -->|cookie + CSRF / Bearer| A[FastAPI /api/v1]
+    K[API client] -->|API key| A
     A --> P[(PostgreSQL)]
-    A --> S[StorageProvider\nLocal or S3-compatible]
-    A --> R[(Redis)]
+    A --> S[StorageProvider<br/>local or S3-compatible]
+    A --> R[(Redis<br/>rate limits + broker)]
+    A -.->|optional| V[ClamAV]
     R --> C[Celery worker]
+    B[Celery beat] --> R
     C --> S
-    C --> X[PDF text extraction]
-    X --> O{OCR needed?}
+    C --> X[pypdf text]
+    X --> O{needs OCR?}
     O -->|yes| T[Tesseract]
     O -->|no| L[LLM provider]
     T --> L
     L --> P
-    P --> W
 ```
 
-## Core capabilities
-
-- Organization-scoped users, projects, documents, schemas, API keys, usage, and audit logs.
-- Role-based membership and API-key scope checks.
-- PDF signature, size and page validation; checksum duplicate detection; quotas; opaque storage keys.
-- Asynchronous processing with idempotent jobs, bounded retries, task time limits, and a stuck-job recovery task.
-- PDF text extraction through `pypdf` and conditional OCR with Poppler/pdf2image and Tesseract.
-- Deterministic Mock LLM for local/testing and an optional OpenAI Responses API provider.
-- Extraction review/editing plus JSON, CSV, and XLSX export.
-- Playwright coverage for login, upload/processing, extraction editing/export, and tenant isolation.
-
-## Processing pipeline
-
-1. The API authenticates the caller, verifies organization/project access, validates the PDF, applies quota checks, and invokes the configured antivirus provider.
-2. It stores the object under a generated opaque key and creates the document, version, usage reservation, and queued job.
-3. Celery locks the job, reads storage, extracts text, and uses OCR when text density requires it.
-4. Page text, processing steps, LLM result, extraction fields, and usage records are persisted before the job is marked `COMPLETED`.
-
-The worker currently uses a generic structured-output schema. Schema creation/versioning endpoints exist, but selecting a tenant schema for a worker extraction is not currently wired into the processing path. There is no separate document segmentation or business-rule validation stage.
-
-## Technology stack
-
-| Area | Technologies |
+| Component | Responsibility |
 |---|---|
-| Frontend | Next.js 16, React 19, TypeScript, ESLint |
-| Backend | Python 3.12, FastAPI, Pydantic Settings, SQLAlchemy |
-| Database | PostgreSQL 17, Alembic, psycopg |
-| Background jobs | Celery 5, Redis 7 |
-| AI / LLM | Mock provider; optional OpenAI Responses API provider |
-| PDF / OCR | pypdf, pdf2image/Poppler, Tesseract, pytesseract |
-| Storage | Local volume provider; S3-compatible provider through boto3 |
-| Testing | pytest, Playwright, TypeScript typecheck, ESLint |
-| Infrastructure | Docker and Docker Compose |
-
-## Repository structure
+| **web** (`frontend/`) | Next.js 16 / React 19 UI: auth, projects, upload, review, schemas. Strict CSP. |
+| **api** (`backend/app/main.py`) | The *only* authorization boundary: authentication, tenancy, validation, quotas, exports. |
+| **worker** (`backend/app/worker.py`) | Idempotent document processing with row-level job locks, retries and timeouts. |
+| **scheduler** | Celery beat; runs `recover_stuck_jobs` every minute. Run exactly one. |
+| **PostgreSQL** | System of record, schema owned by Alembic. |
+| **Redis** | Celery broker/result backend and fixed-window rate limiter (fails closed). |
+| **Storage** | `StorageProvider` abstraction shared by API and worker. |
 
 ```text
 .
 ├── backend/
-│   ├── app/                 # FastAPI, models, worker and providers
-│   ├── alembic/             # Database migrations
-│   ├── tests/               # Health, settings and Docker integration tests
-│   ├── Dockerfile
-│   └── pyproject.toml
+│   ├── app/            # FastAPI app, models, security, worker, providers
+│   ├── alembic/        # database migrations
+│   └── tests/          # hermetic API + worker tests, opt-in Docker integration
 ├── frontend/
-│   ├── app/                 # Next.js pages
-│   ├── lib/                 # Browser API client
-│   ├── tests/e2e/           # Playwright tests
-│   ├── Dockerfile
-│   └── package.json
-├── docs/
-├── docker-compose.yml       # Development stack
-├── docker-compose.prod.yml  # Production-oriented overlay
-├── .env.example
-└── README.md
+│   ├── app/            # Next.js routes
+│   ├── components/     # shared UI
+│   ├── lib/            # browser API client (CSRF aware)
+│   └── tests/e2e/      # Playwright, against the real stack
+├── docs/               # API, architecture, security, operations, staging, ADRs
+├── docker-compose.yml          # development stack
+├── docker-compose.prod.yml     # hardened overlay
+└── .github/                    # CI, CodeQL, Dependabot, PR template
 ```
 
-## Requirements
+## Processing pipeline
 
-The Docker workflow requires Docker Engine and Docker Compose v2. Direct development additionally requires Python 3.12+, Node.js compatible with the checked-in frontend dependencies, PostgreSQL, Redis, Tesseract, and Poppler.
-
-## Configuration
-
-Copy `.env.example` to `.env` and populate it through a local secret mechanism. Do not commit `.env` files.
-
-```bash
-cp .env.example .env
-```
-
-| Group | Variables |
-|---|---|
-| Application | `ENVIRONMENT`, `MAX_UPLOAD_BYTES`, `MAX_PDF_PAGES`, `PROCESSING_TIMEOUT_SECONDS`, `STUCK_JOB_SECONDS` |
-| Database | `DATABASE_URL`; local Compose uses `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` |
-| Redis | `REDIS_URL` |
-| Storage | `STORAGE_PROVIDER`, `LOCAL_STORAGE_PATH`, `S3_BUCKET`, `S3_ENDPOINT_URL`, `S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN` |
-| LLM | `LLM_PROVIDER`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_TIMEOUT_SECONDS`, `OPENAI_MAX_RETRIES`, `OPENAI_MAX_*` |
-| Security | `JWT_SECRET`, `JWT_ALGORITHM`, `ACCESS_TOKEN_MINUTES`, `COOKIE_SECURE`, `COOKIE_SAMESITE`, `CSRF_ENABLED`, `RATE_LIMIT_*` |
-| Browser/API | `CORS_ORIGINS`, `NEXT_PUBLIC_API_URL` |
-| OCR / antivirus | `MAX_OCR_PAGES`, `OCR_TIMEOUT_SECONDS`, `ANTIVIRUS_PROVIDER`, `CLAMAV_HOST`, `CLAMAV_PORT` |
-
-`NEXT_PUBLIC_API_URL` is bundled into the browser application and must never contain a secret. The complete staging matrix is in [docs/STAGING.md](docs/STAGING.md).
-
-## Local development
-
-From the repository root:
-
-```bash
-docker compose up --build
-```
-
-| Service | Address |
-|---|---|
-| Web | http://localhost:3000 |
-| API / OpenAPI | http://localhost:8000/docs |
-| Health | http://localhost:8000/health |
-| Readiness | http://localhost:8000/ready |
-
-The development Compose file mounts `./backend` and runs Uvicorn with reload. It is not the production configuration.
-
-## Database and migrations
-
-Alembic owns the database schema. Apply and inspect migrations with:
-
-```bash
-docker compose exec api alembic upgrade head
-docker compose exec api alembic current
-```
-
-Migration sources are in `backend/alembic/versions/`.
-
-## Background workers
-
-The API queues work in Celery; Redis is the broker and result backend. The worker enables late acknowledgements, rejects lost-worker tasks, uses one-task prefetch, task time limits, and bounded retries for retryable I/O errors.
-
-`app.worker.recover_stuck_jobs` can mark work that exceeds the configured SLA as failed. It must be scheduled externally (for example by Celery Beat or the deployment platform); this repository does not configure a Beat service.
-
-## AI and LLM architecture
-
-`LLM_PROVIDER=mock` selects the deterministic Mock LLM used by local and browser integration flows and makes no external request.
-
-`LLM_PROVIDER=openai` selects the OpenAI provider and requires `OPENAI_API_KEY`. It has explicit timeout, SDK retry, bounded input/output, process-local concurrency, and structured JSON output. Document text is treated as untrusted data and is kept separate from extraction instructions.
-
-## Storage architecture
-
-`StorageProvider` is used by both API and worker:
-
-- `local` writes opaque keys under `LOCAL_STORAGE_PATH`; it is intended for local development.
-- `s3` uses boto3 against an S3-compatible endpoint, including Supabase Storage when configured with its S3-compatible endpoint and runtime credentials.
-
-The API attempts to delete a newly written object if its subsequent database transaction fails. Staging/production validation rejects local storage. API and worker must receive identical `STORAGE_PROVIDER`, `S3_*`, and `AWS_*` configuration; see [the split-configuration note](docs/STAGING.md#avoiding-split-configuration).
-
-## Authentication and authorization
-
-- Passwords use `pwdlib` with the recommended Argon2 configuration.
-- Access tokens are signed JWTs with expiration, token ID, and user session version.
-- Logout increments session version and invalidates earlier JWTs for that user.
-- Browser cookies are HttpOnly; secure cookies are required outside development. Cookie-authenticated writes use double-submit CSRF.
-- Organizations support owner, admin, member, and viewer roles.
-- API keys are issued once, stored as SHA-256 hashes, can be revoked/expired, and enforce organization/scope checks.
-- Organization IDs supplied by clients do not grant access without server-side membership validation.
-
-## API
-
-The API prefix is `/api/v1`; interactive OpenAPI documentation is at `/docs`.
-
-| Domain | Main routes |
-|---|---|
-| Health | `GET /health`, `GET /ready` |
-| Authentication | `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` |
-| Organizations/projects | `GET, POST /organizations`; `GET, POST /projects` |
-| Documents | `POST, GET /documents`; processing, status, download, extraction and export routes |
-| Extraction | `PATCH /extraction-fields/{id}` |
-| Schemas | `GET, POST /schemas` |
-| API keys | `GET, POST /api-keys`; `DELETE /api-keys/{id}` |
-| Operations | `GET /usage`, `GET /audit-logs` |
-
-Organization-scoped routes require `organization_id` and authenticated authorization. See [docs/API.md](docs/API.md) and OpenAPI for request shapes.
-
-## Testing
-
-Run backend commands from `backend/`:
-
-```bash
-python -m compileall -q app
-python -m pytest -q
-ruff check .
-```
-
-Docker integration tests are opt-in and need the local stack:
-
-```bash
-DOCMIND_INTEGRATION=1 python -m pytest -q tests/test_docker_integration.py
-```
-
-Run frontend commands from `frontend/`:
-
-```bash
-npm run typecheck
-npm run lint
-npm run build
-npm run test:e2e
-```
-
-The Playwright suite runs against the local API/web stack and does not mock browser API requests.
+1. **Upload** — authenticate, authorize (`member`+ or `documents:write`), validate (extension, `%PDF-` magic bytes, declared and actual size, parsable, page limit), optional antivirus, quota check under a row lock, de-duplicate by SHA-256, store under `{org}/{uuid}.pdf`, create document, version, usage reservation and job.
+2. **Claim** — the worker locks the job row (`SELECT … FOR UPDATE`); completed jobs are no-ops, so at-least-once delivery is safe.
+3. **Extract text** — `pypdf`; if text density is below the threshold, Tesseract OCR runs (bounded pages and time).
+4. **LLM** — the newest active schema for the project (else organization) is wrapped in a `{"fields": …}` envelope. OpenAI *strict* structured output is requested only when the schema is strict-compatible. Document text is sent as untrusted data.
+5. **Persist** — pages, steps, extraction run (with the schema version used), fields and usage records are committed atomically with the `COMPLETED` status. Failures store a stable code, never raw provider errors.
+6. **Review & export** — edit fields, then export JSON / CSV / XLSX.
 
 ## Security
 
-Implemented controls include upload signature/size/page checks, configurable antivirus scanning, opaque storage keys, server-side tenant authorization, Redis-backed rate limiting, password hashing, JWT session invalidation, CSRF protection for cookie sessions, API-key hashing/revocation, and audit logs.
+Security is the primary design constraint. Highlights (details in [SECURITY.md](SECURITY.md), [docs/SECURITY.md](docs/SECURITY.md) and the [threat model](docs/security/threat-model.md)):
 
-Staging/production validation rejects missing database, Redis, JWT, secure-cookie, HTTPS CORS, antivirus, S3, and conditional OpenAI configuration. TLS, managed PostgreSQL/Redis, object storage, secret management, centralized monitoring, backups, and restore procedures are external deployment requirements. See [docs/SECURITY.md](docs/SECURITY.md), [docs/STAGING.md](docs/STAGING.md), and [docs/OPERATIONS.md](docs/OPERATIONS.md).
+**Identity and sessions**
+- Argon2id password hashing; login does constant work for unknown users (no timing oracle) and is rate-limited per IP **and** per account.
+- JWTs require `exp`, `sub` and a session version; malformed or forged tokens return `401`, never `500`. Logout bumps the version, revoking all tokens.
+- Cookie sessions are `HttpOnly`, `Secure` outside development, `SameSite`, with double-submit CSRF on **every** state-changing request (including logout).
+- API keys (`dm_live_…`) are random 256-bit secrets, shown once, stored as SHA-256, revocable, bound to one organization and an allow-list of scopes. They can never reach user-only endpoints (`/auth/*`, organizations, key management, audit logs).
 
-## Staging and production
+**Tenancy**
+- Every query is filtered by an organization id that is checked against membership server-side; cross-tenant ids return `403`/`404` (covered by tests for every resource).
+- Worker schema lookup is organization-scoped, so a tenant can never receive another tenant's schema.
 
-`docker-compose.prod.yml` overlays the development Compose file with non-reload API workers, read-only API/web filesystems, healthchecks, restart policies, resource limits, and internal networks. API, worker, and web containers run as `appuser`.
+**Input and output**
+- Bounded everything: request body, file size, pages, strings, scopes, JSON field values, schema size.
+- Filenames are sanitized on ingest; `Content-Disposition` is RFC 6266 encoded (no header injection).
+- CSV/XLSX exports neutralize `= + - @` formula prefixes (CSV injection).
+- Responses carry `nosniff`, `Referrer-Policy`, `Permissions-Policy`, `Cache-Control: no-store`, CSP and `frame-ancestors`; HSTS when cookies are secure. The PDF viewer may only be framed by the configured web origins. OpenAPI/Swagger are disabled in staging/production.
+- CORS allow-list with explicit methods/headers; production requires HTTPS origins.
+
+**Fail-safe configuration**
+- With `ENVIRONMENT=staging|production` the API refuses to start unless a ≥32-char `JWT_SECRET`, secure cookies, HTTPS CORS origins, private object storage, an antivirus provider and database/Redis URLs are configured.
+- Containers run as a non-root user; the production overlay adds read-only filesystems, resource limits and internal networks.
+
+**Pipeline**
+- Quotas are enforced under an organization row lock to prevent concurrent over-spend.
+- LLM prompts keep document text separate from instructions; input, output, timeout and concurrency are bounded.
+- Supply chain: Dependabot, CodeQL, `bandit`, `pip-audit`, `npm audit`, lockfile installs.
+
+To report a vulnerability, follow [SECURITY.md](SECURITY.md).
+
+## API
+
+Base path `/api/v1`. Authenticate with a session cookie (+ `X-CSRF-Token`), `Authorization: Bearer <JWT>`, or `Authorization: Bearer <api key>`.
+
+| Area | Endpoints |
+|---|---|
+| Auth | `POST /auth/register` · `POST /auth/login` · `POST /auth/logout` · `GET /auth/me` |
+| Organizations | `GET, POST /organizations` |
+| Projects | `GET, POST /projects` |
+| Documents | `POST, GET /documents` · `GET /documents/{id}` · `POST /documents/{id}/process` · `GET /documents/{id}/status` · `GET /documents/{id}/download[?inline=true]` |
+| Extraction | `GET /documents/{id}/extraction` · `PATCH /extraction-fields/{id}` · `GET /documents/{id}/export?format=json\|csv\|xlsx` |
+| Schemas | `GET, POST /schemas` |
+| API keys | `GET, POST /api-keys` · `DELETE /api-keys/{id}` |
+| Ops | `GET /usage` · `GET /audit-logs` · `GET /health` · `GET /ready` |
+
+API-key scopes: `documents:read`, `documents:write`, `schemas:read`, `exports:read`, `usage:read`.
+
+```bash
+# register, create a project, upload, fetch the result
+TOKEN=$(curl -s localhost:8000/api/v1/auth/register -H 'content-type: application/json' \
+  -d '{"email":"me@example.com","password":"correct-horse-battery","organization_name":"Acme"}')
+# ... see docs/API.md for the complete walkthrough
+```
+
+Full reference: [docs/API.md](docs/API.md) (and `/docs` in development).
+
+## Configuration
+
+All settings are environment variables (see [.env.example](.env.example)).
+
+| Group | Variables |
+|---|---|
+| Application | `ENVIRONMENT`, `MAX_UPLOAD_BYTES`, `MAX_PDF_PAGES`, `MAX_PDF_TEXT_CHARS`, `PROCESSING_TIMEOUT_SECONDS`, `STUCK_JOB_SECONDS`, `FREE_PAGES_PER_MONTH` |
+| Data | `DATABASE_URL`, `REDIS_URL`, `POSTGRES_*` |
+| Storage | `STORAGE_PROVIDER` (`local`\|`s3`), `LOCAL_STORAGE_PATH`, `S3_BUCKET`, `S3_ENDPOINT_URL`, `S3_REGION`, `S3_KMS_KEY_ID`, `AWS_*` |
+| LLM / OCR | `LLM_PROVIDER` (`mock`\|`openai`), `OPENAI_*`, `MAX_OCR_PAGES`, `OCR_TIMEOUT_SECONDS` |
+| Security | `JWT_SECRET`, `JWT_ALGORITHM`, `ACCESS_TOKEN_MINUTES`, `COOKIE_SECURE`, `COOKIE_SAMESITE`, `CSRF_ENABLED`, `CORS_ORIGINS`, `RATE_LIMIT_*`, `ANTIVIRUS_PROVIDER`, `CLAMAV_*` |
+| Web | `NEXT_PUBLIC_API_URL` (build-time, public, never a secret) |
+
+## Development
+
+```bash
+docker compose up --build        # full stack with reload
+
+# backend, without Docker (needs no services for the test-suite)
+cd backend
+pip install -e '.[dev]'
+ruff check . && mypy app && pytest --cov=app
+
+# frontend
+cd frontend
+npm ci
+npm run dev
+```
+
+Create migrations with `docker compose exec api alembic revision --autogenerate -m "…"` and review them before committing. More in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Testing
+
+| Layer | Command | Notes |
+|---|---|---|
+| Static analysis | `ruff check .` · `mypy app` · `bandit -r app -ll` | Strict typing, security lint |
+| Backend unit/API | `pytest --cov=app` | Hermetic: SQLite, in-memory Redis double, no broker. Covers auth, tenancy, API keys, uploads, exports, worker pipeline |
+| Docker integration | `DOCMIND_INTEGRATION=1 pytest tests/test_docker_integration.py` | Real Postgres, Redis and worker |
+| Frontend | `npm run lint` · `npm run typecheck` · `npm run build` | |
+| Browser E2E | `npm run test:e2e` | Playwright against the real stack (`E2E_BASE_URL`, `E2E_API_URL`) |
+
+CI runs all of the above plus CodeQL, dependency audits and Compose validation on every pull request.
+
+## Deployment
+
+`docker-compose.prod.yml` is a hardened overlay (non-reload workers, read-only filesystems, healthchecks, resource limits, internal networks):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm api alembic upgrade head   # release step
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
-The Compose files prepare a deployment; they do not replace managed infrastructure. Provision and inject required external services before declaring a staging environment operational.
+Before going live, provide (see [docs/STAGING.md](docs/STAGING.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)):
 
-## Observability and audit data
+- TLS termination and a reverse proxy that sets `X-Forwarded-*` (run uvicorn with `--proxy-headers --forwarded-allow-ips=<proxy>` so rate limiting sees real client addresses),
+- managed PostgreSQL and Redis (TLS, auth, persistence, backups),
+- private S3-compatible storage with encryption and lifecycle rules,
+- a ClamAV service, secrets from a secret manager, and the web and API on the same registrable domain so `SameSite` cookies work.
 
-The data model records audit events, processing steps, job status/failure code, extraction runs, extraction fields, and usage records. These are application records, not centralized metrics or monitoring. Logs, metrics export, alerts, retention, backups, and restore verification remain deployment-platform responsibilities described in [docs/OPERATIONS.md](docs/OPERATIONS.md).
+## Operations
+
+- **Health** `GET /health` (liveness) · `GET /ready` (database).
+- **Stuck jobs** — beat runs `recover_stuck_jobs` every 60 s; jobs beyond `STUCK_JOB_SECONDS` become `FAILED/PROCESSING_TIMEOUT` and can be re-queued via `POST /documents/{id}/process`.
+- **Audit** — `GET /audit-logs` (admin) records auth, uploads, processing, edits and key lifecycle, including the API key used.
+- **Monitoring and retention** — see [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+## Design decisions
+
+| Decision | Rationale |
+|---|---|
+| API is the single authorization boundary | One place to audit tenancy; the web app is untrusted |
+| Fail-closed rate limiting | A broken Redis must not silently disable brute-force protection |
+| Row locks for quotas and job claiming | Correctness under concurrency without distributed locks |
+| Storage and LLM behind interfaces | Swap local/S3 and mock/OpenAI without touching business logic |
+| Stable failure codes, no raw errors | Provider and parser errors can leak data |
+| Strict mode only when the schema allows it | User schemas should not turn into opaque provider errors |
+
+See [docs/decisions/](docs/decisions/) for ADRs.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
-| API readiness fails | Verify PostgreSQL connectivity, migration state, and required environment variables. |
-| Authentication/upload returns `503` | Verify Redis; rate limiting fails closed when Redis is unavailable. |
-| A job remains queued | Confirm the worker is running and can connect to Redis. |
-| Processing fails | Inspect job failure code and worker logs; check storage, PDF validity, OCR, and LLM availability. |
-| S3 object is missing | Confirm API and worker both use `STORAGE_PROVIDER=s3` with identical `S3_*` and `AWS_*` variables. |
-| Migration errors | Run `alembic current` and `alembic upgrade head` against the intended database. |
-| Docker startup fails | Validate `.env` for local development or inject the required staging secrets. |
+| `/ready` fails | Database connectivity and `alembic upgrade head` |
+| `503 RATE_LIMIT_UNAVAILABLE` | Redis reachable at `REDIS_URL` (limiter fails closed) |
+| Job stays `QUEUED` | Worker running and connected to the same Redis |
+| PDF viewer is blank | `CORS_ORIGINS` must contain the exact web origin (it also drives `frame-ancestors`) |
+| Browser calls the wrong API | `NEXT_PUBLIC_API_URL` is baked at build time; rebuild the web image |
+| `403 CSRF_FAILED` | Send `X-CSRF-Token` equal to the `csrf_token` cookie, or use a Bearer token |
+| API refuses to start in staging | Read the validation message; see [docs/STAGING.md](docs/STAGING.md) |
 
-## Development guidelines
+## Roadmap
 
-- Put backend/domain/provider changes in `backend/app/`; add schema changes with Alembic migrations.
-- Put browser pages in `frontend/app/` and shared browser API behavior in `frontend/lib/`.
-- Update backend, integration, and browser tests with behavior changes.
-- Update the relevant document under `docs/` when changing deployment, security, architecture, or operations.
+- Per-document schema selection at upload time and schema versioning UI
+- Confidence scores and business-rule validation stage
+- Multi-user invitations and role management endpoints
+- Webhooks for job completion
+- Structured logging, Prometheus metrics and OpenTelemetry traces
 
-## License
+## Contributing and license
 
-No license file is currently defined in this repository.
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Released under the [MIT License](LICENSE).

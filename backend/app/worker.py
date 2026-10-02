@@ -1,8 +1,10 @@
-from datetime import timedelta
 import ssl
+import uuid
+from datetime import timedelta
 
 from celery import Celery
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
+from sqlalchemy.orm import Session
 
 from app.core import settings
 from app.db import SessionLocal
@@ -11,6 +13,8 @@ from app.models import (
     DocumentPage,
     ExtractionField,
     ExtractionRun,
+    ExtractionSchema,
+    ExtractionSchemaVersion,
     JobStatus,
     ProcessingJob,
     ProcessingStep,
@@ -19,9 +23,8 @@ from app.models import (
     utcnow,
 )
 from app.ocr import TesseractProvider, needs_ocr
-from app.processing import extract_pdf_text, llm
+from app.processing import extract_pdf_text, extraction_envelope, llm
 from app.storage import storage
-
 
 celery_app = Celery(
     "docmind",
@@ -29,13 +32,22 @@ celery_app = Celery(
     backend=settings().effective_redis_url,
 )
 
+# TLS options only apply to rediss:// URLs; plain redis:// (local development) would
+# otherwise fail the handshake.
+_tls = (
+    {
+        "broker_use_ssl": {"ssl_cert_reqs": ssl.CERT_REQUIRED},
+        "redis_backend_use_ssl": {"ssl_cert_reqs": ssl.CERT_REQUIRED},
+    }
+    if settings().effective_redis_url.startswith("rediss://")
+    else {}
+)
+
 celery_app.conf.update(
-    broker_use_ssl={
-        "ssl_cert_reqs": ssl.CERT_REQUIRED,
-    },
-    redis_backend_use_ssl={
-        "ssl_cert_reqs": ssl.CERT_REQUIRED,
-    },
+    **_tls,
+    task_serializer="json",
+    accept_content=["json"],
+    result_expires=3600,
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
@@ -43,7 +55,39 @@ celery_app.conf.update(
     task_soft_time_limit=max(1, settings().processing_timeout_seconds - 15),
 )
 
+# `celery -A app.worker.celery_app beat` (the `scheduler` compose service) runs this.
+celery_app.conf.beat_schedule = {
+    "recover-stuck-jobs": {"task": "app.worker.recover_stuck_jobs", "schedule": 60.0},
+}
+
 MAX_RETRIES = 3
+
+
+def active_schema_version(
+    db: Session, organization_id: uuid.UUID, project_id: uuid.UUID
+) -> ExtractionSchemaVersion | None:
+    """Latest version of the newest active schema for the project, else the org-wide one.
+
+    Every lookup is scoped to the job's organization, so a tenant can never receive
+    another tenant's schema.
+    """
+    schema = db.scalar(
+        select(ExtractionSchema)
+        .where(
+            ExtractionSchema.organization_id == organization_id,
+            ExtractionSchema.active.is_(True),
+            or_(ExtractionSchema.project_id == project_id, ExtractionSchema.project_id.is_(None)),
+        )
+        # Project-specific schemas win over organization-wide ones.
+        .order_by(ExtractionSchema.project_id.is_(None), ExtractionSchema.created_at.desc())
+    )
+    if schema is None:
+        return None
+    return db.scalar(
+        select(ExtractionSchemaVersion)
+        .where(ExtractionSchemaVersion.schema_id == schema.id)
+        .order_by(ExtractionSchemaVersion.version.desc())
+    )
 
 
 @celery_app.task
@@ -81,8 +125,6 @@ def recover_stuck_jobs() -> int:
 
 @celery_app.task(bind=True)
 def process_document(self, job_id: str) -> None:
-    import uuid
-
     retry_error: OSError | None = None
 
     with SessionLocal.begin() as db:
@@ -190,18 +232,12 @@ def process_document(self, job_id: str) -> None:
                 )
             )
 
+            schema_version = active_schema_version(
+                db, job.organization_id, document.project_id
+            )
             result = llm().extract(
                 text,
-                {
-                    "type": "object",
-                    "properties": {
-                        "fields": {
-                            "type": "object",
-                        }
-                    },
-                    "required": ["fields"],
-                    "additionalProperties": False,
-                },
+                extraction_envelope(schema_version.json_schema if schema_version else None),
             )
 
             run = ExtractionRun(
@@ -214,6 +250,7 @@ def process_document(self, job_id: str) -> None:
                     else None
                 ),
                 result=result,
+                schema_version_id=schema_version.id if schema_version else None,
                 status=RunStatus.completed,
             )
 
