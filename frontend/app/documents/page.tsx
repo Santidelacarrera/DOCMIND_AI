@@ -3,11 +3,31 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 
+import Nav from "../../components/Nav";
 import { API_URL, api, csrfHeaders } from "../../lib/api";
 
 type Organization = { id: string; name: string };
 type Project = { id: string; name: string };
 type Document = { id: string; filename: string };
+
+const UPLOAD_ERRORS: Record<string, string> = {
+  FILE_TOO_LARGE: "The file is too large.",
+  UNSUPPORTED_FILE_TYPE: "Only PDF files are supported.",
+  DOCUMENT_INVALID: "The PDF could not be read.",
+  PDF_PAGE_LIMIT_EXCEEDED: "The PDF has too many pages.",
+  DUPLICATE_DOCUMENT: "This document was already uploaded to the project.",
+  QUOTA_EXCEEDED: "Your plan's page quota is exhausted.",
+  MALWARE_DETECTED: "The file was rejected by the malware scanner.",
+  RATE_LIMITED: "Too many uploads. Try again in a minute.",
+};
+
+async function uploadError(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { detail?: unknown };
+    if (typeof body.detail === "string") return UPLOAD_ERRORS[body.detail] ?? "Please try again.";
+  } catch {}
+  return "Please try again.";
+}
 
 export default function Documents() {
   const [organizationId, setOrganizationId] = useState("");
@@ -16,6 +36,8 @@ export default function Documents() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
+  const [projectName, setProjectName] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   async function load(orgId: string) {
     const [projectResponse, documentResponse] = await Promise.all([
@@ -43,27 +65,49 @@ export default function Documents() {
     })();
   }, []);
 
+  async function createProject(event: FormEvent) {
+    event.preventDefault();
+    if (!organizationId || !projectName.trim()) return;
+    const response = await api(
+      `/api/v1/projects?organization_id=${encodeURIComponent(organizationId)}&name=${encodeURIComponent(projectName.trim())}`,
+      { method: "POST" },
+    );
+    if (response.ok) {
+      setProjectName("");
+      setMessage("Project created.");
+      await load(organizationId);
+    } else setMessage("Could not create the project.");
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!file || !organizationId || !projectId) return;
+    setUploading(true);
     const data = new FormData();
     data.append("file", file);
     const response = await fetch(
       `${API_URL}/api/v1/documents?organization_id=${encodeURIComponent(organizationId)}&project_id=${encodeURIComponent(projectId)}`,
       { method: "POST", body: data, credentials: "include", headers: csrfHeaders() },
     );
+    setUploading(false);
     if (response.ok) {
       setMessage("Document queued for processing.");
       await load(organizationId);
-    } else setMessage(`Upload failed: ${await response.text()}`);
+    } else setMessage(`Upload failed: ${await uploadError(response)}`);
   }
 
   return (
     <main>
-      <nav><Link href="/dashboard">DocMind AI</Link><strong>Documents</strong></nav>
+      <Nav current="documents" />
       <section className="panel">
         <h1>Upload a PDF</h1>
-        {!projects.length && <p>Create a project through the API before uploading.</p>}
+        <form onSubmit={createProject}>
+          <label>New project
+            <input value={projectName} maxLength={160} onChange={(event) => setProjectName(event.target.value)} placeholder="Invoices 2026" />
+          </label>
+          <button disabled={!projectName.trim()}>Create project</button>
+        </form>
+        {!projects.length && <p>Create a project before uploading.</p>}
         <form onSubmit={submit}>
           <label>Project
             <select value={projectId} onChange={(event) => setProjectId(event.target.value)} required>
@@ -73,7 +117,7 @@ export default function Documents() {
           <label>PDF
             <input type="file" accept="application/pdf" onChange={(event) => setFile(event.target.files?.[0] ?? null)} required />
           </label>
-          <button disabled={!projectId}>Upload and process</button>
+          <button disabled={!projectId || uploading}>{uploading ? "Uploading…" : "Upload and process"}</button>
         </form>
         {message && <p role="status">{message}</p>}
       </section>

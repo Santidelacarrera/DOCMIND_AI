@@ -1,7 +1,7 @@
 "use client";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import Nav from "../../components/Nav";
 import { api } from "../../lib/api";
 type Schema = {
   id: string;
@@ -63,10 +63,7 @@ export default function Schemas() {
   }
   return (
     <main>
-      <nav>
-        <Link href="/dashboard">DocMind AI</Link>
-        <strong>Schemas</strong>
-      </nav>
+      <Nav current="schemas" />
       <section className="panel">
         <h1>Extraction schemas</h1>
         <form onSubmit={submit}>
