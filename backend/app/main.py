@@ -34,6 +34,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.antivirus import antivirus
 from app.core import settings
 from app.db import get_db
+from app.limits import MaxBodySizeMiddleware
 from app.models import (
     ApiKey,
     AuditLog,
@@ -129,12 +130,38 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(
+    MaxBodySizeMiddleware,
+    upload_limit=settings().max_upload_bytes,
+    upload_path="/api/v1/documents",
+)
 
 
 class RegistrationInput(BaseModel):
     email: EmailStr
     password: str = Field(min_length=12, max_length=256)
     organization_name: str = Field(min_length=1, max_length=160)
+
+
+def password_problem(password: str, email: str) -> str | None:
+    """Cheap guard against the worst choices; length is the main control."""
+    lowered = password.lower()
+    local = email.split("@", 1)[0].lower()
+    if len(set(password)) < 5:
+        return "PASSWORD_TOO_SIMPLE"
+    if len(local) >= 4 and local in lowered:
+        return "PASSWORD_CONTAINS_EMAIL"
+    if lowered in COMMON_PASSWORDS:
+        return "PASSWORD_TOO_COMMON"
+    return None
+
+
+COMMON_PASSWORDS = frozenset(
+    {
+        "passwordpassword", "123456789012", "qwertyuiopas", "password1234",
+        "administrator", "letmein123456", "iloveyou1234", "welcome12345",
+    }
+)
 
 
 class LoginInput(BaseModel):
@@ -239,6 +266,9 @@ def register(
 ) -> dict[str, object]:
     enforce(request, "register", settings().rate_limit_register)
     email = payload.email.lower()
+    problem = password_problem(payload.password, email)
+    if problem:
+        raise HTTPException(422, problem)
     org_name = payload.organization_name.strip()
     if not org_name:
         raise HTTPException(422, "Organization name is required")
@@ -272,6 +302,12 @@ def login(payload: LoginInput, request: Request, response: Response, db: Session
     enforce(request, "login-account", settings().rate_limit_login, subject=email)
     user = db.scalar(select(User).where(User.email == email))
     if not verify_login_password(user, payload.password) or user is None:
+        # Hash the address so the log is useful for spotting stuffing without storing PII.
+        logger.warning(
+            "login failed account=%s ip=%s",
+            hashlib.sha256(email.encode()).hexdigest()[:12],
+            request.client.host if request.client else "unknown",
+        )
         raise HTTPException(401, "INVALID_CREDENTIALS")
     audit(db, "login", "user", str(user.id), user)
     db.commit()
@@ -652,7 +688,7 @@ def audit_logs(
 
 
 @app.post("/api/v1/documents", status_code=status.HTTP_202_ACCEPTED)
-async def upload_document(
+def upload_document(
     organization_id: str,
     project_id: uuid.UUID,
     request: Request,
@@ -671,7 +707,7 @@ async def upload_document(
         select(Project).where(Project.id == project_id, Project.organization_id == org_id)
     ):
         raise HTTPException(404, "PROJECT_NOT_FOUND")
-    content = await file.read(settings().max_upload_bytes + 1)
+    content = file.file.read(settings().max_upload_bytes + 1)
     if len(content) > settings().max_upload_bytes:
         raise HTTPException(413, "FILE_TOO_LARGE")
     if not (file.filename or "").lower().endswith(".pdf") or not content.startswith(b"%PDF-"):

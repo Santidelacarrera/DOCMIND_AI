@@ -394,3 +394,61 @@ def test_neutralize_formula_prefixes(value: str) -> None:
 def test_health_and_ready(client: TestClient) -> None:
     assert client.get("/health").json() == {"status": "ok"}
     assert client.get("/ready").json() == {"status": "ready"}
+
+
+# ---------------------------------------------------------------- request limits and passwords
+def test_chunked_body_over_limit_is_aborted_without_content_length() -> None:
+    """Only the byte counter (not a header) can stop a chunked stream."""
+    import asyncio
+
+    from app.limits import MULTIPART_OVERHEAD, MaxBodySizeMiddleware
+
+    consumed: list[int] = []
+
+    async def downstream(scope, receive, send):
+        while (message := await receive()).get("more_body"):
+            consumed.append(len(message["body"]))
+
+    sent: list[dict] = []
+
+    async def run() -> None:
+        chunks = [{"type": "http.request", "body": b"x" * 4096, "more_body": True}] * 60
+
+        async def receive():
+            return chunks[len(consumed) % len(chunks)]
+
+        async def send(message):
+            sent.append(message)
+
+        app = MaxBodySizeMiddleware(downstream, upload_limit=1000, upload_path="/up")
+        await app({"type": "http", "method": "POST", "path": "/up", "headers": []}, receive, send)
+
+    asyncio.run(run())
+    assert sent[0]["status"] == 413
+    assert sum(consumed) <= 1000 + MULTIPART_OVERHEAD + 4096
+
+
+def test_declared_oversize_and_large_json_rejected(client: TestClient, register) -> None:
+    acct = register()
+    big = {"type": "object", "properties": {"x": {"description": "y" * 2_000_000}}}
+    response = client.post(
+        f"/api/v1/schemas?organization_id={acct.org}&name=big", json=big, headers=acct.headers
+    )
+    assert response.status_code == 413
+    assert response.json() == {"detail": "REQUEST_TOO_LARGE"}
+
+
+@pytest.mark.parametrize(
+    ("email", "password", "code"),
+    [
+        ("a@example.com", "aaaaaaaaaaaaaaaa", "PASSWORD_TOO_SIMPLE"),
+        ("johnsmith@example.com", "xjohnsmith-secret-1", "PASSWORD_CONTAINS_EMAIL"),
+        ("z@example.com", "passwordpassword", "PASSWORD_TOO_COMMON"),
+    ],
+)
+def test_weak_passwords_rejected(client: TestClient, email: str, password: str, code: str) -> None:
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": password, "organization_name": "x"},
+    )
+    assert response.status_code == 422 and response.json()["detail"] == code

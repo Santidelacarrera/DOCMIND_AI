@@ -137,7 +137,7 @@ flowchart LR
 Security is the primary design constraint. Highlights (details in [SECURITY.md](SECURITY.md), [docs/SECURITY.md](docs/SECURITY.md) and the [threat model](docs/security/threat-model.md)):
 
 **Identity and sessions**
-- Argon2id password hashing; login does constant work for unknown users (no timing oracle) and is rate-limited per IP **and** per account.
+- Argon2id password hashing and a basic weak-password filter; login does constant work for unknown users (no timing oracle) and is rate-limited per IP **and** per account.
 - JWTs require `exp`, `sub` and a session version; malformed or forged tokens return `401`, never `500`. Logout bumps the version, revoking all tokens.
 - Cookie sessions are `HttpOnly`, `Secure` outside development, `SameSite`, with double-submit CSRF on **every** state-changing request (including logout).
 - API keys (`dm_live_…`) are random 256-bit secrets, shown once, stored as SHA-256, revocable, bound to one organization and an allow-list of scopes. They can never reach user-only endpoints (`/auth/*`, organizations, key management, audit logs).
@@ -147,7 +147,7 @@ Security is the primary design constraint. Highlights (details in [SECURITY.md](
 - Worker schema lookup is organization-scoped, so a tenant can never receive another tenant's schema.
 
 **Input and output**
-- Bounded everything: request body, file size, pages, strings, scopes, JSON field values, schema size.
+- Bounded everything: streamed request bodies (chunked uploads cannot bypass the limit), file size, pages, strings, scopes, JSON field values, schema size.
 - Filenames are sanitized on ingest; `Content-Disposition` is RFC 6266 encoded (no header injection).
 - CSV/XLSX exports neutralize `= + - @` formula prefixes (CSV injection).
 - Responses carry `nosniff`, `Referrer-Policy`, `Permissions-Policy`, `Cache-Control: no-store`, CSP and `frame-ancestors`; HSTS when cookies are secure. The PDF viewer may only be framed by the configured web origins. OpenAPI/Swagger are disabled in staging/production.
@@ -155,7 +155,7 @@ Security is the primary design constraint. Highlights (details in [SECURITY.md](
 
 **Fail-safe configuration**
 - With `ENVIRONMENT=staging|production` the API refuses to start unless a ≥32-char `JWT_SECRET`, secure cookies, HTTPS CORS origins, private object storage, an antivirus provider and database/Redis URLs are configured.
-- Containers run as a non-root user; the production overlay adds read-only filesystems, resource limits and internal networks.
+- Containers run as a non-root user; the production overlay adds read-only filesystems, dropped capabilities, `no-new-privileges`, resource limits, a password-protected Redis and an internal-only data network (the API and worker keep egress for object storage and the LLM).
 
 **Pipeline**
 - Quotas are enforced under an organization row lock to prevent concurrent over-spend.
@@ -238,6 +238,7 @@ CI runs all of the above plus CodeQL, dependency audits and Compose validation o
 `docker-compose.prod.yml` is a hardened overlay (non-reload workers, read-only filesystems, healthchecks, resource limits, internal networks):
 
 ```bash
+export REDIS_PASSWORD=...   # required by the overlay; REDIS_URL must use the same password
 docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm api alembic upgrade head   # release step
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
