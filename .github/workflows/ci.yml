@@ -58,7 +58,7 @@ jobs:
         run: |
           cp .env.example .env
           docker compose config -q
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q
+          REDIS_PASSWORD=ci docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q
       - name: Build images
         run: docker compose build
 
