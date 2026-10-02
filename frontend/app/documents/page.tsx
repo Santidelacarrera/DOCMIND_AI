@@ -79,6 +79,18 @@ export default function Documents() {
     } else setMessage("Could not create the project.");
   }
 
+  async function remove(id: string) {
+    if (!window.confirm("Delete this document? The stored PDF is removed permanently.")) return;
+    const response = await api(
+      `/api/v1/documents/${id}?organization_id=${encodeURIComponent(organizationId)}`,
+      { method: "DELETE" },
+    );
+    if (response.ok) {
+      setMessage("Document deleted.");
+      await load(organizationId);
+    } else setMessage("Could not delete the document.");
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!file || !organizationId || !projectId) return;
@@ -123,7 +135,14 @@ export default function Documents() {
       </section>
       <section className="panel">
         <h2>Documents</h2>
-        <ul>{documents.map((document) => <li key={document.id}><Link href={`/documents/${document.id}`}>{document.filename}</Link></li>)}</ul>
+        <ul>
+          {documents.map((document) => (
+            <li key={document.id}>
+              <Link href={`/documents/${document.id}`}>{document.filename}</Link>
+              <button type="button" className="linkbutton" onClick={() => remove(document.id)} aria-label={`Delete ${document.filename}`}>Delete</button>
+            </li>
+          ))}
+        </ul>
       </section>
     </main>
   );

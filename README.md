@@ -170,9 +170,9 @@ Base path `/api/v1`. Authenticate with a session cookie (+ `X-CSRF-Token`), `Aut
 | Area | Endpoints |
 |---|---|
 | Auth | `POST /auth/register` · `POST /auth/login` · `POST /auth/logout` · `GET /auth/me` |
-| Organizations | `GET, POST /organizations` |
+| Organizations | `GET, POST /organizations` · `GET, POST /members` · `PATCH, DELETE /members/{user_id}` |
 | Projects | `GET, POST /projects` |
-| Documents | `POST, GET /documents` · `GET /documents/{id}` · `POST /documents/{id}/process` · `GET /documents/{id}/status` · `GET /documents/{id}/download[?inline=true]` |
+| Documents | `POST, GET /documents` · `GET, DELETE /documents/{id}` · `POST /documents/{id}/process` · `GET /documents/{id}/status` · `GET /documents/{id}/download[?inline=true]` |
 | Extraction | `GET /documents/{id}/extraction` · `PATCH /extraction-fields/{id}` · `GET /documents/{id}/export?format=json\|csv\|xlsx` |
 | Schemas | `GET, POST /schemas` |
 | API keys | `GET, POST /api-keys` · `DELETE /api-keys/{id}` |
@@ -285,7 +285,7 @@ See [docs/decisions/](docs/decisions/) for ADRs.
 
 - Per-document schema selection at upload time and schema versioning UI
 - Confidence scores and business-rule validation stage
-- Multi-user invitations and role management endpoints
+- Email invitations for people without an account yet
 - Webhooks for job completion
 - Structured logging, Prometheus metrics and OpenTelemetry traces
 

@@ -2,6 +2,7 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import re
 import unicodedata
 import uuid
@@ -67,6 +68,7 @@ from app.security import (
 from app.storage import storage
 from app.worker import process_document
 
+logger = logging.getLogger("docmind")
 _config = settings()
 _production = _config.environment.lower() in {"staging", "production"}
 app = FastAPI(
@@ -199,6 +201,19 @@ MAX_SCHEMA_BYTES = 64 * 1024
 MAX_FIELD_VALUE_BYTES = 64 * 1024
 
 
+def live_document(db: Session, org_id: uuid.UUID, document_id: uuid.UUID) -> Document:
+    item = db.scalar(
+        select(Document).where(
+            Document.id == document_id,
+            Document.organization_id == org_id,
+            Document.deleted_at.is_(None),
+        )
+    )
+    if not item:
+        raise HTTPException(404, "DOCUMENT_NOT_FOUND")
+    return item
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -313,6 +328,133 @@ def organizations(user: User = Depends(require_user), db: Session = Depends(get_
             .where(OrganizationMember.user_id == user.id)
         ).all()
     ]
+
+
+ROLE_LEVELS = {Role.viewer: 0, Role.member: 1, Role.admin: 2, Role.owner: 3}
+
+
+def _member_view(user: User, member: OrganizationMember) -> dict[str, object]:
+    return {"user_id": str(user.id), "email": user.email, "role": member.role.value}
+
+
+def _guard_role_change(actor: OrganizationMember | None, target_role: Role, new_role: Role | None) -> None:
+    """Admins manage members below them; only owners create, change or remove owners."""
+    assert actor is not None  # members endpoints are user-only
+    if actor.role != Role.owner and (
+        target_role == Role.owner or (new_role is not None and new_role == Role.owner)
+    ):
+        raise HTTPException(403, "OWNER_REQUIRED")
+
+
+def _owner_count(db: Session, org_id: uuid.UUID) -> int:
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(OrganizationMember)
+            .where(OrganizationMember.organization_id == org_id, OrganizationMember.role == Role.owner)
+        )
+        or 0
+    )
+
+
+@app.get("/api/v1/members")
+def list_members(
+    organization_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.admin)
+    rows = db.execute(
+        select(User, OrganizationMember)
+        .join(OrganizationMember, OrganizationMember.user_id == User.id)
+        .where(OrganizationMember.organization_id == org_id)
+        .order_by(User.email)
+    ).all()
+    return [_member_view(u, m) for u, m in rows]
+
+
+@app.post("/api/v1/members", status_code=201)
+def add_member(
+    request: Request,
+    organization_id: str,
+    email: EmailStr,
+    role: Role = Role.member,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Add an existing account to the organization (no email invitations yet)."""
+    enforce(request, "members", settings().rate_limit_api)
+    org_id = globals()["organization_id"](organization_id)
+    actor = membership(org_id, user, db, Role.admin)
+    _guard_role_change(actor, Role.viewer, role)
+    target = db.scalar(select(User).where(User.email == email.lower(), User.is_active.is_(True)))
+    if target is None:
+        raise HTTPException(404, "USER_NOT_FOUND")
+    if db.scalar(
+        select(OrganizationMember).where(
+            OrganizationMember.organization_id == org_id, OrganizationMember.user_id == target.id
+        )
+    ):
+        raise HTTPException(409, "ALREADY_MEMBER")
+    member = OrganizationMember(organization_id=org_id, user_id=target.id, role=role)
+    db.add(member)
+    audit(db, "member.add", "user", str(target.id), user, org_id)
+    db.commit()
+    return _member_view(target, member)
+
+
+@app.patch("/api/v1/members/{user_id}")
+def change_member_role(
+    user_id: uuid.UUID,
+    organization_id: str,
+    role: Role,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    org_id = globals()["organization_id"](organization_id)
+    actor = membership(org_id, user, db, Role.admin)
+    member = db.scalar(
+        select(OrganizationMember).where(
+            OrganizationMember.organization_id == org_id, OrganizationMember.user_id == user_id
+        )
+    )
+    if member is None:
+        raise HTTPException(404, "MEMBER_NOT_FOUND")
+    _guard_role_change(actor, member.role, role)
+    if member.role == Role.owner and role != Role.owner and _owner_count(db, org_id) <= 1:
+        raise HTTPException(409, "LAST_OWNER")
+    member.role = role
+    audit(db, "member.role", "user", str(user_id), user, org_id)
+    db.commit()
+    target = db.get(User, user_id)
+    assert target is not None
+    return _member_view(target, member)
+
+
+@app.delete("/api/v1/members/{user_id}", status_code=204)
+def remove_member(
+    user_id: uuid.UUID,
+    organization_id: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    org_id = globals()["organization_id"](organization_id)
+    # Anyone may leave; removing someone else needs admin.
+    actor = membership(org_id, user, db, Role.viewer if user_id == user.id else Role.admin)
+    member = db.scalar(
+        select(OrganizationMember).where(
+            OrganizationMember.organization_id == org_id, OrganizationMember.user_id == user_id
+        )
+    )
+    if member is None:
+        raise HTTPException(404, "MEMBER_NOT_FOUND")
+    if user_id != user.id:
+        _guard_role_change(actor, member.role, None)
+    if member.role == Role.owner and _owner_count(db, org_id) <= 1:
+        raise HTTPException(409, "LAST_OWNER")
+    db.delete(member)
+    audit(db, "member.remove", "user", str(user_id), user, org_id)
+    db.commit()
+    return Response(status_code=204)
 
 
 @app.post("/api/v1/projects", status_code=201)
@@ -600,7 +742,7 @@ def list_documents(
     membership(org_id, user, db, scope="documents:read")
     docs = db.scalars(
         select(Document)
-        .where(Document.organization_id == org_id)
+        .where(Document.organization_id == org_id, Document.deleted_at.is_(None))
         .order_by(Document.created_at.desc())
         .limit(100)
     ).all()
@@ -687,6 +829,7 @@ def document_status(
 ) -> dict[str, object]:
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, scope="documents:read")
+    live_document(db, org_id, document_id)
     job = db.scalar(
         select(ProcessingJob)
         .where(ProcessingJob.document_id == document_id, ProcessingJob.organization_id == org_id)
@@ -726,6 +869,42 @@ def document(
         "project_id": str(item.project_id),
         "created_at": item.created_at,
     }
+
+
+@app.delete("/api/v1/documents/{document_id}", status_code=204)
+def delete_document(
+    document_id: uuid.UUID,
+    organization_id: str,
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Soft-delete the record and remove the stored object (extractions stay for audit)."""
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.member, scope="documents:write")
+    item = db.scalar(
+        select(Document)
+        .where(
+            Document.id == document_id,
+            Document.organization_id == org_id,
+            Document.deleted_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if not item:
+        raise HTTPException(404, "DOCUMENT_NOT_FOUND")
+    keys = {item.storage_key} | set(
+        db.scalars(select(DocumentVersion.storage_key).where(DocumentVersion.document_id == item.id))
+    )
+    item.deleted_at = datetime.now(UTC)
+    audit(db, "document.delete", "document", str(item.id), user, org_id)
+    db.commit()
+    for key in keys:
+        try:
+            storage.delete(key)
+        except Exception:
+            # The record is already gone; the orphaned object is reconciled by operations.
+            logger.warning("storage cleanup failed for deleted document %s", document_id)
+    return Response(status_code=204)
 
 
 @app.get("/api/v1/documents/{document_id}/download")
@@ -771,6 +950,7 @@ def extraction(
 ) -> dict[str, object]:
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, scope="documents:read")
+    live_document(db, org_id, document_id)
     run = db.scalar(
         select(ExtractionRun)
         .where(
