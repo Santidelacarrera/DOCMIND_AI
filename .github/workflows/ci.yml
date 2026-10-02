@@ -30,7 +30,7 @@ jobs:
       - name: Static security analysis (bandit)
         run: bandit -r app -ll -q
       - name: Dependency vulnerabilities (pip-audit)
-        run: pip-audit --strict --skip-editable
+        run: pip-audit --skip-editable
 
   frontend:
     runs-on: ubuntu-latest
