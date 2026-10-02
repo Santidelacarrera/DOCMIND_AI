@@ -746,11 +746,29 @@ def list_documents(
         .order_by(Document.created_at.desc())
         .limit(100)
     ).all()
+    # Latest job per document in one query (avoids N+1).
+    latest = (
+        select(ProcessingJob.document_id, func.max(ProcessingJob.attempt).label("attempt"))
+        .where(ProcessingJob.document_id.in_([d.id for d in docs]))
+        .group_by(ProcessingJob.document_id)
+        .subquery()
+    )
+    statuses = {
+        doc_id: job_status
+        for doc_id, job_status in db.execute(
+            select(ProcessingJob.document_id, ProcessingJob.status).join(
+                latest,
+                (ProcessingJob.document_id == latest.c.document_id)
+                & (ProcessingJob.attempt == latest.c.attempt),
+            )
+        ).all()
+    }
     return [
         {
             "id": str(d.id),
             "filename": d.filename,
             "pages": d.page_count,
+            "status": statuses[d.id].value if d.id in statuses else None,
             "created_at": d.created_at,
             "project_id": str(d.project_id),
         }
