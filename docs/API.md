@@ -23,10 +23,12 @@ User-only endpoints reject API keys with `403`.
 | `POST /auth/logout` | user | Revokes every token of the user (`204`) |
 | `GET /auth/me` | user | Current user |
 | `GET /organizations`, `POST /organizations?name=` | user | List / create |
+| `GET /members?organization_id=` · `POST /members?organization_id=&email=&role=` · `PATCH /members/{user_id}?organization_id=&role=` · `DELETE /members/{user_id}?organization_id=` | admin, user-only | Add an *existing* account, change a role or remove a member. Only owners create/modify/remove owners; the last owner is protected; anyone may leave |
 | `GET /projects?organization_id=`, `POST /projects?organization_id=&name=[&description=]` | viewer / member | Key scope `documents:read` for listing |
 | `POST /documents?organization_id=&project_id=` | member (scope `documents:write`) | `multipart/form-data` field `file` (PDF). `202 {document_id, job_id, status}` |
 | `GET /documents?organization_id=` | scope `documents:read` | Latest 100 |
 | `GET /documents/{id}?organization_id=` | scope `documents:read` | Metadata |
+| `DELETE /documents/{id}?organization_id=` | member (scope `documents:write`) | Soft-deletes the record and removes the stored PDF (`204`) |
 | `GET /documents/{id}/status?organization_id=` | scope `documents:read` | Latest job status and failure code |
 | `POST /documents/{id}/process?organization_id=` | member (scope `documents:write`) | Idempotent re-queue; returns the active job if one exists |
 | `GET /documents/{id}/download?organization_id=[&inline=true]` | scope `documents:read` | Original PDF |
