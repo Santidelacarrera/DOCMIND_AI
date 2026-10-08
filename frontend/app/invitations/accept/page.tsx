@@ -9,16 +9,14 @@ export default function AcceptInvitation() {
   const params = useSearchParams();
   const token = params.get("token") ?? "";
   const [status, setStatus] = useState<"checking" | "needs-auth" | "accepting" | "done" | "error">(
-    "checking",
+    token ? "checking" : "error",
   );
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(
+    token ? "" : "This invitation link is missing its token.",
+  );
 
   useEffect(() => {
-    if (!token) {
-      setStatus("error");
-      setMessage("This invitation link is missing its token.");
-      return;
-    }
+    if (!token) return;
     void (async () => {
       const me = await api("/api/v1/auth/me");
       if (!me.ok) {
