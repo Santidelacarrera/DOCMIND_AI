@@ -33,6 +33,8 @@ class ConsoleEmailProvider:
 class SMTPEmailProvider:
     def send(self, to: str, subject: str, body: str) -> None:
         config = settings()
+        if not config.smtp_host:
+            raise RuntimeError("SMTP_HOST is not configured")
         message = EmailMessage()
         message["Subject"] = subject
         message["From"] = config.smtp_from
@@ -42,7 +44,8 @@ class SMTPEmailProvider:
             if config.smtp_use_tls:
                 server.starttls()
             if config.smtp_username:
-                server.login(config.smtp_username, (config.smtp_password or "").get_secret_value())
+                password = config.smtp_password.get_secret_value() if config.smtp_password else ""
+                server.login(config.smtp_username, password)
             server.send_message(message)
 
 

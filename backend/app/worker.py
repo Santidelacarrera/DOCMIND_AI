@@ -279,14 +279,17 @@ def process_document(self, job_id: str) -> None:
             )
 
             fields = result.get("fields", {})
-            confidence_by_field = {
-                name: clamp_confidence(value)
+            confidence_by_field: dict[str, float | None] = {
+                str(name): clamp_confidence(value)
                 for name, value in (result.get("confidence") or {}).items()
+            }
+            known_confidence: dict[str, float] = {
+                name: score for name, score in confidence_by_field.items() if score is not None
             }
             validation_issues = validate_fields(
                 schema_version.json_schema if schema_version else None,
                 fields,
-                confidence_by_field,
+                known_confidence,
             )
 
             run = ExtractionRun(
