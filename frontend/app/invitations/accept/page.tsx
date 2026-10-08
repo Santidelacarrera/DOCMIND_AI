@@ -53,7 +53,7 @@ export default function AcceptInvitation() {
         <h1>Join a DocMind AI workspace</h1>
         {status === "checking" && <p>Checking your invitation…</p>}
         {status === "accepting" && <p>Joining the workspace…</p>}
-        {status === "done" && <p role="status">You're in! Redirecting to the dashboard…</p>}
+        {status === "done" && <p role="status">You&apos;re in! Redirecting to the dashboard…</p>}
         {status === "needs-auth" && (
           <p>
             Log in or create an account with the email address this invitation was sent to, then{" "}

@@ -13,9 +13,9 @@ Revises: 0002_session_version
 """
 
 import sqlalchemy as sa
-from alembic import op
 
 import app.models  # noqa: F401 -- registers metadata for the create_all below
+from alembic import op
 from app.db import Base
 
 revision = "0003_schemas_review_collab_observability"
