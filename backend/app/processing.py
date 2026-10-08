@@ -77,19 +77,35 @@ class OpenAIProvider:
 
 
 def extraction_envelope(fields_schema: dict[str, Any] | None) -> dict[str, Any]:
-    """Wrap a tenant's field schema in the ``{"fields": ..., "confidence": ...}`` contract."""
+    """Wrap a tenant's field schema in the ``{"fields": ..., "confidence": ...}`` contract.
+
+    When the tenant's own schema is strict-mode compatible (every property
+    required, ``additionalProperties: false``), the confidence schema mirrors
+    its exact property names so the whole envelope stays strict-compatible too
+    -- OpenAI's strict mode rejects an open-ended ``additionalProperties`` schema,
+    so that form is only used as a fallback when the field names aren't known
+    upfront (no tenant schema, or one that isn't itself strict).
+    """
+    fields_node = fields_schema or {"type": "object"}
+    description = "Per-field confidence score between 0 and 1, keyed the same as `fields`."
+    if is_strict_compatible(fields_node):
+        names = list(fields_node.get("properties", {}))
+        confidence_node: dict[str, Any] = {
+            "type": "object",
+            "description": description,
+            "properties": {name: {"type": "number", "minimum": 0, "maximum": 1} for name in names},
+            "required": names,
+            "additionalProperties": False,
+        }
+    else:
+        confidence_node = {
+            "type": "object",
+            "description": description,
+            "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1},
+        }
     return {
         "type": "object",
-        "properties": {
-            "fields": fields_schema or {"type": "object"},
-            "confidence": {
-                "type": "object",
-                "description": (
-                    "Per-field confidence score between 0 and 1, keyed the same as `fields`."
-                ),
-                "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1},
-            },
-        },
+        "properties": {"fields": fields_node, "confidence": confidence_node},
         "required": ["fields", "confidence"],
         "additionalProperties": False,
     }
