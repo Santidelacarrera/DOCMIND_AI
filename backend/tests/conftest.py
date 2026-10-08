@@ -72,6 +72,18 @@ def _environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     queued: list[str] = []
     monkeypatch.setattr(main.process_document, "delay", lambda job_id: queued.append(job_id))
     main.queued_jobs = queued  # type: ignore[attr-defined]
+    from app import worker
+
+    webhook_calls: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        worker.dispatch_webhooks,
+        "delay",
+        lambda organization_id, event, payload: webhook_calls.append((organization_id, event, payload)),
+    )
+    worker.dispatched_webhooks = webhook_calls  # type: ignore[attr-defined]
+    from app.notifications import ConsoleEmailProvider
+
+    ConsoleEmailProvider.sent = []
     yield
 
 

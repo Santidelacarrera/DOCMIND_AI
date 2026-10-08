@@ -9,6 +9,7 @@ import { API_URL, api, csrfHeaders } from "../../lib/api";
 type Organization = { id: string; name: string };
 type Project = { id: string; name: string };
 type Document = { id: string; filename: string; status: string | null };
+type Schema = { id: string; name: string; active: boolean };
 
 const UPLOAD_ERRORS: Record<string, string> = {
   FILE_TOO_LARGE: "The file is too large.",
@@ -33,6 +34,8 @@ export default function Documents() {
   const [organizationId, setOrganizationId] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState("");
+  const [schemas, setSchemas] = useState<Schema[]>([]);
+  const [schemaId, setSchemaId] = useState("");
   const [documents, setDocuments] = useState<Document[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
@@ -40,9 +43,10 @@ export default function Documents() {
   const [uploading, setUploading] = useState(false);
 
   async function load(orgId: string) {
-    const [projectResponse, documentResponse] = await Promise.all([
+    const [projectResponse, documentResponse, schemaResponse] = await Promise.all([
       api(`/api/v1/projects?organization_id=${orgId}`),
       api(`/api/v1/documents?organization_id=${orgId}`),
+      api(`/api/v1/schemas?organization_id=${orgId}`),
     ]);
     if (projectResponse.ok) {
       const values = (await projectResponse.json()) as Project[];
@@ -50,6 +54,7 @@ export default function Documents() {
       setProjectId(values[0]?.id ?? "");
     }
     if (documentResponse.ok) setDocuments((await documentResponse.json()) as Document[]);
+    if (schemaResponse.ok) setSchemas((await schemaResponse.json()) as Schema[]);
   }
 
   useEffect(() => {
@@ -97,8 +102,9 @@ export default function Documents() {
     setUploading(true);
     const data = new FormData();
     data.append("file", file);
+    const schemaParam = schemaId ? `&schema_id=${encodeURIComponent(schemaId)}` : "";
     const response = await fetch(
-      `${API_URL}/api/v1/documents?organization_id=${encodeURIComponent(organizationId)}&project_id=${encodeURIComponent(projectId)}`,
+      `${API_URL}/api/v1/documents?organization_id=${encodeURIComponent(organizationId)}&project_id=${encodeURIComponent(projectId)}${schemaParam}`,
       { method: "POST", body: data, credentials: "include", headers: csrfHeaders() },
     );
     setUploading(false);
@@ -124,6 +130,14 @@ export default function Documents() {
           <label>Project
             <select value={projectId} onChange={(event) => setProjectId(event.target.value)} required>
               {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+          </label>
+          <label>Extraction schema
+            <select value={schemaId} onChange={(event) => setSchemaId(event.target.value)}>
+              <option value="">Use the project/org default</option>
+              {schemas.filter((s) => s.active).map((schema) => (
+                <option key={schema.id} value={schema.id}>{schema.name}</option>
+              ))}
             </select>
           </label>
           <label>PDF

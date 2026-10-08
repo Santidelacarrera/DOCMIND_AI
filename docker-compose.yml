@@ -71,6 +71,34 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports: ["3000:3000"]
     depends_on: [api]
+
+  # ---- Observability stack (opt-in) ------------------------------------------
+  # `docker compose --profile observability up` to also bring these up.
+  # Prometheus scrapes GET /metrics on the api service (see prometheus.yml);
+  # the collector receives OTLP/HTTP traces from the api/worker when
+  # OTEL_EXPORTER_OTLP_ENDPOINT points at it (http://otel-collector:4318).
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    profiles: [observability]
+    volumes: [./prometheus.yml:/etc/prometheus/prometheus.yml:ro]
+    ports: ["9090:9090"]
+    depends_on: [api]
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: [observability]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    ports: ["3001:3000"]
+    volumes: [grafana_data:/var/lib/grafana]
+    depends_on: [prometheus]
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    profiles: [observability]
+    command: ["--config=/etc/otel-collector-config.yml"]
+    volumes: [./otel-collector-config.yml:/etc/otel-collector-config.yml:ro]
+    ports: ["4318:4318"]
 volumes:
   postgres_data:
   documents:
+  grafana_data:
