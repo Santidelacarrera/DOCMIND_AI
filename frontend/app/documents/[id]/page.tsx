@@ -10,11 +10,15 @@ type Field = {
   confidence: number | null;
   manually_verified: boolean;
 };
+type ValidationIssue = { field: string | null; rule: string; message: string };
+const LOW_CONFIDENCE_THRESHOLD = 0.7;
 export default function DocumentDetail() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [org, setOrg] = useState("");
   const [fields, setFields] = useState<Field[]>([]);
+  const [requiresReview, setRequiresReview] = useState(false);
+  const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
   const [message, setMessage] = useState("Loading document…");
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -40,7 +44,10 @@ export default function DocumentDetail() {
       );
       if (data.ok) {
         if (cancelled) return;
-        setFields((await data.json()).fields);
+        const payload = await data.json();
+        setFields(payload.fields);
+        setRequiresReview(Boolean(payload.requires_review));
+        setValidationIssues(payload.validation_issues ?? []);
         setMessage("");
       } else {
         const status = await api(
@@ -145,8 +152,24 @@ export default function DocumentDetail() {
           </div>
           {message && <p role="status">{message}</p>}
           {failed && <button onClick={retry}>Retry processing</button>}
-          {fields.map((field) => (
-            <article className="field" key={field.id}>
+          {requiresReview && (
+            <div role="alert" className="field">
+              <strong>Needs review</strong>
+              <ul>
+                {validationIssues.map((issue, index) => (
+                  <li key={index}>
+                    {issue.field ? `${issue.field}: ` : ""}
+                    {issue.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {fields.map((field) => {
+            const lowConfidence =
+              field.confidence !== null && field.confidence < LOW_CONFIDENCE_THRESHOLD;
+            return (
+            <article className={`field${lowConfidence ? " low-confidence" : ""}`} key={field.id}>
               <label>{field.name}</label>
               {editing === field.id ? (
                 <>
@@ -164,6 +187,7 @@ export default function DocumentDetail() {
                     {field.confidence !== null
                       ? `${Math.round(field.confidence * 100)}% confidence`
                       : "Confidence unavailable"}
+                    {lowConfidence ? " · Needs review" : ""}
                     {field.manually_verified ? " · Verified manually" : ""}
                   </small>
                   <button
@@ -181,7 +205,8 @@ export default function DocumentDetail() {
                 </>
               )}
             </article>
-          ))}
+            );
+          })}
         </section>
       </div>
     </main>

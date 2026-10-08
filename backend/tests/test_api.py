@@ -153,6 +153,8 @@ def test_tenant_isolation_across_every_resource(client: TestClient, register) ->
             f"/api/v1/audit-logs?organization_id={org}",
             f"/api/v1/usage?organization_id={org}",
             f"/api/v1/api-keys?organization_id={org}",
+            f"/api/v1/invitations?organization_id={org}",
+            f"/api/v1/webhooks?organization_id={org}",
         ):
             response = client.get(path, headers=spy)
             if org == alice.org:
@@ -319,6 +321,95 @@ def test_upload_populates_page_count_and_process_is_idempotent(client: TestClien
         headers=acct.headers,
     )
     assert again.json()["reused"] is True and again.json()["job_id"] == body["job_id"]
+
+
+# ---------------------------------------------------------------- schema selection & versions
+
+
+def test_upload_pins_the_chosen_schema_version(client: TestClient, register) -> None:
+    acct = register()
+    project = acct.project()
+    created = client.post(
+        f"/api/v1/schemas?organization_id={acct.org}&name=invoices",
+        json={"type": "object", "properties": {"a": {"type": "string"}}},
+        headers=acct.headers,
+    )
+    schema_id = created.json()["id"]
+    body = acct.upload(project, make_pdf(1))
+    # a second request with schema_id selected
+    upload = client.post(
+        f"/api/v1/documents?organization_id={acct.org}&project_id={project}&schema_id={schema_id}",
+        files={"file": ("b.pdf", make_pdf(1), "application/pdf")},
+        headers=acct.headers,
+    )
+    assert upload.status_code == 202
+    with SessionLocal() as db:
+        from app.models import ProcessingJob
+
+        job = db.get(ProcessingJob, uuid.UUID(upload.json()["job_id"]))
+        assert job is not None and job.requested_schema_version_id is not None
+    assert body.status_code == 202  # unrelated baseline upload still succeeds
+
+
+def test_upload_rejects_unknown_schema_id(client: TestClient, register) -> None:
+    acct = register()
+    project = acct.project()
+    response = client.post(
+        f"/api/v1/documents?organization_id={acct.org}&project_id={project}&schema_id={uuid.uuid4()}",
+        files={"file": ("a.pdf", make_pdf(1), "application/pdf")},
+        headers=acct.headers,
+    )
+    assert response.status_code == 404
+    assert response.json() == {"detail": "SCHEMA_NOT_FOUND"}
+
+
+def test_schema_id_cannot_cross_tenants(client: TestClient, register) -> None:
+    owner, other = register("owner"), register("other")
+    schema_id = client.post(
+        f"/api/v1/schemas?organization_id={owner.org}&name=s",
+        json={"type": "object", "properties": {}},
+        headers=owner.headers,
+    ).json()["id"]
+    other_project = other.project()
+    response = client.post(
+        f"/api/v1/documents?organization_id={other.org}&project_id={other_project}&schema_id={schema_id}",
+        files={"file": ("a.pdf", make_pdf(1), "application/pdf")},
+        headers=other.headers,
+    )
+    assert response.status_code == 404
+
+
+def test_schema_versions_listed_newest_first_and_can_be_published(client: TestClient, register) -> None:
+    acct = register()
+    schema_id = client.post(
+        f"/api/v1/schemas?organization_id={acct.org}&name=s",
+        json={"type": "object", "properties": {"a": {"type": "string"}}},
+        headers=acct.headers,
+    ).json()["id"]
+    v2 = client.post(
+        f"/api/v1/schemas/{schema_id}/versions?organization_id={acct.org}",
+        json={"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "number"}}},
+        headers=acct.headers,
+    )
+    assert v2.status_code == 201 and v2.json()["version"] == 2
+    listed = client.get(
+        f"/api/v1/schemas/{schema_id}/versions?organization_id={acct.org}", headers=acct.headers
+    ).json()
+    assert [v["version"] for v in listed] == [2, 1]
+    assert listed[0]["json_schema"]["properties"].keys() == {"a", "b"}
+
+
+def test_schema_versions_are_tenant_scoped(client: TestClient, register) -> None:
+    owner, other = register("owner"), register("other")
+    schema_id = client.post(
+        f"/api/v1/schemas?organization_id={owner.org}&name=s",
+        json={"type": "object", "properties": {}},
+        headers=owner.headers,
+    ).json()["id"]
+    response = client.get(
+        f"/api/v1/schemas/{schema_id}/versions?organization_id={other.org}", headers=other.headers
+    )
+    assert response.status_code == 404
 
 
 # ---------------------------------------------------------------- extraction + export
