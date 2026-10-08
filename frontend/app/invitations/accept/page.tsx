@@ -1,10 +1,18 @@
 "use client";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 
 export default function AcceptInvitation() {
+  return (
+    <Suspense fallback={null}>
+      <AcceptInvitationForm />
+    </Suspense>
+  );
+}
+
+function AcceptInvitationForm() {
   const router = useRouter();
   const params = useSearchParams();
   const token = params.get("token") ?? "";
