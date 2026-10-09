@@ -24,6 +24,15 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def as_aware_utc(value: datetime) -> datetime:
+    """SQLite (used in tests) doesn't preserve tzinfo through a round trip even
+    for a ``DateTime(timezone=True)`` column, so a value just read back from it
+    can come back naive while everything we compare it against is UTC-aware.
+    Postgres (staging/production) always returns it aware already, so this is
+    a no-op there."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 UUID = Uuid
 
 
