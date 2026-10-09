@@ -179,7 +179,14 @@ jobs:
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
       - name: Dump stack logs on failure
         if: steps.e2e_tests.outputs.exit_code != '0'
-        run: docker compose logs --no-color --tail=200 > /tmp/e2e-stack-logs.txt
+        run: |
+          docker compose logs --no-color --tail=200 > /tmp/e2e-stack-logs.txt
+          # The failing test's own org gets lost in the tail once later tests
+          # add their own noise. It creates its project with name=E2E
+          # (unique in the suite), so grab the api service's requests around
+          # that specific call instead of guessing from the general tail.
+          docker compose logs --no-color api > /tmp/e2e-api-logs-full.txt
+          grep -n -B5 -A20 'name=E2E' /tmp/e2e-api-logs-full.txt > /tmp/e2e-api-logs-e2e-org.txt || true
       - name: Dump accessibility snapshot of the failed page
         if: steps.e2e_tests.outputs.exit_code != '0'
         working-directory: frontend
@@ -268,6 +275,10 @@ jobs:
             echo '#### docker compose logs (tail)'
             echo '```'
             tail -c 10000 /tmp/e2e-stack-logs.txt
+            echo '```'
+            echo '#### api requests around the failing test'\''s project (name=E2E)'
+            echo '```'
+            tail -c 20000 /tmp/e2e-api-logs-e2e-org.txt
             echo '```'
             echo '#### screenshot extraction debug'
             echo '```'
