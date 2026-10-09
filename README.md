@@ -46,9 +46,13 @@ DocMind AI turns PDFs (invoices, contracts, forms…) into reviewable, exportabl
 - **Asynchronous pipeline** — Celery workers with idempotent jobs, retries, time limits and automatic stuck-job recovery.
 - **Text first, OCR when needed** — `pypdf` extraction with Tesseract fallback for scans.
 - **Pluggable LLMs** — deterministic mock for development/tests, OpenAI Responses API with structured output for real extraction.
-- **Your schema, your fields** — define JSON Schemas per organization or project; the newest active one drives extraction.
+- **Your schema, your fields** — define JSON Schemas per organization or project, with full version history; pick a specific schema (and its version) right at upload time, or let the newest active one drive extraction.
+- **Visible progress** — live processing status, failure reporting and one-click retry.
 - **Human in the loop** — edit values in the browser, side by side with the original PDF; edits are flagged as manually verified.
+- **Confidence-scored, validated extractions** — every field carries a 0–1 confidence score; a JSON Schema + confidence-threshold validation pass runs before a result is considered final and flags anything that needs review.
 - **Exports** — JSON, CSV and XLSX, hardened against spreadsheet formula injection.
+- **Team collaboration** — email invitations to add people to a workspace, and webhooks that notify your own systems when a document finishes processing.
+- **Production observability** — structured JSON logs, Prometheus metrics (`/metrics`) and OpenTelemetry traces out of the box.
 
 ## Quick start
 
@@ -127,16 +131,18 @@ flowchart LR
 1. **Upload** — authenticate, authorize (`member`+ or `documents:write`), validate (extension, `%PDF-` magic bytes, declared and actual size, parsable, page limit), optional antivirus, quota check under a row lock, de-duplicate by SHA-256, store under `{org}/{uuid}.pdf`, create document, version, usage reservation and job.
 2. **Claim** — the worker locks the job row (`SELECT … FOR UPDATE`); completed jobs are no-ops, so at-least-once delivery is safe.
 3. **Extract text** — `pypdf`; if text density is below the threshold, Tesseract OCR runs (bounded pages and time).
-4. **LLM** — the newest active schema for the project (else organization) is wrapped in a `{"fields": …}` envelope. OpenAI *strict* structured output is requested only when the schema is strict-compatible. Document text is sent as untrusted data.
-5. **Persist** — pages, steps, extraction run (with the schema version used), fields and usage records are committed atomically with the `COMPLETED` status. Failures store a stable code, never raw provider errors.
-6. **Review & export** — edit fields, then export JSON / CSV / XLSX.
+4. **LLM** — the schema version pinned at upload/reprocess time (or, failing that, the newest active schema for the project/organization) is wrapped in a `{"fields": …, "confidence": …}` envelope. OpenAI *strict* structured output is requested only when the schema is strict-compatible. Document text is sent as untrusted data.
+5. **Validate** — the extracted fields are checked against the schema and against the per-field confidence threshold; any issue marks the run `requires_review`.
+6. **Persist** — pages, steps, extraction run (schema version, confidence scores, validation issues) and usage records are committed atomically with the `COMPLETED` status. Failures store a stable code, never raw provider errors.
+7. **Notify** — active webhooks subscribed to `document.completed`/`document.failed` get a signed POST.
+8. **Review & export** — edit fields, then export JSON / CSV / XLSX.
 
 ## Security
 
 Security is the primary design constraint. Highlights (details in [SECURITY.md](SECURITY.md), [docs/SECURITY.md](docs/SECURITY.md) and the [threat model](docs/security/threat-model.md)):
 
 **Identity and sessions**
-- Argon2id password hashing; login does constant work for unknown users (no timing oracle) and is rate-limited per IP **and** per account.
+- Argon2id password hashing and a basic weak-password filter; login does constant work for unknown users (no timing oracle) and is rate-limited per IP **and** per account.
 - JWTs require `exp`, `sub` and a session version; malformed or forged tokens return `401`, never `500`. Logout bumps the version, revoking all tokens.
 - Cookie sessions are `HttpOnly`, `Secure` outside development, `SameSite`, with double-submit CSRF on **every** state-changing request (including logout).
 - API keys (`dm_live_…`) are random 256-bit secrets, shown once, stored as SHA-256, revocable, bound to one organization and an allow-list of scopes. They can never reach user-only endpoints (`/auth/*`, organizations, key management, audit logs).
@@ -146,7 +152,7 @@ Security is the primary design constraint. Highlights (details in [SECURITY.md](
 - Worker schema lookup is organization-scoped, so a tenant can never receive another tenant's schema.
 
 **Input and output**
-- Bounded everything: request body, file size, pages, strings, scopes, JSON field values, schema size.
+- Bounded everything: streamed request bodies (chunked uploads cannot bypass the limit), file size, pages, strings, scopes, JSON field values, schema size.
 - Filenames are sanitized on ingest; `Content-Disposition` is RFC 6266 encoded (no header injection).
 - CSV/XLSX exports neutralize `= + - @` formula prefixes (CSV injection).
 - Responses carry `nosniff`, `Referrer-Policy`, `Permissions-Policy`, `Cache-Control: no-store`, CSP and `frame-ancestors`; HSTS when cookies are secure. The PDF viewer may only be framed by the configured web origins. OpenAPI/Swagger are disabled in staging/production.
@@ -154,7 +160,7 @@ Security is the primary design constraint. Highlights (details in [SECURITY.md](
 
 **Fail-safe configuration**
 - With `ENVIRONMENT=staging|production` the API refuses to start unless a ≥32-char `JWT_SECRET`, secure cookies, HTTPS CORS origins, private object storage, an antivirus provider and database/Redis URLs are configured.
-- Containers run as a non-root user; the production overlay adds read-only filesystems, resource limits and internal networks.
+- Containers run as a non-root user; the production overlay adds read-only filesystems, dropped capabilities, `no-new-privileges`, resource limits, a password-protected Redis and an internal-only data network (the API and worker keep egress for object storage and the LLM).
 
 **Pipeline**
 - Quotas are enforced under an organization row lock to prevent concurrent over-spend.
@@ -200,6 +206,8 @@ All settings are environment variables (see [.env.example](.env.example)).
 | Storage | `STORAGE_PROVIDER` (`local`\|`s3`), `LOCAL_STORAGE_PATH`, `S3_BUCKET`, `S3_ENDPOINT_URL`, `S3_REGION`, `S3_KMS_KEY_ID`, `AWS_*` |
 | LLM / OCR | `LLM_PROVIDER` (`mock`\|`openai`), `OPENAI_*`, `MAX_OCR_PAGES`, `OCR_TIMEOUT_SECONDS` |
 | Security | `JWT_SECRET`, `JWT_ALGORITHM`, `ACCESS_TOKEN_MINUTES`, `COOKIE_SECURE`, `COOKIE_SAMESITE`, `CSRF_ENABLED`, `CORS_ORIGINS`, `RATE_LIMIT_*`, `ANTIVIRUS_PROVIDER`, `CLAMAV_*` |
+| Email (invitations) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_USE_TLS`, `SMTP_FROM`, `INVITATION_EXPIRY_HOURS`, `FRONTEND_BASE_URL` |
+| Observability | `LOG_LEVEL`, `LOG_FORMAT`, `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT` (see [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)) |
 | Web | `NEXT_PUBLIC_API_URL` (build-time, public, never a secret) |
 
 ## Development
@@ -237,6 +245,7 @@ CI runs all of the above plus CodeQL, dependency audits and Compose validation o
 `docker-compose.prod.yml` is a hardened overlay (non-reload workers, read-only filesystems, healthchecks, resource limits, internal networks):
 
 ```bash
+export REDIS_PASSWORD=...   # required by the overlay; REDIS_URL must use the same password
 docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm api alembic upgrade head   # release step
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
@@ -283,11 +292,9 @@ See [docs/decisions/](docs/decisions/) for ADRs.
 
 ## Roadmap
 
-- Per-document schema selection at upload time and schema versioning UI
-- Confidence scores and business-rule validation stage
-- Email invitations for people without an account yet
-- Webhooks for job completion
-- Structured logging, Prometheus metrics and OpenTelemetry traces
+- Per-field, per-reviewer approval workflow (today review is per-run, via `requires_review`)
+- Configurable webhook retry/backoff policy and a delivery-log UI
+- Self-serve Grafana dashboard provisioning for the bundled metrics
 
 ## Contributing and license
 
