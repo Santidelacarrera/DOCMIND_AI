@@ -189,6 +189,21 @@ jobs:
             { echo "--- $f ---"; cat "$f"; echo; } >> /tmp/e2e-error-context.txt
           done
           true
+      - name: Encode the failure screenshot inline (the sandbox can't fetch artifacts)
+        if: steps.e2e_tests.outputs.exit_code != '0'
+        working-directory: frontend
+        run: |
+          : > /tmp/e2e-screenshot-b64.txt
+          shot=$(find test-results -name "*.png" | head -n1 || true)
+          if [ -n "$shot" ]; then
+            small="/tmp/e2e-shot-small.png"
+            if command -v convert >/dev/null 2>&1; then
+              convert "$shot" -resize 900x -quality 50 "$small" && base64 -w0 "$small" > /tmp/e2e-screenshot-b64.txt
+            else
+              base64 -w0 "$shot" > /tmp/e2e-screenshot-b64.txt
+            fi
+          fi
+          true
       # TODO(temporary): see the matching step in the backend job above --
       # this job never ran before this PR either (it needs docker, which
       # always failed first), and the driving sandbox can't read Actions
@@ -212,6 +227,11 @@ jobs:
             echo '```'
             tail -c 10000 /tmp/e2e-stack-logs.txt
             echo '```'
+            b64=$(cat /tmp/e2e-screenshot-b64.txt)
+            if [ -n "$b64" ] && [ "${#b64}" -lt 50000 ]; then
+              echo '#### failure screenshot'
+              echo "<img src=\"data:image/png;base64,${b64}\" />"
+            fi
           } > /tmp/e2e-comment.md
           gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/e2e-comment.md
       - name: Fail job if e2e tests failed
