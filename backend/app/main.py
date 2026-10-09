@@ -6,7 +6,7 @@ import logging
 import re
 import unicodedata
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from secrets import compare_digest, token_urlsafe
 from typing import Any
 from urllib.parse import quote
@@ -34,6 +34,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.antivirus import antivirus
 from app.core import settings
 from app.db import get_db
+from app.limits import MaxBodySizeMiddleware
+from app.logging_config import configure_logging
+from app.metrics import PrometheusMiddleware, metrics_response
 from app.models import (
     ApiKey,
     AuditLog,
@@ -43,6 +46,8 @@ from app.models import (
     ExtractionRun,
     ExtractionSchema,
     ExtractionSchemaVersion,
+    Invitation,
+    InvitationStatus,
     JobStatus,
     Organization,
     OrganizationMember,
@@ -52,7 +57,11 @@ from app.models import (
     RunStatus,
     UsageRecord,
     User,
+    Webhook,
+    as_aware_utc,
+    utcnow,
 )
+from app.notifications import email_provider, invitation_email
 from app.rate_limit import enforce
 from app.security import (
     ALLOWED_SCOPES,
@@ -66,8 +75,12 @@ from app.security import (
     verify_login_password,
 )
 from app.storage import storage
+from app.telemetry import configure_tracing
+from app.webhooks import WebhookURLError, signing_secret
+from app.webhooks import validate_url as validate_webhook_url
 from app.worker import process_document
 
+configure_logging()
 logger = logging.getLogger("docmind")
 _config = settings()
 _production = _config.environment.lower() in {"staging", "production"}
@@ -79,6 +92,7 @@ app = FastAPI(
     redoc_url=None if _production else "/redoc",
     openapi_url=None if _production else "/openapi.json",
 )
+configure_tracing(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in _config.cors_origins.split(",") if o.strip()],
@@ -87,6 +101,7 @@ app.add_middleware(
     allow_credentials=True,
     max_age=600,
 )
+app.add_middleware(PrometheusMiddleware)
 
 # Auth endpoints that establish a session are exempt from CSRF because no session exists yet.
 CSRF_EXEMPT_PATHS = {"/api/v1/auth/login", "/api/v1/auth/register"}
@@ -129,12 +144,38 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(
+    MaxBodySizeMiddleware,
+    upload_limit=settings().max_upload_bytes,
+    upload_path="/api/v1/documents",
+)
 
 
 class RegistrationInput(BaseModel):
     email: EmailStr
     password: str = Field(min_length=12, max_length=256)
     organization_name: str = Field(min_length=1, max_length=160)
+
+
+def password_problem(password: str, email: str) -> str | None:
+    """Cheap guard against the worst choices; length is the main control."""
+    lowered = password.lower()
+    local = email.split("@", 1)[0].lower()
+    if len(set(password)) < 5:
+        return "PASSWORD_TOO_SIMPLE"
+    if len(local) >= 4 and local in lowered:
+        return "PASSWORD_CONTAINS_EMAIL"
+    if lowered in COMMON_PASSWORDS:
+        return "PASSWORD_TOO_COMMON"
+    return None
+
+
+COMMON_PASSWORDS = frozenset(
+    {
+        "passwordpassword", "123456789012", "qwertyuiopas", "password1234",
+        "administrator", "letmein123456", "iloveyou1234", "welcome12345",
+    }
+)
 
 
 class LoginInput(BaseModel):
@@ -225,6 +266,14 @@ def ready(db: Session = Depends(get_db)) -> dict[str, str]:
     return {"status": "ready"}
 
 
+@app.get("/metrics")
+def metrics() -> Response:
+    # Scraped by Prometheus on the internal network; not tenant data, so it is
+    # intentionally unauthenticated like /health. Restrict network access to it
+    # at the ingress/load balancer in staging/production.
+    return metrics_response()
+
+
 def set_session_cookies(response: Response, token: str) -> None:
     config = settings()
     response.set_cookie("access_token", token, httponly=True, secure=config.effective_cookie_secure,
@@ -239,6 +288,9 @@ def register(
 ) -> dict[str, object]:
     enforce(request, "register", settings().rate_limit_register)
     email = payload.email.lower()
+    problem = password_problem(payload.password, email)
+    if problem:
+        raise HTTPException(422, problem)
     org_name = payload.organization_name.strip()
     if not org_name:
         raise HTTPException(422, "Organization name is required")
@@ -272,6 +324,12 @@ def login(payload: LoginInput, request: Request, response: Response, db: Session
     enforce(request, "login-account", settings().rate_limit_login, subject=email)
     user = db.scalar(select(User).where(User.email == email))
     if not verify_login_password(user, payload.password) or user is None:
+        # Hash the address so the log is useful for spotting stuffing without storing PII.
+        logger.warning(
+            "login failed account=%s ip=%s",
+            hashlib.sha256(email.encode()).hexdigest()[:12],
+            request.client.host if request.client else "unknown",
+        )
         raise HTTPException(401, "INVALID_CREDENTIALS")
     audit(db, "login", "user", str(user.id), user)
     db.commit()
@@ -457,6 +515,151 @@ def remove_member(
     return Response(status_code=204)
 
 
+class InvitationInput(BaseModel):
+    email: EmailStr
+    role: Role = Role.member
+
+
+def _invitation_view(invitation: Invitation) -> dict[str, object]:
+    return {
+        "id": str(invitation.id),
+        "email": invitation.email,
+        "role": invitation.role.value,
+        "status": invitation.status.value,
+        "expires_at": invitation.expires_at,
+        "created_at": invitation.created_at,
+    }
+
+
+@app.post("/api/v1/invitations", status_code=201)
+def create_invitation(
+    organization_id: str,
+    payload: InvitationInput,
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Email an existing or not-yet-registered address an invite to join the
+    workspace. The raw token is only ever sent by email, never returned here."""
+    enforce(request, "invitations", settings().rate_limit_api)
+    org_id = globals()["organization_id"](organization_id)
+    actor = membership(org_id, user, db, Role.admin)
+    _guard_role_change(actor, Role.viewer, payload.role)
+    email = payload.email.lower()
+    existing_member = db.scalar(
+        select(OrganizationMember)
+        .join(User)
+        .where(OrganizationMember.organization_id == org_id, User.email == email)
+    )
+    if existing_member:
+        raise HTTPException(409, "ALREADY_MEMBER")
+    pending = db.scalar(
+        select(Invitation).where(
+            Invitation.organization_id == org_id,
+            Invitation.email == email,
+            Invitation.status == InvitationStatus.pending,
+        )
+    )
+    if pending:
+        raise HTTPException(409, "INVITATION_ALREADY_PENDING")
+    token = token_urlsafe(32)
+    invitation = Invitation(
+        organization_id=org_id,
+        email=email,
+        role=payload.role,
+        token_hash=hashlib.sha256(token.encode()).hexdigest(),
+        invited_by=user.id,
+        expires_at=utcnow() + timedelta(hours=settings().invitation_expiry_hours),
+    )
+    db.add(invitation)
+    db.flush()
+    organization = db.get(Organization, org_id)
+    assert organization is not None
+    accept_url = f"{settings().frontend_base_url}/invitations/accept?token={token}"
+    subject, body = invitation_email(organization.name, user.email, payload.role.value, accept_url)
+    audit(db, "invitation.create", "invitation", str(invitation.id), user, org_id)
+    db.commit()
+    try:
+        email_provider.send(email, subject, body)
+    except Exception:
+        # The invitation row is already committed; delivery failure is operational,
+        # not a reason to fail the request (the admin can see it is still PENDING
+        # and the invitee can be nudged through another channel).
+        logger.warning("invitation email delivery failed invitation_id=%s", invitation.id)
+    return _invitation_view(invitation)
+
+
+@app.get("/api/v1/invitations")
+def list_invitations(
+    organization_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.admin)
+    return [
+        _invitation_view(i)
+        for i in db.scalars(
+            select(Invitation)
+            .where(Invitation.organization_id == org_id)
+            .order_by(Invitation.created_at.desc())
+        ).all()
+    ]
+
+
+@app.delete("/api/v1/invitations/{invitation_id}", status_code=204)
+def revoke_invitation(
+    invitation_id: uuid.UUID,
+    organization_id: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.admin)
+    invitation = db.scalar(
+        select(Invitation).where(Invitation.id == invitation_id, Invitation.organization_id == org_id)
+    )
+    if not invitation:
+        raise HTTPException(404, "INVITATION_NOT_FOUND")
+    invitation.status = InvitationStatus.revoked
+    audit(db, "invitation.revoke", "invitation", str(invitation.id), user, org_id)
+    db.commit()
+    return Response(status_code=204)
+
+
+@app.post("/api/v1/invitations/accept")
+def accept_invitation(
+    token: str = Body(..., embed=True, max_length=256),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """The invitee must already be logged in (register or log in first) with the
+    exact email address the invitation was sent to."""
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    invitation = db.scalar(select(Invitation).where(Invitation.token_hash == token_hash))
+    if not invitation or invitation.status != InvitationStatus.pending:
+        raise HTTPException(404, "INVITATION_NOT_FOUND")
+    if as_aware_utc(invitation.expires_at) < utcnow():
+        raise HTTPException(410, "INVITATION_EXPIRED")
+    if invitation.email != user.email:
+        raise HTTPException(403, "INVITATION_EMAIL_MISMATCH")
+    existing = db.scalar(
+        select(OrganizationMember).where(
+            OrganizationMember.organization_id == invitation.organization_id,
+            OrganizationMember.user_id == user.id,
+        )
+    )
+    if not existing:
+        db.add(
+            OrganizationMember(
+                organization_id=invitation.organization_id, user_id=user.id, role=invitation.role
+            )
+        )
+    invitation.status = InvitationStatus.accepted
+    invitation.accepted_at = utcnow()
+    audit(db, "invitation.accept", "invitation", str(invitation.id), user, invitation.organization_id)
+    db.commit()
+    return {"organization_id": str(invitation.organization_id), "role": invitation.role.value}
+
+
 @app.post("/api/v1/projects", status_code=201)
 def create_project(
     organization_id: str,
@@ -496,6 +699,7 @@ def create_schema(
     name: str = Name,
     project_id: uuid.UUID | None = None,
     description: str | None = Query(default=None, max_length=2000),
+    prompt_instructions: str | None = Query(default=None, max_length=4000),
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
@@ -518,7 +722,9 @@ def create_schema(
     )
     db.add(schema)
     db.flush()
-    version = ExtractionSchemaVersion(schema_id=schema.id, version=1, json_schema=json_schema)
+    version = ExtractionSchemaVersion(
+        schema_id=schema.id, version=1, json_schema=json_schema, prompt_instructions=prompt_instructions
+    )
     db.add(version)
     audit(db, "schema.create", "schema", str(schema.id), user, org_id)
     db.commit()
@@ -543,6 +749,78 @@ def schemas(
             select(ExtractionSchema).where(ExtractionSchema.organization_id == org_id)
         ).all()
     ]
+
+
+def _owned_schema(db: Session, org_id: uuid.UUID, schema_id: uuid.UUID) -> ExtractionSchema:
+    schema = db.scalar(
+        select(ExtractionSchema).where(
+            ExtractionSchema.id == schema_id, ExtractionSchema.organization_id == org_id
+        )
+    )
+    if not schema:
+        raise HTTPException(404, "SCHEMA_NOT_FOUND")
+    return schema
+
+
+@app.get("/api/v1/schemas/{schema_id}/versions")
+def schema_versions(
+    schema_id: uuid.UUID,
+    organization_id: str,
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, scope="schemas:read")
+    _owned_schema(db, org_id, schema_id)
+    versions = db.scalars(
+        select(ExtractionSchemaVersion)
+        .where(ExtractionSchemaVersion.schema_id == schema_id)
+        .order_by(ExtractionSchemaVersion.version.desc())
+    ).all()
+    return [
+        {
+            "id": str(v.id),
+            "version": v.version,
+            "json_schema": v.json_schema,
+            "prompt_instructions": v.prompt_instructions,
+            "created_at": v.created_at,
+        }
+        for v in versions
+    ]
+
+
+@app.post("/api/v1/schemas/{schema_id}/versions", status_code=201)
+def create_schema_version(
+    schema_id: uuid.UUID,
+    organization_id: str,
+    json_schema: dict[str, object] = Body(...),
+    prompt_instructions: str | None = Query(default=None, max_length=4000),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Publish a new version of an existing schema. Prior versions are kept for
+    audit and so in-flight jobs that pinned an old version keep working."""
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.member)
+    schema = _owned_schema(db, org_id, schema_id)
+    if json_schema.get("type") != "object" or len(json.dumps(json_schema)) > MAX_SCHEMA_BYTES:
+        raise HTTPException(422, "SCHEMA_INVALID")
+    latest = db.scalar(
+        select(func.coalesce(func.max(ExtractionSchemaVersion.version), 0)).where(
+            ExtractionSchemaVersion.schema_id == schema_id
+        )
+    )
+    version = ExtractionSchemaVersion(
+        schema_id=schema.id,
+        version=int(latest or 0) + 1,
+        json_schema=json_schema,
+        prompt_instructions=prompt_instructions,
+    )
+    db.add(version)
+    db.flush()
+    audit(db, "schema.version.create", "schema", str(schema.id), user, org_id)
+    db.commit()
+    return {"id": str(version.id), "version": version.version}
 
 
 @app.post("/api/v1/api-keys", status_code=201)
@@ -651,11 +929,121 @@ def audit_logs(
     ]
 
 
+class WebhookInput(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+    description: str | None = Field(default=None, max_length=160)
+    events: list[str] = Field(default_factory=lambda: ["document.completed"])
+
+
+ALLOWED_WEBHOOK_EVENTS = frozenset({"document.completed", "document.failed"})
+
+
+def _webhook_view(webhook: Webhook) -> dict[str, object]:
+    return {
+        "id": str(webhook.id),
+        "url": webhook.url,
+        "description": webhook.description,
+        "events": webhook.events,
+        "active": webhook.active,
+        "last_delivery_at": webhook.last_delivery_at,
+        "last_delivery_status": webhook.last_delivery_status,
+        "created_at": webhook.created_at,
+    }
+
+
+@app.post("/api/v1/webhooks", status_code=201)
+def create_webhook(
+    organization_id: str,
+    payload: WebhookInput,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.admin)
+    if not payload.events or set(payload.events) - ALLOWED_WEBHOOK_EVENTS:
+        raise HTTPException(422, "INVALID_WEBHOOK_EVENT")
+    try:
+        validate_webhook_url(payload.url, allow_insecure=settings().environment.lower() == "development")
+    except WebhookURLError as exc:
+        raise HTTPException(422, str(exc)) from None
+    webhook = Webhook(
+        organization_id=org_id,
+        url=payload.url,
+        description=payload.description,
+        events=sorted(set(payload.events)),
+        created_by=user.id,
+    )
+    db.add(webhook)
+    db.flush()
+    audit(db, "webhook.create", "webhook", str(webhook.id), user, org_id)
+    db.commit()
+    # The signing secret is derived, never stored (see app.webhooks); this is the
+    # only moment it is revealed to the caller.
+    return {**_webhook_view(webhook), "signing_secret": signing_secret(webhook.id)}
+
+
+@app.get("/api/v1/webhooks")
+def list_webhooks(
+    organization_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.admin)
+    return [
+        _webhook_view(w)
+        for w in db.scalars(select(Webhook).where(Webhook.organization_id == org_id)).all()
+    ]
+
+
+@app.delete("/api/v1/webhooks/{webhook_id}", status_code=204)
+def delete_webhook(
+    webhook_id: uuid.UUID,
+    organization_id: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.admin)
+    webhook = db.scalar(
+        select(Webhook).where(Webhook.id == webhook_id, Webhook.organization_id == org_id)
+    )
+    if not webhook:
+        raise HTTPException(404, "WEBHOOK_NOT_FOUND")
+    db.delete(webhook)
+    audit(db, "webhook.delete", "webhook", str(webhook_id), user, org_id)
+    db.commit()
+    return Response(status_code=204)
+
+
+def _resolve_requested_schema_version(
+    db: Session, org_id: uuid.UUID, schema_id: uuid.UUID | None
+) -> ExtractionSchemaVersion | None:
+    """Pin the schema's *latest* version at the moment the user picked it, so a
+    later edit to the schema doesn't silently retarget an in-flight job."""
+    if schema_id is None:
+        return None
+    schema = db.scalar(
+        select(ExtractionSchema).where(
+            ExtractionSchema.id == schema_id, ExtractionSchema.organization_id == org_id
+        )
+    )
+    if not schema:
+        raise HTTPException(404, "SCHEMA_NOT_FOUND")
+    version = db.scalar(
+        select(ExtractionSchemaVersion)
+        .where(ExtractionSchemaVersion.schema_id == schema.id)
+        .order_by(ExtractionSchemaVersion.version.desc())
+    )
+    if not version:
+        raise HTTPException(422, "SCHEMA_HAS_NO_VERSIONS")
+    return version
+
+
 @app.post("/api/v1/documents", status_code=status.HTTP_202_ACCEPTED)
-async def upload_document(
+def upload_document(
     organization_id: str,
     project_id: uuid.UUID,
     request: Request,
+    schema_id: uuid.UUID | None = None,
     file: UploadFile = File(...),
     user: User | ApiPrincipal = Depends(current_user),
     db: Session = Depends(get_db),
@@ -663,6 +1051,7 @@ async def upload_document(
     enforce(request, "upload", settings().rate_limit_upload)
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, Role.member, scope="documents:write")
+    requested_schema_version = _resolve_requested_schema_version(db, org_id, schema_id)
     declared = request.headers.get("content-length")
     # Multipart framing adds a small overhead; reject clearly oversized bodies before reading.
     if declared and declared.isdigit() and int(declared) > settings().max_upload_bytes + 65_536:
@@ -671,7 +1060,7 @@ async def upload_document(
         select(Project).where(Project.id == project_id, Project.organization_id == org_id)
     ):
         raise HTTPException(404, "PROJECT_NOT_FOUND")
-    content = await file.read(settings().max_upload_bytes + 1)
+    content = file.file.read(settings().max_upload_bytes + 1)
     if len(content) > settings().max_upload_bytes:
         raise HTTPException(413, "FILE_TOO_LARGE")
     if not (file.filename or "").lower().endswith(".pdf") or not content.startswith(b"%PDF-"):
@@ -721,7 +1110,12 @@ async def upload_document(
         db.add(document)
         db.flush()
         db.add(DocumentVersion(document_id=document.id, storage_key=key, checksum=checksum))
-        job = ProcessingJob(organization_id=org_id, document_id=document.id, status=JobStatus.queued)
+        job = ProcessingJob(
+            organization_id=org_id,
+            document_id=document.id,
+            status=JobStatus.queued,
+            requested_schema_version_id=requested_schema_version.id if requested_schema_version else None,
+        )
         db.add(job)
         db.add(UsageRecord(organization_id=org_id, metric="pages_reserved", quantity=page_count, document_id=document.id))
         audit(db, "document.upload", "document", str(document.id), user, org_id)
@@ -746,11 +1140,29 @@ def list_documents(
         .order_by(Document.created_at.desc())
         .limit(100)
     ).all()
+    # Latest job per document in one query (avoids N+1).
+    latest = (
+        select(ProcessingJob.document_id, func.max(ProcessingJob.attempt).label("attempt"))
+        .where(ProcessingJob.document_id.in_([d.id for d in docs]))
+        .group_by(ProcessingJob.document_id)
+        .subquery()
+    )
+    statuses = {
+        doc_id: job_status
+        for doc_id, job_status in db.execute(
+            select(ProcessingJob.document_id, ProcessingJob.status).join(
+                latest,
+                (ProcessingJob.document_id == latest.c.document_id)
+                & (ProcessingJob.attempt == latest.c.attempt),
+            )
+        ).all()
+    }
     return [
         {
             "id": str(d.id),
             "filename": d.filename,
             "pages": d.page_count,
+            "status": statuses[d.id].value if d.id in statuses else None,
             "created_at": d.created_at,
             "project_id": str(d.project_id),
         }
@@ -763,6 +1175,7 @@ def process_existing_document(
     document_id: uuid.UUID,
     organization_id: str,
     request: Request,
+    schema_id: uuid.UUID | None = None,
     user: User | ApiPrincipal = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
@@ -770,6 +1183,7 @@ def process_existing_document(
     enforce(request, "process", settings().rate_limit_api)
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, Role.member, scope="documents:write")
+    requested_schema_version = _resolve_requested_schema_version(db, org_id, schema_id)
     # The document row lock is the database-level serialization point. It is
     # deliberately not an application-only existence check.
     item = db.scalar(
@@ -811,6 +1225,7 @@ def process_existing_document(
         document_id=item.id,
         status=JobStatus.queued,
         attempt=int(prior_attempt or 0) + 1,
+        requested_schema_version_id=requested_schema_version.id if requested_schema_version else None,
     )
     db.add(job)
     db.flush()
@@ -968,6 +1383,8 @@ def extraction(
     return {
         "run_id": str(run.id),
         "result": run.result,
+        "requires_review": run.requires_review,
+        "validation_issues": run.validation_issues,
         "fields": [
             {
                 "id": str(f.id),

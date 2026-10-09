@@ -29,6 +29,6 @@ test("a second tenant cannot read or export a manipulated document id", async ({
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await page.goto(`/documents/${documentId}`);
-  await expect(page.getByText("Extraction is not ready yet")).toBeVisible();
+  await expect(page.getByText("Document not found or not available.")).toBeVisible();
   await expect(page.getByText("tenant-a.pdf")).toHaveCount(0);
 });

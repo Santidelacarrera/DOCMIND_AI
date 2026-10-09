@@ -52,6 +52,24 @@ class Settings(BaseSettings):
     rate_limit_upload: int = 20
     rate_limit_api: int = 120
 
+    # ---- Email (workspace invitations) --------------------------------------
+    # Empty SMTP_HOST selects the console/log provider (development only).
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_use_tls: bool = True
+    smtp_from: str = "DocMind AI <no-reply@docmind.ai>"
+    invitation_expiry_hours: int = 72
+    frontend_base_url: str = "http://localhost:3000"
+
+    # ---- Observability --------------------------------------------------------
+    log_level: str = "INFO"
+    log_format: Literal["json", "text"] = "json"
+    otel_service_name: str = "docmind-api"
+    # Unset disables tracing entirely (default for local dev/tests).
+    otel_exporter_otlp_endpoint: str | None = None
+
     @model_validator(mode="after")
     def validate_runtime_configuration(self) -> "Settings":
         production = self.environment.lower() in {"staging", "production"}
@@ -79,6 +97,10 @@ class Settings(BaseSettings):
                 raise ValueError("ANTIVIRUS_PROVIDER must be configured in staging/production")
             if self.storage_provider == "local":
                 raise ValueError("STORAGE_PROVIDER must use private object storage in staging/production")
+            if not self.smtp_host:
+                raise ValueError("SMTP_HOST is required in staging/production (invitation emails)")
+            if not self.frontend_base_url.startswith("https://"):
+                raise ValueError("FRONTEND_BASE_URL must be an explicit HTTPS origin in staging/production")
             if self.storage_provider == "s3":
                 s3_required = {"S3_BUCKET": self.s3_bucket, "S3_REGION": self.s3_region}
                 missing_s3 = [name for name, value in s3_required.items() if not value]
