@@ -34,6 +34,19 @@ services:
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     ports: ["8000:8000"]
     volumes: [./backend:/app, documents:/data/documents]
+    healthcheck:
+      # Without this, `docker compose up --wait` only waits for the container
+      # process to start, not for migrations to finish and uvicorn to actually
+      # accept connections -- `web`'s one dependency on `api` (below) had no
+      # condition, so e2e against a cold stack could (and, under a
+      # resource-constrained CI runner, reliably did) start hitting a backend
+      # that was still mid-migration/import. /ready also round-trips the DB,
+      # so it only reports healthy once a real query succeeds.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -75,7 +88,8 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports: ["3000:3000"]
-    depends_on: [api]
+    depends_on:
+      api: {condition: service_healthy}
 
   # ---- Observability stack (opt-in) ------------------------------------------
   # `docker compose --profile observability up` to also bring these up.
