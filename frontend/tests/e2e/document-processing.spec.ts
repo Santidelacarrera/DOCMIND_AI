@@ -26,24 +26,30 @@ test("upload, extraction edit, and XLSX export use the real processing pipeline"
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await page.goto("/documents");
-  const projectSelect = page.getByLabel("Project", { exact: true });
-  await expect(projectSelect).toBeVisible();
+  const projectSelectByLabel = page.getByLabel("Project", { exact: true });
+  await expect(projectSelectByLabel).toBeVisible();
   // The select is visible as soon as the page mounts, but it starts out with
   // zero <option>s -- the project list is still loading (GET /organizations,
   // then GET /projects) when this assertion passes, since it only checks the
   // (empty) <select> itself. Wait for the real <option> before selecting it,
-  // via a direct DOM check rather than any locator chained off
-  // getByLabel(...) (.locator('option', ...) / .getByRole('option', ...)):
-  // confirmed by instrumentation that those chained locators report 0
-  // matches for the full timeout even at the exact moment a plain
-  // page.evaluate() of the same <select>'s outerHTML already shows the
-  // "E2E" option present -- a Playwright locator-resolution quirk with
-  // native <option> elements here, not a data or render problem.
+  // via a direct DOM check: confirmed by instrumentation that any locator
+  // chained off getByLabel(...) (.locator('option', ...),
+  // .getByRole('option', ...)) reports 0 matches for a full timeout even at
+  // the exact moment page.evaluate() shows the "E2E" option genuinely
+  // present in that same <select>'s outerHTML.
   await page.waitForFunction(() => {
     const select = document.querySelector("select");
     return !!select && Array.from(select.options).some((option) => option.textContent?.includes("E2E"));
   });
-  await projectSelect.selectOption({ label: "E2E" });
+  // selectOption on the getByLabel(...) locator itself also hangs for the
+  // full 30s (confirmed: the option is present per the wait above, yet it
+  // still times out waiting on that exact locator) -- the "label" selector
+  // engine, not just its chained sub-locators, breaks for this action in
+  // this environment. page.locator("select").first() resolves the identical
+  // element (confirmed via page.evaluate: the "Project" select is the first
+  // <select> in the document) through the plain CSS engine instead, which
+  // does not have this problem.
+  await page.locator("select").first().selectOption({ label: "E2E" });
   await page.getByLabel("PDF").setInputFiles({ name: "test-document.pdf", mimeType: "application/pdf", buffer: pdf });
   await page.getByRole("button", { name: "Upload and process" }).click();
   await expect(page.getByRole("status")).toHaveText("Document queued for processing.");
