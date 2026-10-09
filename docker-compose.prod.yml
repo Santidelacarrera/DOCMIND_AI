@@ -1,12 +1,20 @@
+# Hardened overlay for staging/production:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Network layout
+#   edge     reachable from the host / ingress; api and web publish here and the api and
+#            worker use it for outbound traffic (object storage, LLM provider, ClamAV).
+#   backend  internal-only; the bundled db and redis live here and have no egress.
+# With managed PostgreSQL/Redis the bundled db/redis services are simply unused.
 services:
   api:
-    build: ./backend
-    env_file: .env
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
     volumes: []
     restart: unless-stopped
     read_only: true
     tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready')"]
       interval: 15s
@@ -15,31 +23,34 @@ services:
     deploy:
       resources:
         limits: {cpus: "1.0", memory: 1G}
-    networks: [app]
+    networks: [edge, backend]
   worker:
-    build: ./backend
-    env_file: .env
     command: celery -A app.worker.celery_app worker --loglevel=INFO --concurrency=2
     volumes: [documents:/data/documents]
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     deploy:
       resources:
         limits: {cpus: "1.0", memory: 1G}
-    networks: [app]
+    networks: [edge, backend]
   scheduler:
     volumes: []
     restart: unless-stopped
     read_only: true
     tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     deploy:
       resources:
         limits: {cpus: "0.25", memory: 256M}
-    networks: [app]
+    networks: [backend]
   web:
-    build: ./frontend
     restart: unless-stopped
     read_only: true
     tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000"]
       interval: 15s
@@ -48,16 +59,23 @@ services:
     deploy:
       resources:
         limits: {cpus: "0.5", memory: 512M}
-    networks: [edge, app]
+    networks: [edge]
   db:
     restart: unless-stopped
-    networks: [app, data]
+    networks: [backend]
   redis:
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
-    networks: [app, data]
+    # REDIS_URL must carry the same password: redis://:<REDIS_PASSWORD>@redis:6379/0
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    networks: [backend]
 
 networks:
   edge: {}
-  app: {internal: true}
-  data: {internal: true}
+  backend: {internal: true}
