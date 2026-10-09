@@ -194,15 +194,33 @@ jobs:
         working-directory: frontend
         run: |
           : > /tmp/e2e-screenshot-b64.txt
-          shot=$(find test-results -name "*.png" | head -n1 || true)
+          : > /tmp/e2e-screenshot-debug.txt
+          {
+            echo "pwd: $(pwd)"
+            echo "test-results exists: $([ -d test-results ] && echo yes || echo no)"
+            echo "full tree:"
+            find test-results -type f 2>&1
+          } > /tmp/e2e-screenshot-debug.txt
+          shot=$(find test-results -iname "*.png" | head -n1 || true)
+          echo "chosen png: [$shot]" >> /tmp/e2e-screenshot-debug.txt
           if [ -n "$shot" ]; then
+            size=$(stat -c%s "$shot" 2>/dev/null || echo "?")
+            echo "png size: $size bytes" >> /tmp/e2e-screenshot-debug.txt
             small="/tmp/e2e-shot-small.png"
             if command -v convert >/dev/null 2>&1; then
-              convert "$shot" -resize 900x -quality 50 "$small" && base64 -w0 "$small" > /tmp/e2e-screenshot-b64.txt
+              echo "using convert" >> /tmp/e2e-screenshot-debug.txt
+              if convert "$shot" -resize 900x -quality 50 "$small" 2>>/tmp/e2e-screenshot-debug.txt; then
+                base64 -w0 "$small" > /tmp/e2e-screenshot-b64.txt
+              else
+                echo "convert failed, falling back to raw" >> /tmp/e2e-screenshot-debug.txt
+                base64 -w0 "$shot" > /tmp/e2e-screenshot-b64.txt
+              fi
             else
+              echo "no convert, using raw base64" >> /tmp/e2e-screenshot-debug.txt
               base64 -w0 "$shot" > /tmp/e2e-screenshot-b64.txt
             fi
           fi
+          echo "b64 length: $(wc -c < /tmp/e2e-screenshot-b64.txt)" >> /tmp/e2e-screenshot-debug.txt
           true
       # TODO(temporary): see the matching step in the backend job above --
       # this job never ran before this PR either (it needs docker, which
@@ -226,6 +244,10 @@ jobs:
             echo '#### docker compose logs (tail)'
             echo '```'
             tail -c 10000 /tmp/e2e-stack-logs.txt
+            echo '```'
+            echo '#### screenshot extraction debug'
+            echo '```'
+            cat /tmp/e2e-screenshot-debug.txt
             echo '```'
             b64=$(cat /tmp/e2e-screenshot-b64.txt)
             if [ -n "$b64" ] && [ "${#b64}" -lt 50000 ]; then
