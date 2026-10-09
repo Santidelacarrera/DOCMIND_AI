@@ -146,6 +146,9 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     needs: [docker]
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -165,8 +168,39 @@ jobs:
         working-directory: frontend
       - run: npx playwright install --with-deps chromium
         working-directory: frontend
-      - run: npm run test:e2e
+      - name: Run e2e tests
+        id: e2e_tests
         working-directory: frontend
-      - name: Dump logs on failure
-        if: failure()
-        run: docker compose logs --no-color --tail=200
+        run: |
+          set +e
+          npm run test:e2e > /tmp/e2e-output.txt 2>&1
+          code=$?
+          cat /tmp/e2e-output.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+      - name: Dump stack logs on failure
+        if: steps.e2e_tests.outputs.exit_code != '0'
+        run: docker compose logs --no-color --tail=200 > /tmp/e2e-stack-logs.txt
+      # TODO(temporary): see the matching step in the backend job above --
+      # this job never ran before this PR either (it needs docker, which
+      # always failed first), and the driving sandbox can't read Actions
+      # logs directly.
+      - name: Report e2e failure on the PR
+        if: steps.e2e_tests.outputs.exit_code != '0' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### e2e test failure (commit ${{ github.sha }})"
+            echo '#### test:e2e output'
+            echo '```'
+            tail -c 50000 /tmp/e2e-output.txt
+            echo '```'
+            echo '#### docker compose logs (tail)'
+            echo '```'
+            tail -c 10000 /tmp/e2e-stack-logs.txt
+            echo '```'
+          } > /tmp/e2e-comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/e2e-comment.md
+      - name: Fail job if e2e tests failed
+        if: steps.e2e_tests.outputs.exit_code != '0'
+        run: exit 1
