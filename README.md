@@ -50,7 +50,10 @@ DocMind AI turns PDFs (invoices, contracts, forms…) into reviewable, exportabl
 - **Visible progress** — live processing status, failure reporting and one-click retry.
 - **Human in the loop** — edit values in the browser, side by side with the original PDF; edits are flagged as manually verified.
 - **Confidence-scored, validated extractions** — every field carries a 0–1 confidence score; a JSON Schema + confidence-threshold validation pass runs before a result is considered final and flags anything that needs review.
-- **Exports** — JSON, CSV and XLSX, hardened against spreadsheet formula injection.
+- **Exports** — JSON, CSV and XLSX, hardened against spreadsheet formula injection, carrying the model value, the corrected value and the correction reason.
+- **Measured quality** — a reference corpus and `python -m app.evaluation` report precision/recall per field, OCR error, calibration and what the review gate catches ([docs/EVALUATION.md](docs/EVALUATION.md)).
+- **Recoverable jobs** — durable job state, atomic claims, bounded retries, stuck-job and lost-message recovery, no duplicate results ([docs/RELIABILITY.md](docs/RELIABILITY.md)).
+- **Retention** — deletion removes files and text immediately and purges derived data on a schedule ([docs/DATA_RETENTION.md](docs/DATA_RETENTION.md)).
 - **Team collaboration** — email invitations to add people to a workspace, and webhooks that notify your own systems when a document finishes processing.
 - **Production observability** — structured JSON logs, Prometheus metrics (`/metrics`) and OpenTelemetry traces out of the box.
 
@@ -201,7 +204,9 @@ All settings are environment variables (see [.env.example](.env.example)).
 
 | Group | Variables |
 |---|---|
-| Application | `ENVIRONMENT`, `MAX_UPLOAD_BYTES`, `MAX_PDF_PAGES`, `MAX_PDF_TEXT_CHARS`, `PROCESSING_TIMEOUT_SECONDS`, `STUCK_JOB_SECONDS`, `FREE_PAGES_PER_MONTH` |
+| Application | `ENVIRONMENT`, `MAX_UPLOAD_BYTES`, `MAX_PDF_PAGES`, `MAX_PDF_TEXT_CHARS`, `PROCESSING_TIMEOUT_SECONDS`, `STUCK_JOB_SECONDS`, `QUEUED_STUCK_SECONDS`, `MAX_JOB_RECOVERIES`, `FREE_PAGES_PER_MONTH` |
+| Quality / review | `CONFIDENCE_REVIEW_THRESHOLD`, `OCR_REVIEW_THRESHOLD`, `SCHEMA_VIOLATION_POLICY` (`review`\|`reject`), `LLM_INVALID_OUTPUT_RETRIES`, `OPENAI_INPUT_PRICE_PER_1M`, `OPENAI_OUTPUT_PRICE_PER_1M` |
+| Retention | `RETENTION_DELETED_DAYS`, `RETENTION_DOCUMENT_DAYS` (see [docs/DATA_RETENTION.md](docs/DATA_RETENTION.md)) |
 | Data | `DATABASE_URL`, `REDIS_URL`, `POSTGRES_*` |
 | Storage | `STORAGE_PROVIDER` (`local`\|`s3`), `LOCAL_STORAGE_PATH`, `S3_BUCKET`, `S3_ENDPOINT_URL`, `S3_REGION`, `S3_KMS_KEY_ID`, `AWS_*` |
 | LLM / OCR | `LLM_PROVIDER` (`mock`\|`openai`), `OPENAI_*`, `MAX_OCR_PAGES`, `OCR_TIMEOUT_SECONDS` |
@@ -233,7 +238,10 @@ Create migrations with `docker compose exec api alembic revision --autogenerate 
 | Layer | Command | Notes |
 |---|---|---|
 | Static analysis | `ruff check .` · `mypy app` · `bandit -r app -ll` | Strict typing, security lint |
-| Backend unit/API | `pytest --cov=app` | Hermetic: SQLite, in-memory Redis double, no broker. Covers auth, tenancy, API keys, uploads, exports, worker pipeline |
+| Backend unit/API | `pytest --cov=app` | Hermetic by default: SQLite, in-memory Redis double. Covers auth, tenancy, uploads, exports, worker pipeline. Add `TEST_DATABASE_URL=postgresql+psycopg://…` to run it on PostgreSQL |
+| Job queue | `pytest tests/test_celery_redis.py` | A real `redis-server` + Celery worker: completion, duplicate messages, retries, lost-message recovery (skipped without `redis-server`). See [docs/RELIABILITY.md](docs/RELIABILITY.md) |
+| Quality evaluation | `python -m app.evaluation` | Field precision/recall/F1, OCR error rates, confidence calibration, review routing, rejections and a simulated review/export pass over a 19-document reference corpus; also a pytest regression gate. See [docs/EVALUATION.md](docs/EVALUATION.md) |
+| Tenant isolation / injection | `pytest tests/test_tenant_isolation.py tests/test_prompt_injection.py` | Route-table-driven negative tests across API and storage; hostile document content |
 | Docker integration | `DOCMIND_INTEGRATION=1 pytest tests/test_docker_integration.py` | Real Postgres, Redis and worker |
 | Frontend | `npm run lint` · `npm run typecheck` · `npm run build` | |
 | Browser E2E | `npm run test:e2e` | Playwright against the real stack (`E2E_BASE_URL`, `E2E_API_URL`) |
@@ -261,7 +269,7 @@ Before going live, provide (see [docs/STAGING.md](docs/STAGING.md) and [docs/DEP
 ## Operations
 
 - **Health** `GET /health` (liveness) · `GET /ready` (database).
-- **Stuck jobs** — beat runs `recover_stuck_jobs` every 60 s; jobs beyond `STUCK_JOB_SECONDS` become `FAILED/PROCESSING_TIMEOUT` and can be re-queued via `POST /documents/{id}/process`.
+- **Stuck jobs** — beat runs `recover_stuck_jobs` every 60 s: in-flight jobs older than `STUCK_JOB_SECONDS` and queued jobs older than `QUEUED_STUCK_SECONDS` are re-enqueued (up to `MAX_JOB_RECOVERIES` times), then marked `FAILED/PROCESSING_TIMEOUT`; list them with `GET /documents?status=FAILED` and re-run via `POST /documents/{id}/process`. Details: [docs/RELIABILITY.md](docs/RELIABILITY.md).
 - **Audit** — `GET /audit-logs` (admin) records auth, uploads, processing, edits and key lifecycle, including the API key used.
 - **Monitoring and retention** — see [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
@@ -292,7 +300,8 @@ See [docs/decisions/](docs/decisions/) for ADRs.
 
 ## Roadmap
 
-- Per-field, per-reviewer approval workflow (today review is per-run, via `requires_review`)
+- Multiple reviewers per document with assignment (today: per-field correction with a reason, one approval per run)
+- An LLM accuracy baseline on a held-out set of real, consented documents (the shipped corpus is synthetic)
 - Configurable webhook retry/backoff policy and a delivery-log UI
 - Self-serve Grafana dashboard provisioning for the bundled metrics
 

@@ -36,3 +36,11 @@ Document text is untrusted: instructions and content are separate messages, inpu
 - [ ] WAF / request-size limits at the ingress
 - [ ] Log shipping without request bodies, tokens or document content
 - [ ] Alerts: 5xx, queue depth, failed/stuck jobs, antivirus unavailable
+
+## Multi-tenant isolation and untrusted documents (tested)
+
+* **Isolation is enumerated, not sampled.** `tests/test_tenant_isolation.py` walks FastAPI's route table: every endpoint must be tenant-scoped (or on a short allow-list of public/user-level ones), every scoped endpoint must answer `403` to a member of another organization and `401` without a session, and naming a *foreign object id through your own organization* must give `403/404` and leak none of the victim's ids, filenames or values. A new endpoint without `organization_id` fails the suite.
+* **Storage layer.** Object keys are `<organization_id>/<uuid>.pdf`; every read, delete and the worker pass them through `owned_key()`, which refuses keys outside the caller's prefix (tested with a tampered database row pointing at another tenant's object). Local storage refuses path traversal. S3 objects are written without ACLs (bucket stays private) and with KMS when configured. No presigned URLs are ever generated and nothing is served statically; downloads require authorization and are `private, no-store`.
+* **API-key scopes** are independent (`documents:read` ≠ `exports:read` ≠ `documents:write`) and bound to one organization.
+* **Documents are untrusted LLM input** (`tests/test_prompt_injection.py`). Text reaches the model only inside a `<document>` fence whose terminator cannot be forged from inside; the instructions are fixed; the model is given **no tools**; its answer is a JSON object validated against the envelope and the tenant schema; unexpected keys, schema violations and missing confidences force human review. Processing performs no network I/O of its own (asserted by blocking sockets during a hijacked-answer test), so an obeyed injection can at worst produce wrong *values* — which are flagged — never actions or leaks.
+* **Retention and deletion**: see [DATA_RETENTION.md](DATA_RETENTION.md).

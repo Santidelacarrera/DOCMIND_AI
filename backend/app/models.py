@@ -9,11 +9,13 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -117,6 +119,18 @@ class Project(Base):
 
 class Document(Base):
     __tablename__ = "documents"
+    __table_args__ = (
+        # Atomic de-duplication: two concurrent uploads of the same bytes into the
+        # same project cannot both succeed (the application-level check alone races).
+        Index(
+            "uq_documents_live_checksum",
+            "project_id",
+            "checksum",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
     project_id: Mapped[uuid.UUID] = mapped_column(
@@ -176,6 +190,14 @@ class ProcessingJob(Base):
     failure_code: Mapped[str | None] = mapped_column(String(80))
     failure_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Durable execution state, so a restart (worker crash, lost broker message) can be
+    # diagnosed and recovered from the database alone:
+    #   enqueued_at -- last time a task was handed to the broker for this job
+    #   started_at  -- when a worker last claimed it (reset on every claim)
+    #   retry_count -- transient-failure retries + stuck-job re-enqueues consumed so far
+    enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -195,6 +217,10 @@ class ProcessingStep(Base):
 class ExtractionRun(Base):
     __tablename__ = "extraction_runs"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # At most one run per processing job: re-delivering a task can never duplicate results.
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("processing_jobs.id", ondelete="SET NULL"), unique=True
+    )
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
     provider: Mapped[str] = mapped_column(String(40))
@@ -213,6 +239,9 @@ class ExtractionRun(Base):
     # {"field": "total_amount", "rule": "schema" | "low_confidence", "message": "..."}
     validation_issues: Mapped[list[Any]] = mapped_column(JSON, default=list)
     requires_review: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    # Human sign-off: set when a reviewer approves the run (see POST .../review/approve).
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -259,6 +288,11 @@ class ExtractionField(Base):
     source_text: Mapped[str | None] = mapped_column(Text)
     bounding_box: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     manually_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Why a human changed (or confirmed) the value, by whom and when; ``original_value``
+    # always keeps what the model produced.
+    correction_reason: Mapped[str | None] = mapped_column(String(200))
+    corrected_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    corrected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ApiKey(Base):

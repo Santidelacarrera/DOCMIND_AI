@@ -1,0 +1,725 @@
+{
+  "meta": {
+    "provider": "baseline-rules",
+    "documents": 19,
+    "scored_documents": 13,
+    "tesseract": "5.3.4",
+    "note": "Deterministic sections are reproducible for a given corpus, provider and OCR engine; 'timing' is machine-dependent."
+  },
+  "extraction": {
+    "micro": {
+      "tp": 68,
+      "fp": 1,
+      "fn": 12,
+      "precision": 0.9855,
+      "recall": 0.85,
+      "f1": 0.9128
+    },
+    "macro_f1": 0.9441,
+    "per_field": {
+      "applicant_name": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "counterparty": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "country": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "currency": {
+        "tp": 8,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "customer_name": {
+        "tp": 6,
+        "fp": 0,
+        "fn": 2,
+        "precision": 1.0,
+        "recall": 0.75,
+        "f1": 0.8571
+      },
+      "date_of_birth": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "effective_date": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "email": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "governing_law": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "id_number": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "invoice_date": {
+        "tp": 6,
+        "fp": 0,
+        "fn": 2,
+        "precision": 1.0,
+        "recall": 0.75,
+        "f1": 0.8571
+      },
+      "invoice_number": {
+        "tp": 5,
+        "fp": 0,
+        "fn": 3,
+        "precision": 1.0,
+        "recall": 0.625,
+        "f1": 0.7692
+      },
+      "tax_amount": {
+        "tp": 5,
+        "fp": 0,
+        "fn": 2,
+        "precision": 1.0,
+        "recall": 0.7143,
+        "f1": 0.8333
+      },
+      "term_months": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "total_amount": {
+        "tp": 6,
+        "fp": 0,
+        "fn": 2,
+        "precision": 1.0,
+        "recall": 0.75,
+        "f1": 0.8571
+      },
+      "total_fee": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "vendor_name": {
+        "tp": 7,
+        "fp": 1,
+        "fn": 1,
+        "precision": 0.875,
+        "recall": 0.875,
+        "f1": 0.875
+      }
+    },
+    "by_kind": {
+      "adversarial": {
+        "tp": 7,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "digital": {
+        "tp": 31,
+        "fp": 0,
+        "fn": 6,
+        "precision": 1.0,
+        "recall": 0.8378,
+        "f1": 0.9118
+      },
+      "multipage": {
+        "tp": 10,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "scanned": {
+        "tp": 20,
+        "fp": 1,
+        "fn": 6,
+        "precision": 0.9524,
+        "recall": 0.7692,
+        "f1": 0.8511
+      }
+    },
+    "documents": [
+      {
+        "id": "inv_digital_01",
+        "kind": "digital",
+        "ocr_used": false,
+        "fields_correct": 7,
+        "fields_expected": 7,
+        "wrong_fields": [],
+        "requires_review": false
+      },
+      {
+        "id": "inv_digital_02",
+        "kind": "digital",
+        "ocr_used": false,
+        "fields_correct": 7,
+        "fields_expected": 7,
+        "wrong_fields": [],
+        "requires_review": true
+      },
+      {
+        "id": "inv_digital_03",
+        "kind": "digital",
+        "ocr_used": false,
+        "fields_correct": 5,
+        "fields_expected": 7,
+        "wrong_fields": [
+          "invoice_number",
+          "tax_amount"
+        ],
+        "requires_review": true
+      },
+      {
+        "id": "inv_digital_04",
+        "kind": "digital",
+        "ocr_used": false,
+        "fields_correct": 2,
+        "fields_expected": 6,
+        "wrong_fields": [
+          "invoice_number",
+          "invoice_date",
+          "customer_name",
+          "total_amount"
+        ],
+        "requires_review": true
+      },
+      {
+        "id": "contract_digital_01",
+        "kind": "multipage",
+        "ocr_used": false,
+        "fields_correct": 5,
+        "fields_expected": 5,
+        "wrong_fields": [],
+        "requires_review": false
+      },
+      {
+        "id": "contract_digital_02",
+        "kind": "multipage",
+        "ocr_used": false,
+        "fields_correct": 5,
+        "fields_expected": 5,
+        "wrong_fields": [],
+        "requires_review": true
+      },
+      {
+        "id": "form_digital_01",
+        "kind": "digital",
+        "ocr_used": false,
+        "fields_correct": 5,
+        "fields_expected": 5,
+        "wrong_fields": [],
+        "requires_review": false
+      },
+      {
+        "id": "form_digital_02",
+        "kind": "digital",
+        "ocr_used": false,
+        "fields_correct": 5,
+        "fields_expected": 5,
+        "wrong_fields": [],
+        "requires_review": false
+      },
+      {
+        "id": "scan_invoice_clean",
+        "kind": "scanned",
+        "ocr_used": true,
+        "fields_correct": 7,
+        "fields_expected": 7,
+        "wrong_fields": [],
+        "requires_review": false
+      },
+      {
+        "id": "scan_invoice_skewed",
+        "kind": "scanned",
+        "ocr_used": true,
+        "fields_correct": 7,
+        "fields_expected": 7,
+        "wrong_fields": [],
+        "requires_review": false
+      },
+      {
+        "id": "scan_invoice_lowres",
+        "kind": "scanned",
+        "ocr_used": true,
+        "fields_correct": 1,
+        "fields_expected": 7,
+        "wrong_fields": [
+          "invoice_number",
+          "invoice_date",
+          "vendor_name",
+          "customer_name",
+          "total_amount",
+          "tax_amount"
+        ],
+        "requires_review": true
+      },
+      {
+        "id": "scan_contract_3p",
+        "kind": "scanned",
+        "ocr_used": true,
+        "fields_correct": 5,
+        "fields_expected": 5,
+        "wrong_fields": [],
+        "requires_review": false
+      },
+      {
+        "id": "inj_invoice_01",
+        "kind": "adversarial",
+        "ocr_used": false,
+        "fields_correct": 7,
+        "fields_expected": 7,
+        "wrong_fields": [],
+        "requires_review": false
+      }
+    ]
+  },
+  "error_attribution": {
+    "correct": 69,
+    "ocr_or_text_layer_error": 6,
+    "extraction_error": 6
+  },
+  "text_quality": {
+    "ocr_mean_cer": 0.0632,
+    "ocr_mean_wer": 0.25,
+    "documents": [
+      {
+        "id": "inv_digital_01",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "inv_digital_02",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "inv_digital_03",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "inv_digital_04",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "contract_digital_01",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "contract_digital_02",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "form_digital_01",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "form_digital_02",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "scan_invoice_clean",
+        "source": "ocr",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "scan_invoice_skewed",
+        "source": "ocr",
+        "cer": 0.0077,
+        "wer": 0.027
+      },
+      {
+        "id": "scan_invoice_lowres",
+        "source": "ocr",
+        "cer": 0.2451,
+        "wer": 0.973
+      },
+      {
+        "id": "scan_contract_3p",
+        "source": "ocr",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "inj_invoice_01",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      }
+    ]
+  },
+  "confidence": {
+    "n": 81,
+    "ece": 0.0877,
+    "bins": [
+      {
+        "range": [
+          0.0,
+          0.5
+        ],
+        "n": 12,
+        "accuracy": 0.0833,
+        "mean_confidence": 0.0
+      },
+      {
+        "range": [
+          0.5,
+          0.7
+        ],
+        "n": 2,
+        "accuracy": 1.0,
+        "mean_confidence": 0.6
+      },
+      {
+        "range": [
+          0.7,
+          0.9
+        ],
+        "n": 15,
+        "accuracy": 0.9333,
+        "mean_confidence": 0.79
+      },
+      {
+        "range": [
+          0.9,
+          1.0
+        ],
+        "n": 52,
+        "accuracy": 1.0,
+        "mean_confidence": 0.9394
+      }
+    ]
+  },
+  "review_routing": {
+    "fields": 81,
+    "wrong": 12,
+    "flagged": 16,
+    "raw_accuracy": 0.8519,
+    "error_capture_rate": 1.0,
+    "review_load": 0.1975,
+    "auto_accept_accuracy": 1.0,
+    "silent_errors": []
+  },
+  "rejections": {
+    "correct": 6,
+    "total": 6,
+    "documents": [
+      {
+        "id": "mal_truncated",
+        "expected": [
+          "DOCUMENT_INVALID"
+        ],
+        "got": "DOCUMENT_INVALID",
+        "stage": "rejected_at_upload",
+        "ok": true
+      },
+      {
+        "id": "mal_not_a_pdf",
+        "expected": [
+          "UNSUPPORTED_FILE_TYPE"
+        ],
+        "got": "UNSUPPORTED_FILE_TYPE",
+        "stage": "rejected_at_upload",
+        "ok": true
+      },
+      {
+        "id": "mal_empty",
+        "expected": [
+          "UNSUPPORTED_FILE_TYPE"
+        ],
+        "got": "UNSUPPORTED_FILE_TYPE",
+        "stage": "rejected_at_upload",
+        "ok": true
+      },
+      {
+        "id": "mal_header_only",
+        "expected": [
+          "DOCUMENT_INVALID"
+        ],
+        "got": "DOCUMENT_INVALID",
+        "stage": "rejected_at_upload",
+        "ok": true
+      },
+      {
+        "id": "mal_encrypted",
+        "expected": [
+          "PDF_ENCRYPTED"
+        ],
+        "got": "PDF_ENCRYPTED",
+        "stage": "rejected_at_upload",
+        "ok": true
+      },
+      {
+        "id": "mal_zero_pages",
+        "expected": [
+          "DOCUMENT_INVALID"
+        ],
+        "got": "DOCUMENT_INVALID",
+        "stage": "rejected_at_upload",
+        "ok": true
+      }
+    ]
+  },
+  "prompt_injection": [
+    {
+      "id": "inj_invoice_01",
+      "unexpected_fields": [],
+      "values_unchanged": true,
+      "flagged_for_review": false
+    }
+  ],
+  "timing": {
+    "seconds_per_document_mean": 0.3436,
+    "seconds_per_document_p50": 0.0456,
+    "seconds_per_document_p95": 1.0053,
+    "digital_mean": 0.0458,
+    "scanned_ocr_mean": 1.0139
+  },
+  "cost": {
+    "prompt_tokens": 2544,
+    "completion_tokens": 1113,
+    "per_document_usd_projected": 8.1e-05,
+    "note": "Projected from token counts at the configured per-1M-token prices (OPENAI_INPUT_PRICE_PER_1M / OPENAI_OUTPUT_PRICE_PER_1M); a rule-based provider actually costs nothing. Token counts are character-based estimates unless the provider reports usage."
+  },
+  "review_workflow": {
+    "documents_in_review_queue": 5,
+    "fields_reviewed": 16,
+    "fields_corrected": 12,
+    "fields_confirmed_unchanged": 4,
+    "approved": 13,
+    "approval_blocked": 0,
+    "accuracy_before_review": 0.8519,
+    "accuracy_after_review": 1.0,
+    "reasons": {
+      "confirmed": 4,
+      "missing_value": 6,
+      "ocr_misread": 6
+    },
+    "corrections": [
+      {
+        "document": "inv_digital_02",
+        "field": "invoice_date",
+        "model_value": "2025-04-03",
+        "corrected_value": "2025-04-03",
+        "confidence": 0.6,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "inv_digital_03",
+        "field": "invoice_number",
+        "model_value": null,
+        "corrected_value": "99817",
+        "confidence": 0.0,
+        "reason": "missing_value",
+        "changed": true
+      },
+      {
+        "document": "inv_digital_03",
+        "field": "tax_amount",
+        "model_value": null,
+        "corrected_value": 2080.08,
+        "confidence": 0.0,
+        "reason": "missing_value",
+        "changed": true
+      },
+      {
+        "document": "inv_digital_04",
+        "field": "invoice_number",
+        "model_value": null,
+        "corrected_value": "RE-55012",
+        "confidence": 0.0,
+        "reason": "missing_value",
+        "changed": true
+      },
+      {
+        "document": "inv_digital_04",
+        "field": "invoice_date",
+        "model_value": null,
+        "corrected_value": "2025-01-12",
+        "confidence": 0.0,
+        "reason": "missing_value",
+        "changed": true
+      },
+      {
+        "document": "inv_digital_04",
+        "field": "customer_name",
+        "model_value": null,
+        "corrected_value": "Alpen Foods AG",
+        "confidence": 0.0,
+        "reason": "missing_value",
+        "changed": true
+      },
+      {
+        "document": "inv_digital_04",
+        "field": "total_amount",
+        "model_value": null,
+        "corrected_value": 2310.0,
+        "confidence": 0.0,
+        "reason": "missing_value",
+        "changed": true
+      },
+      {
+        "document": "inv_digital_04",
+        "field": "tax_amount",
+        "model_value": null,
+        "corrected_value": null,
+        "confidence": 0.0,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "contract_digital_02",
+        "field": "counterparty",
+        "model_value": "Kestrel Components B.V.",
+        "corrected_value": "Kestrel Components B.V.",
+        "confidence": 0.6,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "scan_invoice_lowres",
+        "field": "invoice_number",
+        "model_value": null,
+        "corrected_value": "PMS-40817",
+        "confidence": 0.0,
+        "reason": "ocr_misread",
+        "changed": true
+      },
+      {
+        "document": "scan_invoice_lowres",
+        "field": "invoice_date",
+        "model_value": null,
+        "corrected_value": "2025-05-30",
+        "confidence": 0.0,
+        "reason": "ocr_misread",
+        "changed": true
+      },
+      {
+        "document": "scan_invoice_lowres",
+        "field": "vendor_name",
+        "model_value": "7 Pacitic Marino suit: 60:",
+        "corrected_value": "Pacific Marine Supply Co.",
+        "confidence": 0.75,
+        "reason": "ocr_misread",
+        "changed": true
+      },
+      {
+        "document": "scan_invoice_lowres",
+        "field": "customer_name",
+        "model_value": null,
+        "corrected_value": "Coastal Charter Boats",
+        "confidence": 0.0,
+        "reason": "ocr_misread",
+        "changed": true
+      },
+      {
+        "document": "scan_invoice_lowres",
+        "field": "currency",
+        "model_value": "USD",
+        "corrected_value": "USD",
+        "confidence": 0.85,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "scan_invoice_lowres",
+        "field": "total_amount",
+        "model_value": null,
+        "corrected_value": 1973.4,
+        "confidence": 0.0,
+        "reason": "ocr_misread",
+        "changed": true
+      },
+      {
+        "document": "scan_invoice_lowres",
+        "field": "tax_amount",
+        "model_value": null,
+        "corrected_value": 133.4,
+        "confidence": 0.0,
+        "reason": "ocr_misread",
+        "changed": true
+      }
+    ],
+    "exported_rows": {
+      "inv_digital_01": 7,
+      "inv_digital_02": 7,
+      "inv_digital_03": 7,
+      "inv_digital_04": 7,
+      "contract_digital_01": 5,
+      "contract_digital_02": 5,
+      "form_digital_01": 5,
+      "form_digital_02": 5,
+      "scan_invoice_clean": 7,
+      "scan_invoice_skewed": 7,
+      "scan_invoice_lowres": 7,
+      "scan_contract_3p": 5,
+      "inj_invoice_01": 7
+    },
+    "reviewer": "simulated (reference annotation used as oracle)"
+  }
+}

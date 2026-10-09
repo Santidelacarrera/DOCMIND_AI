@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     ocr_timeout_seconds: int = 60
     processing_timeout_seconds: int = 300
     stuck_job_seconds: int = 900
+    # A QUEUED job older than this has most likely lost its broker message (Redis flush,
+    # crash between commit and enqueue); the recovery task re-enqueues it.
+    queued_stuck_seconds: int = 300
+    # How many times recovery may re-enqueue the same job before failing it for good.
+    max_job_recoveries: int = 3
     llm_provider: str = "mock"
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
@@ -46,6 +51,27 @@ class Settings(BaseSettings):
     clamav_host: str = "localhost"
     clamav_port: int = 3310
     confidence_review_threshold: float = 0.70
+    # Mean OCR word confidence (0-1) below which a scanned document is sent to human review.
+    ocr_review_threshold: float = 0.80
+    # What to do with an LLM answer that violates the tenant's JSON Schema:
+    #   review -- keep it but force human review (default; nothing is silently dropped)
+    #   reject -- fail the job with LLM_SCHEMA_INVALID and store no extraction
+    # A structurally broken answer (not the {"fields","confidence"} envelope) is always rejected.
+    schema_violation_policy: Literal["review", "reject"] = "review"
+    # Extra LLM calls allowed when an answer is rejected as invalid (0 = fail immediately).
+    llm_invalid_output_retries: int = 1
+    # Approximate USD price per 1M tokens, used for the cost estimate stored on each run.
+    # Pricing changes: set these from your provider's current price list.
+    openai_input_price_per_1m: float = 0.15
+    openai_output_price_per_1m: float = 0.60
+
+    # ---- Retention ---------------------------------------------------------------
+    # Soft-deleted documents (and every derived record) are hard-deleted after this
+    # many days. 0 = purge on the next retention run.
+    retention_deleted_days: int = 30
+    # Automatically expire live documents this many days after upload. 0 = keep until
+    # a user deletes them (the default; retention is an operator decision).
+    retention_document_days: int = 0
     free_pages_per_month: int = 20
     rate_limit_login: int = 10
     rate_limit_register: int = 5

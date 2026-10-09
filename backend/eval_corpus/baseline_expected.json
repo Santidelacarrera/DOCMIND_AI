@@ -1,0 +1,39 @@
+{
+  "provider": "baseline-rules",
+  "tesseract": "5.3.4",
+  "by_kind": {
+    "adversarial": {
+      "tp": 7,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "digital": {
+      "tp": 31,
+      "fp": 0,
+      "fn": 6,
+      "precision": 1.0,
+      "recall": 0.8378,
+      "f1": 0.9118
+    },
+    "multipage": {
+      "tp": 10,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    }
+  },
+  "floors": {
+    "micro_f1": 0.89,
+    "micro_precision": 0.97,
+    "error_capture_rate": 0.95,
+    "auto_accept_accuracy": 0.97,
+    "max_silent_errors": 1,
+    "max_ocr_mean_cer": 0.09
+  },
+  "rejections_total": 6
+}
