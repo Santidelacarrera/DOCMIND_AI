@@ -43,18 +43,27 @@ export default function Documents() {
   const [uploading, setUploading] = useState(false);
 
   async function load(orgId: string) {
-    const [projectResponse, documentResponse, schemaResponse] = await Promise.all([
+    // Independent requests, independently applied: a network hiccup or non-2xx
+    // on any one of these (documents and schemas in particular can be slower,
+    // larger responses) must not discard the other two. Promise.all would
+    // reject -- and therefore apply none of these updates, including the
+    // project list -- as soon as any single request's promise rejects.
+    const [projectResult, documentResult, schemaResult] = await Promise.allSettled([
       api(`/api/v1/projects?organization_id=${orgId}`),
       api(`/api/v1/documents?organization_id=${orgId}`),
       api(`/api/v1/schemas?organization_id=${orgId}`),
     ]);
-    if (projectResponse.ok) {
-      const values = (await projectResponse.json()) as Project[];
+    if (projectResult.status === "fulfilled" && projectResult.value.ok) {
+      const values = (await projectResult.value.json()) as Project[];
       setProjects(values);
       setProjectId(values[0]?.id ?? "");
     }
-    if (documentResponse.ok) setDocuments((await documentResponse.json()) as Document[]);
-    if (schemaResponse.ok) setSchemas((await schemaResponse.json()) as Schema[]);
+    if (documentResult.status === "fulfilled" && documentResult.value.ok) {
+      setDocuments((await documentResult.value.json()) as Document[]);
+    }
+    if (schemaResult.status === "fulfilled" && schemaResult.value.ok) {
+      setSchemas((await schemaResult.value.json()) as Schema[]);
+    }
   }
 
   useEffect(() => {
