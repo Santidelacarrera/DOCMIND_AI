@@ -58,11 +58,16 @@ services:
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     # Runs periodic maintenance (stuck-job recovery). Exactly one instance must run.
+    # Needs the documents volume too: importing app.worker (for the celery app)
+    # transitively imports app.storage, which eagerly creates its storage root
+    # at import time, and without this mount that's an unwritable path inside
+    # the container rather than the shared, pre-chowned volume.
     command: celery -A app.worker.celery_app beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
-    volumes: [./backend:/app]
+    volumes: [./backend:/app, documents:/data/documents]
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
+      storage-init: {condition: service_completed_successfully}
   web:
     build:
       context: ./frontend
