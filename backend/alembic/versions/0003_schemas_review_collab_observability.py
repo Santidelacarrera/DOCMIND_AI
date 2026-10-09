@@ -28,6 +28,19 @@ def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
+    # alembic's own bookkeeping table defaults version_num to VARCHAR(32).
+    # This revision's own id is 41 characters (we use descriptive slugs, not
+    # alembic's default 12-hex-char ids), so without this, alembic's own
+    # post-migration `UPDATE alembic_version SET version_num=...` fails with
+    # "value too long for type character varying(32)" on Postgres (SQLite
+    # doesn't enforce the length, which is why this was never caught by the
+    # SQLite-backed test suite -- only a real `alembic upgrade head` run hits
+    # it). Widen it once, here, since every later revision keeps the same
+    # slug convention and would hit the same limit.
+    op.alter_column(
+        "alembic_version", "version_num", existing_type=sa.String(32), type_=sa.String(255)
+    )
+
     # On a brand-new database, 0001_initial's create_all() already builds the
     # schema from the *current* app.models -- which, after this revision
     # merged, already defines every column/table below. So on a fresh install
