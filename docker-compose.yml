@@ -34,6 +34,19 @@ services:
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     ports: ["8000:8000"]
     volumes: [./backend:/app, documents:/data/documents]
+    healthcheck:
+      # Without this, `docker compose up --wait` only waits for the container
+      # process to start, not for migrations to finish and uvicorn to actually
+      # accept connections -- `web`'s one dependency on `api` (below) had no
+      # condition, so e2e against a cold stack could (and, under a
+      # resource-constrained CI runner, reliably did) start hitting a backend
+      # that was still mid-migration/import. /ready also round-trips the DB,
+      # so it only reports healthy once a real query succeeds.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -58,11 +71,16 @@ services:
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     # Runs periodic maintenance (stuck-job recovery). Exactly one instance must run.
+    # Needs the documents volume too: importing app.worker (for the celery app)
+    # transitively imports app.storage, which eagerly creates its storage root
+    # at import time, and without this mount that's an unwritable path inside
+    # the container rather than the shared, pre-chowned volume.
     command: celery -A app.worker.celery_app beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
-    volumes: [./backend:/app]
+    volumes: [./backend:/app, documents:/data/documents]
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
+      storage-init: {condition: service_completed_successfully}
   web:
     build:
       context: ./frontend
@@ -70,7 +88,8 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports: ["3000:3000"]
-    depends_on: [api]
+    depends_on:
+      api: {condition: service_healthy}
 
   # ---- Observability stack (opt-in) ------------------------------------------
   # `docker compose --profile observability up` to also bring these up.
