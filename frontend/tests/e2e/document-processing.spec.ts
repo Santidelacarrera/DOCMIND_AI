@@ -26,29 +26,17 @@ test("upload, extraction edit, and XLSX export use the real processing pipeline"
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await page.goto("/documents");
-  await expect(page.getByLabel("Project", { exact: true })).toBeVisible();
-  // TODO(temporary): selectOption on this locator hangs for the full 30s
-  // timeout with no other clue why, even though the same locator resolved
-  // fine one line above. Dump the live DOM so the CI log says what's
-  // actually there instead of us guessing from a trace we can't open here.
-  // eslint-disable-next-line no-console
-  console.log(
-    "DEBUG selects:",
-    JSON.stringify(
-      await page.evaluate(() =>
-        Array.from(document.querySelectorAll("select")).map((select) => ({
-          id: select.id,
-          name: select.name,
-          ariaLabel: select.getAttribute("aria-label"),
-          ariaLabelledby: select.getAttribute("aria-labelledby"),
-          labels: Array.from(select.labels ?? []).map((label) => label.textContent),
-          optionCount: select.options.length,
-          outerHTML: select.outerHTML.slice(0, 400),
-        })),
-      ),
-    ),
-  );
-  await page.getByLabel("Project", { exact: true }).selectOption({ label: "E2E" });
+  const projectSelect = page.getByLabel("Project", { exact: true });
+  await expect(projectSelect).toBeVisible();
+  // The select is visible as soon as the page mounts, but it starts out with
+  // zero <option>s -- the project list is still loading (GET /organizations,
+  // then GET /projects) when this assertion passes, since it only checks the
+  // (empty) <select> itself. selectOption does not poll for a matching
+  // <option> to show up later: given zero options it just waits on the
+  // locator resolution step forever and times out, even though the option
+  // does arrive a moment later. Wait for the real option first.
+  await expect(projectSelect.getByRole("option", { name: "E2E" })).toBeAttached();
+  await projectSelect.selectOption({ label: "E2E" });
   await page.getByLabel("PDF").setInputFiles({ name: "test-document.pdf", mimeType: "application/pdf", buffer: pdf });
   await page.getByRole("button", { name: "Upload and process" }).click();
   await expect(page.getByRole("status")).toHaveText("Document queued for processing.");

@@ -171,13 +171,6 @@ jobs:
       - name: Run e2e tests
         id: e2e_tests
         working-directory: frontend
-        env:
-          # The one failing test hangs inside a single selectOption() call for
-          # the full 30s timeout with no other clue why. pw:api logs every
-          # actionability check (visible/enabled/stable/receives-events) as it
-          # retries, which is the only way to see which check never resolves
-          # without a trace viewer (unavailable in the driving sandbox).
-          DEBUG: pw:api
         run: |
           set +e
           npm run test:e2e > /tmp/e2e-output.txt 2>&1
