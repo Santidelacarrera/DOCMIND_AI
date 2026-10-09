@@ -218,12 +218,16 @@ jobs:
             # (~210KB for a 158KB PNG) blows past the report step's 50KB cutoff
             # and was silently dropped. Install it so the image actually shrinks.
             if ! command -v convert >/dev/null 2>&1; then
-              sudo apt-get update -qq >>/tmp/e2e-screenshot-debug.txt 2>&1
-              sudo apt-get install -y -qq imagemagick >>/tmp/e2e-screenshot-debug.txt 2>&1
+              sudo apt-get update -qq >/dev/null 2>&1
+              sudo apt-get install -y -qq imagemagick >/dev/null 2>&1
+              echo "installed imagemagick: $(command -v convert || echo failed)" >> /tmp/e2e-screenshot-debug.txt
             fi
             if command -v convert >/dev/null 2>&1; then
               echo "using convert" >> /tmp/e2e-screenshot-debug.txt
-              if convert "$shot" -resize 600x -quality 40 "$small" 2>>/tmp/e2e-screenshot-debug.txt; then
+              # 600x/q40 still produced ~70KB of base64, over the report step's
+              # cutoff -- this is a plain full-page screenshot (mostly white
+              # background), so a much smaller/blurrier copy is still legible.
+              if convert "$shot" -resize 350x -quality 30 "$small" 2>>/tmp/e2e-screenshot-debug.txt; then
                 base64 -w0 "$small" > /tmp/e2e-screenshot-b64.txt
               else
                 echo "convert failed, falling back to raw" >> /tmp/e2e-screenshot-debug.txt

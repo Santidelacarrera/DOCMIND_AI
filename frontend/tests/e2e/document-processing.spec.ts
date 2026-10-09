@@ -27,6 +27,27 @@ test("upload, extraction edit, and XLSX export use the real processing pipeline"
   await expect(page).toHaveURL(/\/dashboard$/);
   await page.goto("/documents");
   await expect(page.getByLabel("Project", { exact: true })).toBeVisible();
+  // TODO(temporary): selectOption on this locator hangs for the full 30s
+  // timeout with no other clue why, even though the same locator resolved
+  // fine one line above. Dump the live DOM so the CI log says what's
+  // actually there instead of us guessing from a trace we can't open here.
+  // eslint-disable-next-line no-console
+  console.log(
+    "DEBUG selects:",
+    JSON.stringify(
+      await page.evaluate(() =>
+        Array.from(document.querySelectorAll("select")).map((select) => ({
+          id: select.id,
+          name: select.name,
+          ariaLabel: select.getAttribute("aria-label"),
+          ariaLabelledby: select.getAttribute("aria-labelledby"),
+          labels: Array.from(select.labels ?? []).map((label) => label.textContent),
+          optionCount: select.options.length,
+          outerHTML: select.outerHTML.slice(0, 400),
+        })),
+      ),
+    ),
+  );
   await page.getByLabel("Project", { exact: true }).selectOption({ label: "E2E" });
   await page.getByLabel("PDF").setInputFiles({ name: "test-document.pdf", mimeType: "application/pdf", buffer: pdf });
   await page.getByRole("button", { name: "Upload and process" }).click();
