@@ -110,7 +110,11 @@ def deliver(webhook_id: uuid.UUID, url: str, event: str, payload: dict[str, Any]
         },
     )
     try:
-        with urlopen(request, timeout=DELIVERY_TIMEOUT_SECONDS) as response:
+        # The target URL is tenant-supplied, which is exactly what bandit's B310
+        # flags -- but validate_url() above (and again at creation/update time)
+        # already restricts it to a resolvable public HTTPS host, so this isn't
+        # an open redirect/SSRF/file:// vector.
+        with urlopen(request, timeout=DELIVERY_TIMEOUT_SECONDS) as response:  # nosec B310
             status_code = response.status
             return 200 <= status_code < 300, status_code, None
     except URLError as exc:
