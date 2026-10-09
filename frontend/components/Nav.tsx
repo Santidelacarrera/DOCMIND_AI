@@ -18,6 +18,12 @@ export default function Nav({ current }: { current?: string }) {
       <Link href="/schemas" aria-current={current === "schemas" ? "page" : undefined}>
         Schemas
       </Link>
+      <Link href="/members" aria-current={current === "members" ? "page" : undefined}>
+        Members
+      </Link>
+      <Link href="/webhooks" aria-current={current === "webhooks" ? "page" : undefined}>
+        Webhooks
+      </Link>
       <button type="button" className="linkbutton" onClick={logout}>
         Sign out
       </button>

@@ -19,6 +19,8 @@ def staging_settings(**overrides: object) -> Settings:
         "aws_access_key_id": "test-access-key",
         "aws_secret_access_key": "test-secret-key",
         "antivirus_provider": "clamav",
+        "smtp_host": "smtp.example.invalid",
+        "frontend_base_url": "https://app.staging.example.invalid",
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)

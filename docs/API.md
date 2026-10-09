@@ -25,21 +25,25 @@ User-only endpoints reject API keys with `403`.
 | `GET /organizations`, `POST /organizations?name=` | user | List / create |
 | `GET /members?organization_id=` · `POST /members?organization_id=&email=&role=` · `PATCH /members/{user_id}?organization_id=&role=` · `DELETE /members/{user_id}?organization_id=` | admin, user-only | Add an *existing* account, change a role or remove a member. Only owners create/modify/remove owners; the last owner is protected; anyone may leave |
 | `GET /projects?organization_id=`, `POST /projects?organization_id=&name=[&description=]` | viewer / member | Key scope `documents:read` for listing |
-| `POST /documents?organization_id=&project_id=` | member (scope `documents:write`) | `multipart/form-data` field `file` (PDF). `202 {document_id, job_id, status}` |
+| `POST /documents?organization_id=&project_id=[&schema_id=]` | member (scope `documents:write`) | `multipart/form-data` field `file` (PDF). `schema_id` pins that schema's *latest* version at upload time, overriding the project/org default. `202 {document_id, job_id, status}` |
 | `GET /documents?organization_id=` | scope `documents:read` | Latest 100 |
 | `GET /documents/{id}?organization_id=` | scope `documents:read` | Metadata |
 | `DELETE /documents/{id}?organization_id=` | member (scope `documents:write`) | Soft-deletes the record and removes the stored PDF (`204`) |
 | `GET /documents/{id}/status?organization_id=` | scope `documents:read` | Latest job status and failure code |
-| `POST /documents/{id}/process?organization_id=` | member (scope `documents:write`) | Idempotent re-queue; returns the active job if one exists |
+| `POST /documents/{id}/process?organization_id=[&schema_id=]` | member (scope `documents:write`) | Idempotent re-queue; returns the active job if one exists |
 | `GET /documents/{id}/download?organization_id=[&inline=true]` | scope `documents:read` | Original PDF |
-| `GET /documents/{id}/extraction?organization_id=` | scope `documents:read` | Latest completed extraction and fields |
+| `GET /documents/{id}/extraction?organization_id=` | scope `documents:read` | Latest completed extraction, its fields (each with a `confidence` score), and `{requires_review, validation_issues}` from the business-rule/JSON-Schema validation layer |
 | `PATCH /extraction-fields/{id}?organization_id=` | member (scope `documents:write`) | Body: any JSON value (≤ 64 KiB); marks the field manually verified |
 | `GET /documents/{id}/export?organization_id=&format=json\|csv\|xlsx` | scope `exports:read` | Spreadsheet formulas are neutralized |
-| `GET /schemas?organization_id=`, `POST /schemas?organization_id=&name=` | scope `schemas:read` / member | `POST` body is an object JSON Schema (≤ 64 KiB); optional `project_id` |
+| `GET /schemas?organization_id=`, `POST /schemas?organization_id=&name=[&prompt_instructions=]` | scope `schemas:read` / member | `POST` body is an object JSON Schema (≤ 64 KiB); optional `project_id` |
+| `GET /schemas/{id}/versions?organization_id=`, `POST /schemas/{id}/versions?organization_id=[&prompt_instructions=]` | scope `schemas:read` / member | List every version of a schema, or publish a new one (body: object JSON Schema). Prior versions are kept — a job that pinned one keeps extracting against it |
 | `GET, POST /api-keys?organization_id=`, `DELETE /api-keys/{id}` | admin, user-only | `POST` body: JSON array of scopes. The secret is returned once |
 | `GET /usage?organization_id=` | scope `usage:read` | Plan and metric totals |
 | `GET /audit-logs?organization_id=` | admin, user-only | Latest 100 events |
-| `GET /health`, `GET /ready` | public | Liveness / database readiness |
+| `POST /invitations?organization_id=`, `GET /invitations?organization_id=`, `DELETE /invitations/{id}?organization_id=` | admin, user-only | Email an invite (body `{email, role}`); the raw token is only ever sent by email |
+| `POST /invitations/accept` | user-only | Body `{token}`; the signed-in user's email must match the invitation |
+| `POST /webhooks?organization_id=`, `GET /webhooks?organization_id=`, `DELETE /webhooks/{id}?organization_id=` | admin, user-only | Body `{url, description?, events?}`; `url` must be a public HTTPS endpoint (SSRF-checked at creation *and* delivery time). `POST` returns the HMAC `signing_secret` once |
+| `GET /health`, `GET /ready`, `GET /metrics` | public | Liveness / database readiness / Prometheus metrics |
 
 ### Scopes
 
@@ -73,4 +77,27 @@ curl -s -X POST "$API/api/v1/api-keys?organization_id=$ORG&name=ci" \
 
 ## Extraction schemas
 
-A schema is an object JSON Schema describing the `fields` the model should return. For each document the worker uses the newest **active** schema of its project, falling back to the newest organization-wide schema, and records the version in the extraction run. OpenAI *strict* structured output is requested only when every object in the schema sets `additionalProperties: false` and lists all of its properties in `required`; otherwise the model is called in non-strict mode.
+A schema is an object JSON Schema describing the `fields` the model should return. Picking one explicitly (`schema_id` on upload or reprocess) pins its *latest version at that moment* to the job, so editing the schema later never retargets a job already in flight. Without an explicit choice, the worker uses the newest **active** schema of the document's project, falling back to the newest organization-wide schema. Either way the resolved version is recorded on the extraction run. OpenAI *strict* structured output is requested only when every object in the schema sets `additionalProperties: false` and lists all of its properties in `required`; otherwise the model is called in non-strict mode.
+
+A schema can have multiple versions (`POST /schemas/{id}/versions`); `GET /schemas/{id}/versions` lists them newest-first.
+
+## Confidence scores and validation
+
+Every extraction asks the model for a 0–1 confidence score per field alongside the value itself (`ExtractionField.confidence`, also in the `GET .../extraction` response). Right after extraction, two independent checks run before the result is considered final:
+
+1. **JSON Schema conformance** — the extracted `fields` object is validated against the resolved schema version (`app.validation.validate_fields`).
+2. **Confidence thresholding** — any field below `CONFIDENCE_REVIEW_THRESHOLD` (default `0.70`) is flagged, regardless of schema validity.
+
+Neither check blocks persistence — the run is still saved with whatever the model returned — but a run with any issue is marked `requires_review: true`, and `GET /documents/{id}/extraction` returns both that flag and the `validation_issues` list (`{field, rule, message}`) so a reviewer or an automated pipeline can route it before trusting it.
+
+## Webhooks
+
+Subscribe to `document.completed` / `document.failed` and every matching event fires a signed `POST`:
+
+```json
+{"event": "document.completed", "data": {"document_id": "..."}}
+```
+
+Headers: `X-DocMind-Event: document.completed` and `X-DocMind-Signature: sha256=<hex HMAC-SHA256 of the raw body, keyed with the webhook's signing_secret>`. Verify it before trusting the payload. The signing secret is derived (never stored) from `JWT_SECRET` and the webhook id, and is shown to you exactly once, in the `POST /webhooks` response.
+
+The target URL must be a public, routable HTTPS endpoint — anything resolving to a private, loopback, link-local or reserved address is rejected both when the webhook is created and again on every delivery attempt (DNS can change in between).

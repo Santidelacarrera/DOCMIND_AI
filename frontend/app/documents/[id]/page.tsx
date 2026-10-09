@@ -10,14 +10,20 @@ type Field = {
   confidence: number | null;
   manually_verified: boolean;
 };
+type ValidationIssue = { field: string | null; rule: string; message: string };
+const LOW_CONFIDENCE_THRESHOLD = 0.7;
 export default function DocumentDetail() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [org, setOrg] = useState("");
   const [fields, setFields] = useState<Field[]>([]);
+  const [requiresReview, setRequiresReview] = useState(false);
+  const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
   const [message, setMessage] = useState("Loading document…");
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [failed, setFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -38,13 +44,31 @@ export default function DocumentDetail() {
       );
       if (data.ok) {
         if (cancelled) return;
-        setFields((await data.json()).fields);
+        const payload = await data.json();
+        setFields(payload.fields);
+        setRequiresReview(Boolean(payload.requires_review));
+        setValidationIssues(payload.validation_issues ?? []);
         setMessage("");
       } else {
-        setMessage(
-          "Extraction is not ready yet. Keep this page open and retry after processing completes.",
+        const status = await api(
+          `/api/v1/documents/${params.id}/status?organization_id=${list[0].id}`,
         );
-        timer = setTimeout(load, 1000);
+        if (cancelled) return;
+        if (!status.ok) {
+          setMessage("Document not found or not available.");
+          return;
+        }
+        const info = (await status.json()) as { status: string };
+        if (info?.status === "FAILED") {
+          setFailed(true);
+          setMessage("Processing failed. You can retry it.");
+          return;
+        }
+        setFailed(false);
+        setMessage(
+          `Processing (${info.status.toLowerCase().replace("_", " ")})… this page updates automatically.`,
+        );
+        timer = setTimeout(load, 1500);
       }
     };
     void load();
@@ -52,7 +76,7 @@ export default function DocumentDetail() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [params.id, router]);
+  }, [params.id, router, reloadKey]);
   async function save(field: Field) {
     if (!org) return;
     let value: unknown = draft;
@@ -72,6 +96,19 @@ export default function DocumentDetail() {
       setEditing(null);
     } else setMessage("Could not save the field.");
   }
+  async function retry() {
+    if (!org) return;
+    const res = await api(
+      `/api/v1/documents/${params.id}/process?organization_id=${org}`,
+      { method: "POST" },
+    );
+    if (res.ok) {
+      setFailed(false);
+      setMessage("Processing restarted…");
+      setReloadKey((n) => n + 1);
+    } else setMessage("Could not restart processing.");
+  }
+
   function download(format: string) {
     if (org)
       window.open(
@@ -113,9 +150,26 @@ export default function DocumentDetail() {
               <button onClick={() => download("xlsx")}>XLSX</button>
             </span>
           </div>
-          {message && <p>{message}</p>}
-          {fields.map((field) => (
-            <article className="field" key={field.id}>
+          {message && <p role="status">{message}</p>}
+          {failed && <button onClick={retry}>Retry processing</button>}
+          {requiresReview && (
+            <div role="alert" className="field">
+              <strong>Needs review</strong>
+              <ul>
+                {validationIssues.map((issue, index) => (
+                  <li key={index}>
+                    {issue.field ? `${issue.field}: ` : ""}
+                    {issue.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {fields.map((field) => {
+            const lowConfidence =
+              field.confidence !== null && field.confidence < LOW_CONFIDENCE_THRESHOLD;
+            return (
+            <article className={`field${lowConfidence ? " low-confidence" : ""}`} key={field.id}>
               <label>{field.name}</label>
               {editing === field.id ? (
                 <>
@@ -133,6 +187,7 @@ export default function DocumentDetail() {
                     {field.confidence !== null
                       ? `${Math.round(field.confidence * 100)}% confidence`
                       : "Confidence unavailable"}
+                    {lowConfidence ? " · Needs review" : ""}
                     {field.manually_verified ? " · Verified manually" : ""}
                   </small>
                   <button
@@ -150,7 +205,8 @@ export default function DocumentDetail() {
                 </>
               )}
             </article>
-          ))}
+            );
+          })}
         </section>
       </div>
     </main>
