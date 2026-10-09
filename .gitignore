@@ -20,3 +20,5 @@ documento_*.txt
 *.log
 *.egg-info/
 *.tsbuildinfo
+eval_reports/
+celerybeat-schedule*

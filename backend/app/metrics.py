@@ -34,6 +34,16 @@ EXTRACTION_REQUIRES_REVIEW_TOTAL = Counter(
     "docmind_extraction_requires_review_total",
     "Extraction runs flagged for manual review by the validation layer",
 )
+JOBS_RECOVERED_TOTAL = Counter(
+    "docmind_jobs_recovered_total",
+    "Stuck jobs handled by the recovery task, by outcome (requeued or failed)",
+    ["outcome"],
+)
+RETENTION_PURGED_TOTAL = Counter(
+    "docmind_retention_purged_total",
+    "Records removed by the retention job, by kind",
+    ["kind"],
+)
 WEBHOOK_DELIVERIES_TOTAL = Counter(
     "docmind_webhook_deliveries_total",
     "Outbound webhook delivery attempts",

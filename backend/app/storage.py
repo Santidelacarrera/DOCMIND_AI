@@ -1,7 +1,25 @@
-﻿from pathlib import Path
+from pathlib import Path
 from typing import Protocol
 
 from app.core import settings
+
+
+class StorageAccessError(Exception):
+    """A storage key does not belong to the organization asking for it."""
+
+
+def owned_key(organization_id: object, key: str) -> str:
+    """Return ``key`` only if it lives under ``organization_id``'s prefix.
+
+    Keys are generated as ``<organization_id>/<uuid>.pdf``. The API already scopes every
+    query by organization; this is the independent second check at the storage boundary,
+    so a tampered/misrouted database row can never make one tenant read or delete
+    another tenant's object.
+    """
+    prefix = f"{organization_id}/"
+    if not key.startswith(prefix) or ".." in key.split("/") or "\\" in key:
+        raise StorageAccessError("STORAGE_KEY_NOT_OWNED")
+    return key
 
 
 class StorageProvider(Protocol):

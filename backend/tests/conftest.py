@@ -12,7 +12,8 @@ _TMP = Path(tempfile.mkdtemp(prefix="docmind-tests-"))
 os.environ.update(
     {
         "ENVIRONMENT": "development",
-        "DATABASE_URL": f"sqlite:///{(_TMP / 'test.db').as_posix()}",
+        # TEST_DATABASE_URL runs the suite on Postgres (real row locks); default is hermetic SQLite.
+        "DATABASE_URL": os.environ.get("TEST_DATABASE_URL", f"sqlite:///{(_TMP / 'test.db').as_posix()}"),
         "LOCAL_STORAGE_PATH": str(_TMP / "uploads"),
         "STORAGE_PROVIDER": "local",
         "JWT_SECRET": "test-secret-test-secret-test-secret-123",
@@ -76,9 +77,29 @@ class FakeOCR:
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve the reserved example.com domain to a public address without real DNS, so
+    webhook-URL validation tests behave the same offline (CI sandboxes, laptops). Every other
+    hostname (``localhost``, private ranges...) still resolves for real."""
+    import socket
+
+    real = socket.getaddrinfo
+
+    def getaddrinfo(host: object, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        if isinstance(host, str) and (host == "example.com" or host.endswith(".example.com")):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+        return real(host, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+
+
+@pytest.fixture(autouse=True)
 def _environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
+    # Recreated tables invalidate server-side prepared statements held by pooled Postgres
+    # connections ("cached plan must not change result type"); start each test with fresh ones.
+    engine.dispose()
     FakeRedis.counters = {}
     FakeRedis.unavailable = False
     monkeypatch.setattr(rate_limit, "Redis", FakeRedis)

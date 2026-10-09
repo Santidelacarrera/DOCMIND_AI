@@ -24,6 +24,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, Field
 from pypdf import PdfReader
 from sqlalchemy import func, select
@@ -63,6 +64,7 @@ from app.models import (
 )
 from app.notifications import email_provider, invitation_email
 from app.rate_limit import enforce
+from app.retention import delete_objects, scrub_derived_text
 from app.security import (
     ALLOWED_SCOPES,
     ApiPrincipal,
@@ -74,7 +76,7 @@ from app.security import (
     require_user,
     verify_login_password,
 )
-from app.storage import storage
+from app.storage import StorageAccessError, owned_key, storage
 from app.telemetry import configure_tracing
 from app.webhooks import WebhookURLError, signing_secret
 from app.webhooks import validate_url as validate_webhook_url
@@ -1038,7 +1040,24 @@ def _resolve_requested_schema_version(
     return version
 
 
-@app.post("/api/v1/documents", status_code=status.HTTP_202_ACCEPTED)
+def _duplicate_response(existing: Document) -> JSONResponse:
+    """409 that tells a retrying client which document it already has (idempotent retry)."""
+    return JSONResponse(
+        status_code=409,
+        content={"detail": "DUPLICATE_DOCUMENT", "document_id": str(existing.id)},
+    )
+
+
+def _enqueue(job_id: uuid.UUID) -> None:
+    """Hand the job to the broker. The job row is already committed as QUEUED, so a broker
+    outage must not fail the request: ``recover_stuck_jobs`` re-enqueues it."""
+    try:
+        process_document.delay(str(job_id))
+    except Exception:
+        logger.warning("broker unavailable; job stays queued for recovery", extra={"job_id": str(job_id)})
+
+
+@app.post("/api/v1/documents", status_code=status.HTTP_202_ACCEPTED, response_model=None)
 def upload_document(
     organization_id: str,
     project_id: uuid.UUID,
@@ -1047,7 +1066,7 @@ def upload_document(
     file: UploadFile = File(...),
     user: User | ApiPrincipal = Depends(current_user),
     db: Session = Depends(get_db),
-) -> dict[str, object]:
+) -> dict[str, object] | JSONResponse:
     enforce(request, "upload", settings().rate_limit_upload)
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, Role.member, scope="documents:write")
@@ -1066,10 +1085,17 @@ def upload_document(
     if not (file.filename or "").lower().endswith(".pdf") or not content.startswith(b"%PDF-"):
         raise HTTPException(415, "UNSUPPORTED_FILE_TYPE")
     try:
-        page_count = len(PdfReader(io.BytesIO(content)).pages)
+        reader = PdfReader(io.BytesIO(content))
+        if reader.is_encrypted:
+            raise HTTPException(422, "PDF_ENCRYPTED")
+        page_count = len(reader.pages)
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(422, "DOCUMENT_INVALID") from None
-    if page_count < 1 or page_count > settings().max_pdf_pages:
+    if page_count < 1:
+        raise HTTPException(422, "DOCUMENT_INVALID")
+    if page_count > settings().max_pdf_pages:
         raise HTTPException(422, "PDF_PAGE_LIMIT_EXCEEDED")
     try:
         antivirus().scan(content)
@@ -1099,8 +1125,8 @@ def upload_document(
         )
     )
     if existing:
-        raise HTTPException(409, "DUPLICATE_DOCUMENT")
-    key = f"{org_id}/{uuid.uuid4()}.pdf"
+        return _duplicate_response(existing)
+    key = owned_key(org_id, f"{org_id}/{uuid.uuid4()}.pdf")
     storage.put(key, content)
     try:
         document = Document(
@@ -1120,53 +1146,70 @@ def upload_document(
         db.add(UsageRecord(organization_id=org_id, metric="pages_reserved", quantity=page_count, document_id=document.id))
         audit(db, "document.upload", "document", str(document.id), user, org_id)
         db.commit()
+    except IntegrityError:
+        # A concurrent upload of the same bytes won the race (unique live-checksum index).
+        db.rollback()
+        storage.delete(key)
+        winner = db.scalar(
+            select(Document).where(
+                Document.project_id == project_id,
+                Document.checksum == checksum,
+                Document.deleted_at.is_(None),
+            )
+        )
+        if winner is None:
+            raise
+        return _duplicate_response(winner)
     except Exception:
         db.rollback()
         storage.delete(key)
         raise
-    process_document.delay(str(job.id))
+    _enqueue(job.id)
     return {"document_id": str(document.id), "job_id": str(job.id), "status": job.status.value}
 
 
 @app.get("/api/v1/documents")
 def list_documents(
-    organization_id: str, user: User | ApiPrincipal = Depends(current_user), db: Session = Depends(get_db)
+    organization_id: str,
+    status: JobStatus | None = Query(
+        default=None, description="Only documents whose latest job is in this state, e.g. FAILED"
+    ),
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
 ) -> list[dict[str, object]]:
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, scope="documents:read")
-    docs = db.scalars(
-        select(Document)
-        .where(Document.organization_id == org_id, Document.deleted_at.is_(None))
-        .order_by(Document.created_at.desc())
-        .limit(100)
-    ).all()
     # Latest job per document in one query (avoids N+1).
     latest = (
         select(ProcessingJob.document_id, func.max(ProcessingJob.attempt).label("attempt"))
-        .where(ProcessingJob.document_id.in_([d.id for d in docs]))
+        .where(ProcessingJob.organization_id == org_id)
         .group_by(ProcessingJob.document_id)
         .subquery()
     )
-    statuses = {
-        doc_id: job_status
-        for doc_id, job_status in db.execute(
-            select(ProcessingJob.document_id, ProcessingJob.status).join(
-                latest,
-                (ProcessingJob.document_id == latest.c.document_id)
-                & (ProcessingJob.attempt == latest.c.attempt),
-            )
-        ).all()
-    }
+    query = (
+        select(Document, ProcessingJob.status, ProcessingJob.failure_code)
+        .outerjoin(latest, latest.c.document_id == Document.id)
+        .outerjoin(
+            ProcessingJob,
+            (ProcessingJob.document_id == latest.c.document_id)
+            & (ProcessingJob.attempt == latest.c.attempt),
+        )
+        .where(Document.organization_id == org_id, Document.deleted_at.is_(None))
+    )
+    if status is not None:
+        query = query.where(ProcessingJob.status == status)
+    rows = db.execute(query.order_by(Document.created_at.desc()).limit(100)).all()
     return [
         {
             "id": str(d.id),
             "filename": d.filename,
             "pages": d.page_count,
-            "status": statuses[d.id].value if d.id in statuses else None,
+            "status": job_status.value if job_status else None,
+            "failure_code": failure_code,
             "created_at": d.created_at,
             "project_id": str(d.project_id),
         }
-        for d in docs
+        for d, job_status, failure_code in rows
     ]
 
 
@@ -1231,7 +1274,7 @@ def process_existing_document(
     db.flush()
     audit(db, "document.process", "document", str(item.id), user, org_id)
     db.commit()
-    process_document.delay(str(job.id))
+    _enqueue(job.id)
     return {"document_id": str(item.id), "job_id": str(job.id), "status": job.status.value, "reused": False}
 
 
@@ -1254,8 +1297,15 @@ def document_status(
         raise HTTPException(404, "DOCUMENT_NOT_FOUND")
     return {
         "document_id": str(document_id),
+        "job_id": str(job.id),
         "status": job.status.value,
         "failure_code": job.failure_code,
+        "failure_message": job.failure_message,
+        "attempt": job.attempt,
+        "retry_count": job.retry_count,
+        "created_at": job.created_at,
+        "started_at": job.started_at,
+        "completed_at": job.completed_at,
     }
 
 
@@ -1293,7 +1343,9 @@ def delete_document(
     user: User | ApiPrincipal = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> Response:
-    """Soft-delete the record and remove the stored object (extractions stay for audit)."""
+    """Delete a document: the stored objects and extracted text go now; the remaining
+    derived records (extraction values, jobs) are hard-deleted by the retention job
+    after ``retention_deleted_days`` (see docs/DATA_RETENTION.md)."""
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, Role.member, scope="documents:write")
     item = db.scalar(
@@ -1311,14 +1363,12 @@ def delete_document(
         db.scalars(select(DocumentVersion.storage_key).where(DocumentVersion.document_id == item.id))
     )
     item.deleted_at = datetime.now(UTC)
+    scrub_derived_text(db, item.id)
     audit(db, "document.delete", "document", str(item.id), user, org_id)
     db.commit()
-    for key in keys:
-        try:
-            storage.delete(key)
-        except Exception:
-            # The record is already gone; the orphaned object is reconciled by operations.
-            logger.warning("storage cleanup failed for deleted document %s", document_id)
+    if delete_objects(org_id, keys):
+        # The record is already gone; the orphaned object is reconciled by operations.
+        logger.warning("storage cleanup incomplete for deleted document %s", document_id)
     return Response(status_code=204)
 
 
@@ -1344,8 +1394,14 @@ def download(
     frame_ancestors = " ".join(
         o.strip() for o in settings().cors_origins.split(",") if o.strip()
     )
+    try:
+        # The key must live under the caller's organization prefix, independently of the
+        # database lookup above.
+        content = storage.get(owned_key(org_id, item.storage_key))
+    except (StorageAccessError, FileNotFoundError):
+        raise HTTPException(404, "DOCUMENT_NOT_FOUND") from None
     return Response(
-        storage.get(item.storage_key),
+        content,
         media_type="application/pdf",
         headers={
             "Content-Disposition": content_disposition(item.filename, inline=inline),
@@ -1356,16 +1412,7 @@ def download(
     )
 
 
-@app.get("/api/v1/documents/{document_id}/extraction")
-def extraction(
-    document_id: uuid.UUID,
-    organization_id: str,
-    user: User | ApiPrincipal = Depends(current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, object]:
-    org_id = globals()["organization_id"](organization_id)
-    membership(org_id, user, db, scope="documents:read")
-    live_document(db, org_id, document_id)
+def _latest_run(db: Session, org_id: uuid.UUID, document_id: uuid.UUID) -> ExtractionRun:
     run = db.scalar(
         select(ExtractionRun)
         .where(
@@ -1377,51 +1424,208 @@ def extraction(
     )
     if not run:
         raise HTTPException(404, "EXTRACTION_NOT_FOUND")
-    fields = db.scalars(
-        select(ExtractionField).where(ExtractionField.extraction_run_id == run.id)
-    ).all()
+    return run
+
+
+def _flagged_fields(run: ExtractionRun) -> set[str]:
+    issues = run.validation_issues or []
+    flagged = {str(i["field"]) for i in issues if i.get("field")}
+    if any(i.get("rule") == "low_ocr_confidence" for i in issues):
+        # An unreliable scan taints every value read from it.
+        flagged |= set((run.result or {}).get("fields", {}))
+    return flagged
+
+
+def _review_state(run: ExtractionRun, fields: list[ExtractionField]) -> dict[str, object]:
+    """``not_required`` | ``pending`` | ``approved`` plus the fields still awaiting a human."""
+    flagged = _flagged_fields(run)
+    pending = sorted(f.name for f in fields if f.name in flagged and not f.manually_verified)
+    if run.reviewed_at is not None:
+        state = "approved"
+    elif run.requires_review:
+        state = "pending"
+    else:
+        state = "not_required"
+    return {
+        "status": state,
+        "pending_fields": pending if state == "pending" else [],
+        "approved_at": run.reviewed_at,
+    }
+
+
+def _extraction_payload(db: Session, org_id: uuid.UUID, document_id: uuid.UUID) -> dict[str, Any]:
+    """The extraction view shared by the read and export endpoints. Callers authorize first."""
+    live_document(db, org_id, document_id)
+    run = _latest_run(db, org_id, document_id)
+    fields = list(
+        db.scalars(select(ExtractionField).where(ExtractionField.extraction_run_id == run.id)).all()
+    )
+    flagged = _flagged_fields(run)
     return {
         "run_id": str(run.id),
         "result": run.result,
         "requires_review": run.requires_review,
         "validation_issues": run.validation_issues,
+        "review": _review_state(run, fields),
+        "model": {
+            "provider": run.provider,
+            "name": run.model,
+            "prompt_tokens": run.prompt_tokens,
+            "completion_tokens": run.completion_tokens,
+            "estimated_cost_usd": run.estimated_cost,
+        },
         "fields": [
             {
                 "id": str(f.id),
                 "name": f.name,
                 "value": f.value,
+                "original_value": f.original_value,
                 "confidence": f.confidence,
                 "manually_verified": f.manually_verified,
+                "needs_review": f.name in flagged and not f.manually_verified,
+                "correction_reason": f.correction_reason,
+                "corrected_at": f.corrected_at,
             }
             for f in fields
         ],
     }
 
 
-@app.patch("/api/v1/extraction-fields/{field_id}")
-def edit_field(
-    field_id: uuid.UUID,
+@app.get("/api/v1/documents/{document_id}/extraction")
+def extraction(
+    document_id: uuid.UUID,
     organization_id: str,
-    value: object = Body(...),
     user: User | ApiPrincipal = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, scope="documents:read")
+    return _extraction_payload(db, org_id, document_id)
+
+
+@app.patch("/api/v1/extraction-fields/{field_id}")
+def edit_field(
+    field_id: uuid.UUID,
+    organization_id: str,
+    request: Request,
+    value: object = Body(None),
+    reason: str | None = Query(default=None, max_length=200),
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Correct (or, with an unchanged value, confirm) one extracted field.
+
+    ``original_value`` is never overwritten, so every correction stays comparable with
+    what the model produced; ``reason`` records why a person changed it. A JSON ``null``
+    body clears the value (e.g. a hallucinated field); an empty body is rejected.
+    """
+    if request.headers.get("content-length") in (None, "", "0"):
+        raise HTTPException(422, "VALUE_REQUIRED")
+    org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, Role.member, scope="documents:write")
     if len(json.dumps(value, default=str)) > MAX_FIELD_VALUE_BYTES:
         raise HTTPException(413, "FIELD_VALUE_TOO_LARGE")
-    field = db.scalar(
-        select(ExtractionField)
-        .join(ExtractionRun)
-        .where(ExtractionField.id == field_id, ExtractionRun.organization_id == org_id)
-    )
-    if not field:
+    row = db.execute(
+        select(ExtractionField, ExtractionRun)
+        .join(ExtractionRun, ExtractionRun.id == ExtractionField.extraction_run_id)
+        .join(Document, Document.id == ExtractionRun.document_id)
+        .where(
+            ExtractionField.id == field_id,
+            ExtractionRun.organization_id == org_id,
+            Document.deleted_at.is_(None),
+        )
+    ).first()
+    if not row:
         raise HTTPException(404, "FIELD_NOT_FOUND")
+    field = row[0]
+    cleaned_reason = (reason or "").strip() or None
+    changed = value != field.original_value
     field.value = value
     field.manually_verified = True
+    field.correction_reason = cleaned_reason or ("unspecified" if changed else "confirmed")
+    field.corrected_by = user.id if isinstance(user, User) else None
+    field.corrected_at = utcnow()
     audit(db, "extraction.edit", "extraction_field", str(field.id), user, org_id)
     db.commit()
-    return {"id": str(field.id), "value": field.value, "manually_verified": True}
+    return {
+        "id": str(field.id),
+        "value": field.value,
+        "manually_verified": True,
+        "changed": changed,
+        "correction_reason": field.correction_reason,
+    }
+
+
+@app.post("/api/v1/documents/{document_id}/review/approve", response_model=None)
+def approve_review(
+    document_id: uuid.UUID,
+    organization_id: str,
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object] | JSONResponse:
+    """Human sign-off. Refused while any flagged field is still unverified."""
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.member, scope="documents:write")
+    live_document(db, org_id, document_id)
+    run = _latest_run(db, org_id, document_id)
+    fields = list(
+        db.scalars(select(ExtractionField).where(ExtractionField.extraction_run_id == run.id)).all()
+    )
+    state = _review_state(run, fields)
+    if state["pending_fields"]:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "REVIEW_INCOMPLETE", "pending_fields": state["pending_fields"]},
+        )
+    run.reviewed_at = utcnow()
+    run.reviewed_by = user.id if isinstance(user, User) else None
+    audit(db, "extraction.approve", "extraction_run", str(run.id), user, org_id)
+    db.commit()
+    return {"run_id": str(run.id), "status": "approved", "approved_at": run.reviewed_at}
+
+
+@app.get("/api/v1/review/queue")
+def review_queue(
+    organization_id: str,
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    """Documents whose latest extraction needs a human and has not been signed off."""
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, scope="documents:read")
+    latest = (
+        select(ExtractionRun.document_id, func.max(ExtractionRun.created_at).label("at"))
+        .where(ExtractionRun.organization_id == org_id, ExtractionRun.status == RunStatus.completed)
+        .group_by(ExtractionRun.document_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(ExtractionRun, Document)
+        .join(Document, Document.id == ExtractionRun.document_id)
+        .join(
+            latest,
+            (latest.c.document_id == ExtractionRun.document_id) & (latest.c.at == ExtractionRun.created_at),
+        )
+        .where(
+            ExtractionRun.organization_id == org_id,
+            ExtractionRun.requires_review.is_(True),
+            ExtractionRun.reviewed_at.is_(None),
+            Document.deleted_at.is_(None),
+        )
+        .order_by(ExtractionRun.created_at.asc())
+        .limit(100)
+    ).all()
+    return [
+        {
+            "document_id": str(doc.id),
+            "filename": doc.filename,
+            "run_id": str(run.id),
+            "issue_count": len(run.validation_issues or []),
+            "flagged_fields": sorted(_flagged_fields(run)),
+            "created_at": run.created_at,
+        }
+        for run, doc in rows
+    ]
 
 
 @app.get("/api/v1/documents/{document_id}/export")
@@ -1434,8 +1638,24 @@ def export(
 ) -> Response:
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, scope="exports:read")
-    data: dict[str, Any] = extraction(document_id, organization_id, user, db)
+    data = _extraction_payload(db, org_id, document_id)
     fields: list[dict[str, Any]] = data["fields"]
+    review_status = data["review"]["status"]
+    columns = [
+        "name", "value", "original_value", "confidence", "manually_verified",
+        "needs_review", "correction_reason", "review_status",
+    ]
+
+    def cell(value: object) -> object:
+        return neutralize_formula(json.dumps(value) if isinstance(value, (dict, list)) else value)
+
+    def row(f: dict[str, Any]) -> list[object]:
+        return [
+            neutralize_formula(f["name"]), cell(f["value"]), cell(f["original_value"]),
+            f["confidence"], f["manually_verified"], f["needs_review"],
+            neutralize_formula(f["correction_reason"]), review_status,
+        ]
+
     if format == "json":
         return Response(
             json.dumps(data, default=str),
@@ -1444,49 +1664,27 @@ def export(
         )
     if format == "csv":
         output = io.StringIO()
-        writer = csv.DictWriter(
-            output, fieldnames=["name", "value", "confidence", "manually_verified"]
-        )
-        writer.writeheader()
-        writer.writerows(
-            [
-                {
-                    "name": neutralize_formula(f["name"]),
-                    "value": neutralize_formula(
-                        json.dumps(f["value"]) if isinstance(f["value"], (dict, list)) else f["value"]
-                    ),
-                    "confidence": f["confidence"],
-                    "manually_verified": f["manually_verified"],
-                }
-                for f in fields
-            ]
-        )
+        writer = csv.writer(output)
+        writer.writerow(columns)
+        writer.writerows(row(f) for f in fields)
         return Response(
             output.getvalue(),
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=extraction.csv"},
         )
-    if format == "xlsx":
-        from openpyxl import Workbook
+    from openpyxl import Workbook
 
-        workbook = Workbook()
-        sheet = workbook.active
-        assert sheet is not None
-        sheet.title = "Extraction"
-        sheet.append(["Field", "Value", "Confidence", "Manually verified"])
-        for field in fields:
-            value = field["value"]
-            sheet.append([
-                neutralize_formula(field["name"]),
-                neutralize_formula(json.dumps(value) if isinstance(value, (dict, list)) else value),
-                field["confidence"],
-                field["manually_verified"],
-            ])
-        buffer = io.BytesIO()
-        workbook.save(buffer)
-        return Response(
-            buffer.getvalue(),
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=extraction.xlsx"},
-        )
-    raise HTTPException(422, "Unsupported export format")
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Extraction"
+    sheet.append(columns)
+    for f in fields:
+        sheet.append(row(f))
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return Response(
+        buffer.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=extraction.xlsx"},
+    )

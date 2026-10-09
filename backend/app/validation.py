@@ -9,9 +9,19 @@ Two independent checks run after every extraction:
    ``CONFIDENCE_REVIEW_THRESHOLD`` is flagged for human review, independent of
    whether it is otherwise schema-valid.
 
-Neither check ever raises: a run with issues is still persisted (so nothing is
+Two further checks flag fields for review:
+
+3. Missing confidence — a field the model returned without a confidence score is
+   treated as unverified rather than trusted.
+4. Unexpected fields — a field not declared in the tenant schema's ``properties``
+   (typical of a prompt-injected or hallucinated key) is flagged.
+
+None of these checks raises: a run with issues is still persisted (so nothing is
 silently dropped), but it is marked ``requires_review=True`` so the UI and API
 consumers can route it for manual sign-off instead of trusting it blindly.
+
+Separately, :func:`check_envelope` is the *rejection* gate: an LLM answer that is not
+the ``{"fields": {...}, "confidence": {...}}`` envelope is never stored at all.
 """
 
 import math
@@ -36,8 +46,66 @@ def validate_fields(
     """
     issues: list[dict[str, Any]] = []
     issues.extend(_schema_issues(json_schema, fields))
+    issues.extend(_unexpected_field_issues(json_schema, fields))
     issues.extend(_confidence_issues(fields, confidence or {}))
     return issues
+
+
+def check_envelope(result: Any) -> list[str]:
+    """Structural problems that make an LLM answer unusable (empty list = acceptable).
+
+    Deliberately separate from :func:`validate_fields`: these are not "needs a human
+    look" findings, they mean the answer must be rejected (and may be re-requested).
+    """
+    if not isinstance(result, dict):
+        return ["answer is not a JSON object"]
+    problems: list[str] = []
+    if not isinstance(result.get("fields"), dict):
+        problems.append("`fields` is missing or not an object")
+    confidence = result.get("confidence")
+    if confidence is not None and not isinstance(confidence, dict):
+        problems.append("`confidence` is not an object")
+    return problems
+
+
+def ocr_issues(confidences: list[float | None]) -> list[dict[str, Any]]:
+    """A scan the OCR engine itself is unsure about makes *every* field untrustworthy,
+    including ones the LLM reported with high confidence (it cannot see the pixels)."""
+    threshold = settings().ocr_review_threshold
+    known = [c for c in confidences if c is not None]
+    if not known:
+        return [{"field": None, "rule": "low_ocr_confidence", "message": "OCR recognised no text."}]
+    mean = sum(known) / len(known)
+    if mean < threshold:
+        return [
+            {
+                "field": None,
+                "rule": "low_ocr_confidence",
+                "message": f"OCR confidence {mean:.2f} is below the {threshold:.2f} review threshold.",
+            }
+        ]
+    return []
+
+
+def has_schema_violations(issues: list[dict[str, Any]]) -> bool:
+    return any(issue["rule"] == "schema" for issue in issues)
+
+
+def _unexpected_field_issues(
+    json_schema: dict[str, Any] | None, fields: dict[str, Any]
+) -> list[dict[str, Any]]:
+    declared = (json_schema or {}).get("properties")
+    if not isinstance(declared, dict):
+        return []
+    return [
+        {
+            "field": name,
+            "rule": "unexpected_field",
+            "message": "Field is not declared in the extraction schema.",
+        }
+        for name in fields
+        if name not in declared
+    ]
 
 
 def _schema_issues(json_schema: dict[str, Any] | None, fields: dict[str, Any]) -> list[dict[str, Any]]:
@@ -70,6 +138,13 @@ def _confidence_issues(
     for name in fields:
         score = confidence.get(name)
         if score is None:
+            issues.append(
+                {
+                    "field": name,
+                    "rule": "no_confidence",
+                    "message": "The model reported no usable confidence for this field.",
+                }
+            )
             continue
         try:
             score = float(score)

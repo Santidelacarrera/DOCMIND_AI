@@ -78,9 +78,10 @@ def test_corrupt_storage_object_fails_cleanly(client, register) -> None:
         job = db.get(ProcessingJob, uuid.UUID(body["job_id"]))
         assert job is not None
         assert job.status == JobStatus.failed
-        assert job.failure_code == "PROCESSING_FAILED"
+        assert job.failure_code == "DOCUMENT_INVALID"
         # Raw parser errors must not leak into the persisted message.
-        assert "pdf" not in (job.failure_message or "").lower()
+        assert job.failure_message == worker.FAILURE_MESSAGES["DOCUMENT_INVALID"]
+        assert "definitely not" not in (job.failure_message or "")
 
 
 def test_schema_selection_prefers_project_schema_and_is_tenant_scoped(client, register) -> None:

@@ -20,7 +20,7 @@ dev = ["httpx>=0.28.1", "mypy>=1.13", "pytest>=8.3", "pytest-cov>=5", "ruff>=0.8
 requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
 [tool.setuptools]
-packages = ["app"]
+packages = ["app", "app.evaluation"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 [tool.ruff]
