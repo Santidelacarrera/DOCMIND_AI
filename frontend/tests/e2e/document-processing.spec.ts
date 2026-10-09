@@ -34,8 +34,12 @@ test("upload, extraction edit, and XLSX export use the real processing pipeline"
   // (empty) <select> itself. selectOption does not poll for a matching
   // <option> to show up later: given zero options it just waits on the
   // locator resolution step forever and times out, even though the option
-  // does arrive a moment later. Wait for the real option first.
-  await expect(projectSelect.getByRole("option", { name: "E2E" })).toBeAttached();
+  // does arrive a moment later. Wait for the real option first -- via a
+  // plain CSS/text locator, not getByRole("option"): Playwright's role
+  // engine doesn't reliably see native <option> elements (confirmed: the
+  // accessibility snapshot captured at the exact moment getByRole("option")
+  // gave up already showed `option "E2E" [selected]` in the combobox).
+  await expect(projectSelect.locator("option", { hasText: "E2E" })).toHaveCount(1);
   await projectSelect.selectOption({ label: "E2E" });
   await page.getByLabel("PDF").setInputFiles({ name: "test-document.pdf", mimeType: "application/pdf", buffer: pdf });
   await page.getByRole("button", { name: "Upload and process" }).click();
