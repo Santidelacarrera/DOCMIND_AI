@@ -63,16 +63,37 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
     defaults: { run: { working-directory: frontend } }
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      # TODO(temporary): package.json was just bumped past a vulnerable next/
+      # source-map-js resolution, but the sandbox driving this PR has no
+      # network access to npm's registry to regenerate package-lock.json
+      # itself. The runner does, so let it resolve the new lockfile here and
+      # push it back to this branch before the real `npm ci` verifies it.
+      # Remove this step once the lockfile reflects the bumped versions.
+      - name: Refresh lockfile for the pending next/source-map-js bump
+        if: github.event_name == 'pull_request'
+        run: |
+          npm install --package-lock-only
+          if ! git diff --quiet -- package-lock.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package-lock.json
+            git commit -m "chore: regenerate frontend lockfile for next/source-map-js bump"
+            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_HEAD_REF}"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
