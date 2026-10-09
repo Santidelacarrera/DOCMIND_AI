@@ -6,11 +6,11 @@ from app.notifications import ConsoleEmailProvider
 from app.webhooks import WebhookURLError, sign_payload, signing_secret, validate_url
 
 
-def _invite(client, owner, email, role="MEMBER"):
+def _invite(client, actor, email, role="MEMBER", organization_id=None):
     return client.post(
-        f"/api/v1/invitations?organization_id={owner.org}",
+        f"/api/v1/invitations?organization_id={organization_id or actor.org}",
         json={"email": email, "role": role},
-        headers=owner.headers,
+        headers=actor.headers,
     )
 
 
@@ -45,7 +45,9 @@ def test_non_admin_cannot_invite(client, register) -> None:
         f"/api/v1/members?organization_id={owner.org}&email={viewer.email}&role=VIEWER",
         headers=owner.headers,
     )
-    assert _invite(client, viewer, "x@example.com").status_code == 403
+    assert (
+        _invite(client, viewer, "x@example.com", organization_id=owner.org).status_code == 403
+    )
 
 
 def test_accept_invitation_requires_matching_email_and_grants_membership(client, register) -> None:
