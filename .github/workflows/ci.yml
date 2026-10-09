@@ -63,37 +63,16 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
     defaults: { run: { working-directory: frontend } }
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref || github.ref_name }}
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      # TODO(temporary): package.json was just bumped past a vulnerable next/
-      # source-map-js resolution, but the sandbox driving this PR has no
-      # network access to npm's registry to regenerate package-lock.json
-      # itself. The runner does, so let it resolve the new lockfile here and
-      # push it back to this branch before the real `npm ci` verifies it.
-      # Remove this step once the lockfile reflects the bumped versions.
-      - name: Refresh lockfile for the pending next/source-map-js bump
-        if: github.event_name == 'pull_request'
-        run: |
-          npm install --package-lock-only
-          if ! git diff --quiet -- package-lock.json; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add package-lock.json
-            git commit -m "chore: regenerate frontend lockfile for next/source-map-js bump"
-            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_HEAD_REF}"
-          fi
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
@@ -126,6 +105,9 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     needs: [backend, frontend]
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - name: Validate Compose files
@@ -134,7 +116,32 @@ jobs:
           docker compose config -q
           REDIS_PASSWORD=ci docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q
       - name: Build images
-        run: docker compose build
+        id: docker_build
+        run: |
+          set +e
+          docker compose build > /tmp/docker-build.txt 2>&1
+          code=$?
+          cat /tmp/docker-build.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+      # TODO(temporary): see the matching step in the backend job above --
+      # this job never used to run at all (backend/frontend always failed
+      # first), so this is the first real result for it and the driving
+      # sandbox has no way to read Actions logs directly.
+      - name: Report docker build failure on the PR
+        if: steps.docker_build.outputs.exit_code != '0' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### docker compose build failure (commit ${{ github.sha }})"
+            echo '```'
+            tail -c 60000 /tmp/docker-build.txt
+            echo '```'
+          } > /tmp/docker-build-comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/docker-build-comment.md
+      - name: Fail job if the build failed
+        if: steps.docker_build.outputs.exit_code != '0'
+        run: exit 1
 
   e2e:
     runs-on: ubuntu-latest
