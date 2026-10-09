@@ -58,6 +58,7 @@ from app.models import (
     UsageRecord,
     User,
     Webhook,
+    as_aware_utc,
     utcnow,
 )
 from app.notifications import email_provider, invitation_email
@@ -636,7 +637,7 @@ def accept_invitation(
     invitation = db.scalar(select(Invitation).where(Invitation.token_hash == token_hash))
     if not invitation or invitation.status != InvitationStatus.pending:
         raise HTTPException(404, "INVITATION_NOT_FOUND")
-    if invitation.expires_at < utcnow():
+    if as_aware_utc(invitation.expires_at) < utcnow():
         raise HTTPException(410, "INVITATION_EXPIRED")
     if invitation.email != user.email:
         raise HTTPException(403, "INVITATION_EMAIL_MISMATCH")
