@@ -20,6 +20,21 @@ test("upload, extraction edit, and XLSX export use the real processing pipeline"
   );
   expect(project.status()).toBe(201);
 
+  // TODO(temporary): the GET /api/v1/projects request succeeds (200, per the
+  // api container's own access log) but the "Project" <select> still shows
+  // zero matching options for the full 5s wait that replaced the original
+  // 30s hang. Log the actual response body the browser received, to settle
+  // whether the project list really comes back empty or whether this is a
+  // render-side bug instead.
+  page.on("response", (response) => {
+    if (response.url().includes("/api/v1/projects")) {
+      response
+        .text()
+        .then((body) => console.log(`DEBUG projects response [${response.status()}]: ${body}`))
+        .catch((err) => console.log(`DEBUG projects response read failed: ${err}`));
+    }
+  });
+
   await page.goto("/login");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
