@@ -34,6 +34,12 @@ test("upload, extraction edit, and XLSX export use the real processing pipeline"
         .catch((err) => console.log(`DEBUG projects response read failed: ${err}`));
     }
   });
+  // The fetch succeeds with the right body (confirmed above), so if the
+  // option still never renders, something in the page's own JS must be
+  // throwing after that -- forward the actual browser console/errors,
+  // which nothing currently surfaces into the test output.
+  page.on("console", (msg) => console.log(`PAGE CONSOLE [${msg.type()}]: ${msg.text()}`));
+  page.on("pageerror", (err) => console.log(`PAGE ERROR: ${err}`));
 
   await page.goto("/login");
   await page.getByLabel("Email").fill(email);
