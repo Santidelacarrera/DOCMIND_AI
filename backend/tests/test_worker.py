@@ -23,22 +23,6 @@ from app.processing import extraction_envelope, is_strict_compatible
 from tests.conftest import make_pdf
 
 
-class FakeOCR:
-    """Blank test PDFs always trigger OCR; Tesseract/Poppler are not needed for unit tests."""
-
-    def extract_pages(self, content: bytes) -> list[str]:
-        from io import BytesIO
-
-        from pypdf import PdfReader
-
-        return ["scanned text"] * len(PdfReader(BytesIO(content)).pages)
-
-
-@pytest.fixture(autouse=True)
-def _fake_ocr(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(worker, "TesseractProvider", FakeOCR)
-
-
 def _run_job(job_id: str) -> None:
     worker.process_document.run(job_id)  # type: ignore[attr-defined]
 

@@ -15,6 +15,9 @@ concurrency:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     defaults: { run: { working-directory: backend } }
     steps:
       - uses: actions/checkout@v4
@@ -30,10 +33,38 @@ jobs:
       - name: Static security analysis (bandit)
         run: bandit -r app -ll -q
       - name: Dependency vulnerabilities (pip-audit)
-        run: pip-audit --skip-editable
+        id: pip_audit
+        run: |
+          set +e
+          pip-audit --skip-editable > /tmp/pip-audit.txt 2>&1
+          code=$?
+          cat /tmp/pip-audit.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+      # TODO(temporary): the agent sandbox that normally drives this PR has no
+      # network access to fetch Actions log output, so this posts the raw
+      # finding to the PR instead. Remove once the underlying advisory is
+      # resolved and this step is reliably green.
+      - name: Report pip-audit findings on the PR
+        if: steps.pip_audit.outputs.exit_code != '0' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### pip-audit findings (backend, commit ${{ github.sha }})"
+            echo '```'
+            cat /tmp/pip-audit.txt
+            echo '```'
+          } > /tmp/pip-audit-comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/pip-audit-comment.md
+      - name: Fail job if pip-audit found issues
+        if: steps.pip_audit.outputs.exit_code != '0'
+        run: exit 1
 
   frontend:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     defaults: { run: { working-directory: frontend } }
     steps:
       - uses: actions/checkout@v4
@@ -47,11 +78,36 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - name: Dependency vulnerabilities
-        run: npm audit --audit-level=high --omit=dev
+        id: npm_audit
+        run: |
+          set +e
+          npm audit --audit-level=high --omit=dev > /tmp/npm-audit.txt 2>&1
+          code=$?
+          cat /tmp/npm-audit.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+      # TODO(temporary): see the matching step in the backend job above.
+      - name: Report npm audit findings on the PR
+        if: steps.npm_audit.outputs.exit_code != '0' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### npm audit findings (frontend, commit ${{ github.sha }})"
+            echo '```'
+            cat /tmp/npm-audit.txt
+            echo '```'
+          } > /tmp/npm-audit-comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/npm-audit-comment.md
+      - name: Fail job if npm audit found issues
+        if: steps.npm_audit.outputs.exit_code != '0'
+        run: exit 1
 
   docker:
     runs-on: ubuntu-latest
     needs: [backend, frontend]
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - name: Validate Compose files
@@ -60,11 +116,39 @@ jobs:
           docker compose config -q
           REDIS_PASSWORD=ci docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q
       - name: Build images
-        run: docker compose build
+        id: docker_build
+        run: |
+          set +e
+          docker compose build > /tmp/docker-build.txt 2>&1
+          code=$?
+          cat /tmp/docker-build.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+      # TODO(temporary): see the matching step in the backend job above --
+      # this job never used to run at all (backend/frontend always failed
+      # first), so this is the first real result for it and the driving
+      # sandbox has no way to read Actions logs directly.
+      - name: Report docker build failure on the PR
+        if: steps.docker_build.outputs.exit_code != '0' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### docker compose build failure (commit ${{ github.sha }})"
+            echo '```'
+            tail -c 60000 /tmp/docker-build.txt
+            echo '```'
+          } > /tmp/docker-build-comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/docker-build-comment.md
+      - name: Fail job if the build failed
+        if: steps.docker_build.outputs.exit_code != '0'
+        run: exit 1
 
   e2e:
     runs-on: ubuntu-latest
     needs: [docker]
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -84,8 +168,76 @@ jobs:
         working-directory: frontend
       - run: npx playwright install --with-deps chromium
         working-directory: frontend
-      - run: npm run test:e2e
+      - name: Run e2e tests
+        id: e2e_tests
         working-directory: frontend
-      - name: Dump logs on failure
-        if: failure()
-        run: docker compose logs --no-color --tail=200
+        run: |
+          set +e
+          npm run test:e2e > /tmp/e2e-output.txt 2>&1
+          code=$?
+          cat /tmp/e2e-output.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+      - name: Dump stack logs on failure
+        if: steps.e2e_tests.outputs.exit_code != '0'
+        run: docker compose logs --no-color --tail=300 > /tmp/e2e-stack-logs.txt
+      - name: Dump accessibility snapshot of the failed page
+        if: steps.e2e_tests.outputs.exit_code != '0'
+        working-directory: frontend
+        run: |
+          : > /tmp/e2e-error-context.txt
+          find test-results -name error-context.md -print0 2>/dev/null | while IFS= read -r -d '' f; do
+            { echo "--- $f ---"; cat "$f"; echo; } >> /tmp/e2e-error-context.txt
+          done
+          true
+      - name: Encode the failure screenshot inline (the sandbox can't fetch artifacts)
+        if: steps.e2e_tests.outputs.exit_code != '0'
+        working-directory: frontend
+        run: |
+          : > /tmp/e2e-screenshot-b64.txt
+          shot=$(find test-results -iname "*.png" | head -n1 || true)
+          if [ -n "$shot" ]; then
+            if ! command -v convert >/dev/null 2>&1; then
+              sudo apt-get update -qq >/dev/null 2>&1
+              sudo apt-get install -y -qq imagemagick >/dev/null 2>&1
+            fi
+            small="/tmp/e2e-shot-small.png"
+            if command -v convert >/dev/null 2>&1 && convert "$shot" -resize 350x -quality 30 "$small"; then
+              base64 -w0 "$small" > /tmp/e2e-screenshot-b64.txt
+            else
+              base64 -w0 "$shot" > /tmp/e2e-screenshot-b64.txt
+            fi
+          fi
+          true
+      # TODO(temporary): see the matching step in the backend job above --
+      # this job never ran before this PR either (it needs docker, which
+      # always failed first), and the driving sandbox can't read Actions
+      # logs directly.
+      - name: Report e2e failure on the PR
+        if: steps.e2e_tests.outputs.exit_code != '0' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### e2e test failure (commit ${{ github.sha }})"
+            echo '#### test:e2e output'
+            echo '```'
+            tail -c 50000 /tmp/e2e-output.txt
+            echo '```'
+            echo '#### accessibility snapshot at time of failure'
+            echo '```'
+            tail -c 20000 /tmp/e2e-error-context.txt
+            echo '```'
+            echo '#### docker compose logs (tail)'
+            echo '```'
+            tail -c 10000 /tmp/e2e-stack-logs.txt
+            echo '```'
+            b64=$(cat /tmp/e2e-screenshot-b64.txt)
+            if [ -n "$b64" ] && [ "${#b64}" -lt 50000 ]; then
+              echo '#### failure screenshot'
+              echo "<img src=\"data:image/png;base64,${b64}\" />"
+            fi
+          } > /tmp/e2e-comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/e2e-comment.md
+      - name: Fail job if e2e tests failed
+        if: steps.e2e_tests.outputs.exit_code != '0'
+        run: exit 1
