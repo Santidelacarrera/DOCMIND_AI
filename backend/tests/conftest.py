@@ -62,6 +62,19 @@ class FakeRedis:
         return [FakeRedis.counters[key]]
 
 
+class FakeOCR:
+    """Blank test PDFs (``make_pdf``) always trigger OCR; stub out Tesseract/Poppler,
+    which aren't installed in every test environment, for every test that may run
+    ``worker.process_document`` against one."""
+
+    def extract_pages(self, content: bytes) -> list[str]:
+        from io import BytesIO
+
+        from pypdf import PdfReader
+
+        return ["scanned text"] * len(PdfReader(BytesIO(content)).pages)
+
+
 @pytest.fixture(autouse=True)
 def _environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     Base.metadata.drop_all(engine)
@@ -73,6 +86,8 @@ def _environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(main.process_document, "delay", lambda job_id: queued.append(job_id))
     main.queued_jobs = queued  # type: ignore[attr-defined]
     from app import worker
+
+    monkeypatch.setattr(worker, "TesseractProvider", FakeOCR)
 
     webhook_calls: list[tuple[str, str, dict]] = []
     monkeypatch.setattr(
