@@ -60,12 +60,22 @@ test("upload, extraction edit, and XLSX export use the real processing pipeline"
   // engine doesn't reliably see native <option> elements (confirmed: the
   // accessibility snapshot captured at the exact moment getByRole("option")
   // gave up already showed `option "E2E" [selected]` in the combobox).
-  // TODO(temporary): widened from the default 5s to see whether this is
-  // pure CI slowness (the render eventually happens, just later than
-  // expected) or a genuine stuck state (still 0 even after much longer) --
-  // no console error or page error was logged on the last run, and the
-  // fetch response itself was confirmed correct and fast.
-  await expect(projectSelect.locator("option", { hasText: "E2E" })).toHaveCount(1, { timeout: 20_000 });
+  // TODO(temporary): widening the wait to 20s (44 straight 0-element polls)
+  // ruled out plain CI slowness -- this is a genuinely stuck state, not a
+  // slow one, despite the fetch response being confirmed correct and fast
+  // with no console/page error logged. Bypass Playwright's locator/role
+  // machinery entirely and poll the raw DOM directly via page.evaluate to
+  // see what the <select> actually contains over time, from ground truth.
+  let selectHtml = "";
+  for (let i = 0; i < 20; i++) {
+    selectHtml = await page.evaluate(
+      () => document.querySelector("select")?.outerHTML ?? "NO SELECT FOUND",
+    );
+    console.log(`DEBUG raw select outerHTML at t=${i}s: ${selectHtml}`);
+    if (selectHtml.includes("E2E")) break;
+    await page.waitForTimeout(1000);
+  }
+  await expect(projectSelect.locator("option", { hasText: "E2E" })).toHaveCount(1, { timeout: 5_000 });
   await projectSelect.selectOption({ label: "E2E" });
   await page.getByLabel("PDF").setInputFiles({ name: "test-document.pdf", mimeType: "application/pdf", buffer: pdf });
   await page.getByRole("button", { name: "Upload and process" }).click();
