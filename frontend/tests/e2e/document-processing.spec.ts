@@ -60,7 +60,12 @@ test("upload, extraction edit, and XLSX export use the real processing pipeline"
   // engine doesn't reliably see native <option> elements (confirmed: the
   // accessibility snapshot captured at the exact moment getByRole("option")
   // gave up already showed `option "E2E" [selected]` in the combobox).
-  await expect(projectSelect.locator("option", { hasText: "E2E" })).toHaveCount(1);
+  // TODO(temporary): widened from the default 5s to see whether this is
+  // pure CI slowness (the render eventually happens, just later than
+  // expected) or a genuine stuck state (still 0 even after much longer) --
+  // no console error or page error was logged on the last run, and the
+  // fetch response itself was confirmed correct and fast.
+  await expect(projectSelect.locator("option", { hasText: "E2E" })).toHaveCount(1, { timeout: 20_000 });
   await projectSelect.selectOption({ label: "E2E" });
   await page.getByLabel("PDF").setInputFiles({ name: "test-document.pdf", mimeType: "application/pdf", buffer: pdf });
   await page.getByRole("button", { name: "Upload and process" }).click();
