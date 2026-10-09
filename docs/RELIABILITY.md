@@ -41,4 +41,4 @@ Size (`MAX_UPLOAD_BYTES`, enforced while streaming, not only via `Content-Length
 
 `tests/test_reliability.py` (state machine, recovery, idempotency, limits) and `tests/test_celery_redis.py` (a real `redis-server` and a real Celery worker: completion, six duplicate messages → one result, retry through the broker, lost message recovered from the database). The whole suite also passes on PostgreSQL: `TEST_DATABASE_URL=postgresql+psycopg://… pytest`.
 
-Not covered: a hard `kill -9` of a prefork worker mid-task. Its recovery path (job stuck in-flight → re-enqueued after `STUCK_JOB_SECONDS`) is tested from the database state it leaves behind.
+Verified manually (not in the automated suite): a real prefork Celery worker was `kill -9`'d while a job was `EXTRACTING` (PostgreSQL + Redis, `STUCK_JOB_SECONDS=10`). The job stayed `EXTRACTING` with nothing running; one `recover_stuck_jobs` pass re-enqueued it (`retry_count=1`), a second worker completed it, and exactly one extraction run existed. The automated tests cover the same recovery path from the database state a crash leaves behind.
