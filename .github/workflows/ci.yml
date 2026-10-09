@@ -171,6 +171,13 @@ jobs:
       - name: Run e2e tests
         id: e2e_tests
         working-directory: frontend
+        env:
+          # The one failing test hangs inside a single selectOption() call for
+          # the full 30s timeout with no other clue why. pw:api logs every
+          # actionability check (visible/enabled/stable/receives-events) as it
+          # retries, which is the only way to see which check never resolves
+          # without a trace viewer (unavailable in the driving sandbox).
+          DEBUG: pw:api
         run: |
           set +e
           npm run test:e2e > /tmp/e2e-output.txt 2>&1
@@ -207,9 +214,16 @@ jobs:
             size=$(stat -c%s "$shot" 2>/dev/null || echo "?")
             echo "png size: $size bytes" >> /tmp/e2e-screenshot-debug.txt
             small="/tmp/e2e-shot-small.png"
+            # ubuntu-latest doesn't ship imagemagick; the raw screenshot's base64
+            # (~210KB for a 158KB PNG) blows past the report step's 50KB cutoff
+            # and was silently dropped. Install it so the image actually shrinks.
+            if ! command -v convert >/dev/null 2>&1; then
+              sudo apt-get update -qq >>/tmp/e2e-screenshot-debug.txt 2>&1
+              sudo apt-get install -y -qq imagemagick >>/tmp/e2e-screenshot-debug.txt 2>&1
+            fi
             if command -v convert >/dev/null 2>&1; then
               echo "using convert" >> /tmp/e2e-screenshot-debug.txt
-              if convert "$shot" -resize 900x -quality 50 "$small" 2>>/tmp/e2e-screenshot-debug.txt; then
+              if convert "$shot" -resize 600x -quality 40 "$small" 2>>/tmp/e2e-screenshot-debug.txt; then
                 base64 -w0 "$small" > /tmp/e2e-screenshot-b64.txt
               else
                 echo "convert failed, falling back to raw" >> /tmp/e2e-screenshot-debug.txt
@@ -222,7 +236,16 @@ jobs:
           fi
           echo "b64 length: $(wc -c < /tmp/e2e-screenshot-b64.txt)" >> /tmp/e2e-screenshot-debug.txt
           true
-      # TODO(temporary): see the matching step in the backend job above --
+      - name: Extract the verbose action log for the failing test
+        if: steps.e2e_tests.outputs.exit_code != '0'
+        run: |
+          # pw:api logs every actionability retry interleaved with the other
+          # tests' output; slice out just the lines generated while the
+          # failing test was running (between the previous test's checkmark
+          # and this one's), so the retry detail isn't lost to a tail cutoff.
+          sed -n '/tests\/e2e\/auth\.spec\.ts.*dashboard/,/tests\/e2e\/document-processing\.spec\.ts.*processing pipeline/p' \
+            /tmp/e2e-output.txt > /tmp/e2e-action-log.txt || true
+          true
       # this job never ran before this PR either (it needs docker, which
       # always failed first), and the driving sandbox can't read Actions
       # logs directly.
@@ -236,6 +259,10 @@ jobs:
             echo '#### test:e2e output'
             echo '```'
             tail -c 50000 /tmp/e2e-output.txt
+            echo '```'
+            echo '#### verbose action log for the failing test (pw:api)'
+            echo '```'
+            tail -c 60000 /tmp/e2e-action-log.txt
             echo '```'
             echo '#### accessibility snapshot at time of failure'
             echo '```'
