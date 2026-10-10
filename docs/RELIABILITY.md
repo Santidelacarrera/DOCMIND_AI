@@ -41,4 +41,8 @@ Size (`MAX_UPLOAD_BYTES`, enforced while streaming, not only via `Content-Length
 
 `tests/test_reliability.py` (state machine, recovery, idempotency, limits) and `tests/test_celery_redis.py` (a real `redis-server` and a real Celery worker: completion, six duplicate messages → one result, retry through the broker, lost message recovered from the database). The whole suite also passes on PostgreSQL: `TEST_DATABASE_URL=postgresql+psycopg://… pytest`.
 
-Verified manually (not in the automated suite): a real prefork Celery worker was `kill -9`'d while a job was `EXTRACTING` (PostgreSQL + Redis, `STUCK_JOB_SECONDS=10`). The job stayed `EXTRACTING` with nothing running; one `recover_stuck_jobs` pass re-enqueued it (`retry_count=1`), a second worker completed it, and exactly one extraction run existed. The automated tests cover the same recovery path from the database state a crash leaves behind.
+`tests/test_celery_redis.py::test_worker_killed_with_sigkill_mid_job_is_recovered` starts a real prefork Celery worker, waits until the job is `EXTRACTING`, `SIGKILL`s the whole process group, and checks that nothing is running, that one `recover_stuck_jobs` pass re-enqueues the job, and that finishing it yields exactly one extraction run. (The same scenario was also run by hand against PostgreSQL with `STUCK_JOB_SECONDS=10`.)
+
+## Known limitation: worker metrics
+
+`docmind_documents_processed_total`, `docmind_jobs_recovered_total`, `docmind_retention_purged_total` and the processing-duration histogram are incremented inside Celery worker processes, but Prometheus only scrapes the API's `/metrics`. Until the worker exposes its own endpoint (prefork needs `prometheus_client` multiprocess mode), alert on the database instead: the share of `FAILED` jobs by `failure_code` and the age of the oldest `QUEUED` job.
