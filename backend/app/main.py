@@ -32,6 +32,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app import vector_index
 from app.antivirus import antivirus
 from app.core import settings
 from app.db import get_db
@@ -80,7 +81,7 @@ from app.storage import StorageAccessError, owned_key, storage
 from app.telemetry import configure_tracing
 from app.webhooks import WebhookURLError, signing_secret
 from app.webhooks import validate_url as validate_webhook_url
-from app.worker import process_document
+from app.worker import process_document, process_vector_deletions
 
 configure_logging()
 logger = logging.getLogger("docmind")
@@ -1057,6 +1058,16 @@ def _enqueue(job_id: uuid.UUID) -> None:
         logger.warning("broker unavailable; job stays queued for recovery", extra={"job_id": str(job_id)})
 
 
+def _kick_vector_deletions() -> None:
+    """Run the outbox soon instead of waiting for the next beat tick; the row is durable anyway."""
+    if not vector_index.enabled():
+        return
+    try:
+        process_vector_deletions.delay()
+    except Exception:
+        logger.warning("could not enqueue vector deletion run; beat will pick it up")
+
+
 @app.post("/api/v1/documents", status_code=status.HTTP_202_ACCEPTED, response_model=None)
 def upload_document(
     organization_id: str,
@@ -1364,8 +1375,10 @@ def delete_document(
     )
     item.deleted_at = datetime.now(UTC)
     scrub_derived_text(db, item.id)
+    vector_index.queue_deletion(db, org_id, item.id)  # same transaction: cannot be lost
     audit(db, "document.delete", "document", str(item.id), user, org_id)
     db.commit()
+    _kick_vector_deletions()
     if delete_objects(org_id, keys):
         # The record is already gone; the orphaned object is reconciled by operations.
         logger.warning("storage cleanup incomplete for deleted document %s", document_id)

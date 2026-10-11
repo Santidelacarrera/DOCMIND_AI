@@ -39,6 +39,16 @@ JOBS_RECOVERED_TOTAL = Counter(
     "Stuck jobs handled by the recovery task, by outcome (requeued or failed)",
     ["outcome"],
 )
+VECTOR_DELETIONS_TOTAL = Counter(
+    "docmind_vector_deletions_total",
+    "Vector-store deletions processed from the outbox, by outcome (deleted or failed)",
+    ["outcome"],
+)
+VECTOR_INDEXING_TOTAL = Counter(
+    "docmind_vector_indexing_total",
+    "Vector indexing attempts, by outcome (indexed, refused, failed, raced_with_delete)",
+    ["outcome"],
+)
 RETENTION_PURGED_TOTAL = Counter(
     "docmind_retention_purged_total",
     "Records removed by the retention job, by kind",

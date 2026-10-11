@@ -68,6 +68,31 @@ class Settings(BaseSettings):
     # ---- Ingestion for vector indexing (app.ingestion) --------------------------
     # Keyed HMAC for PII pseudonyms (stable per tenant). Unset -> numbered placeholders.
     pii_masking_key: SecretStr | None = None
+    # Extra PII detectors, comma separated, applied on top of the checksum-validated patterns:
+    #   rules -> configurable name/address rules + gazetteer (no dependencies)
+    #   spacy -> spaCy NER (needs `pip install spacy` and the model below installed)
+    # A listed detector that cannot start is a startup error, never silently skipped.
+    pii_detectors: str = "rules"
+    pii_spacy_model: str = "en_core_web_sm"
+    # Known names / terms to always mask (customers, employees, project code names), comma separated,
+    # and/or one per line in a file.
+    pii_extra_terms: str = ""
+    pii_terms_file: Path | None = None
+    # Vector index. Unset QDRANT_URL disables indexing and vector deletion entirely.
+    qdrant_url: str | None = None
+    qdrant_api_key: SecretStr | None = None
+    qdrant_timeout_seconds: int = 15
+    # Embeddings: local (on this host, default) | openai (external, needs the egress switches) |
+    # hashing (non-semantic, development only).
+    embedding_provider: Literal["local", "openai", "hashing"] = "local"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_cache_dir: Path | None = None
+    # Local models may never download at runtime unless this is switched off (air-gap by default).
+    embedding_local_files_only: bool = True
+    # External embedding APIs receive (masked) document text: opt in explicitly, and only to listed hosts.
+    embedding_allow_external: bool = False
+    embedding_base_url: str = "https://api.openai.com/v1"
+    embedding_allowed_hosts: str = "api.openai.com"
     qdrant_collection: str = "docmind_chunks"
     ingest_chunk_chars: int = 1200
     ingest_chunk_overlap: int = 150
@@ -130,6 +155,21 @@ class Settings(BaseSettings):
                 raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
             if self.antivirus_provider == "disabled":
                 raise ValueError("ANTIVIRUS_PROVIDER must be configured in staging/production")
+            if self.qdrant_url:
+                if not self.qdrant_url.startswith("https://") or not self.qdrant_api_key:
+                    raise ValueError("QDRANT_URL must be https:// and QDRANT_API_KEY set in staging/production")
+                if self.embedding_provider == "hashing":
+                    raise ValueError("EMBEDDING_PROVIDER=hashing is for development only")
+                if self.embedding_provider == "openai":
+                    from urllib.parse import urlparse
+
+                    host = urlparse(self.embedding_base_url).hostname or ""
+                    allowed = {h.strip().lower() for h in self.embedding_allowed_hosts.split(",") if h.strip()}
+                    if not self.embedding_allow_external or host.lower() not in allowed or not self.openai_api_key:
+                        raise ValueError(
+                            "EMBEDDING_PROVIDER=openai needs EMBEDDING_ALLOW_EXTERNAL=true, the host in "
+                            "EMBEDDING_ALLOWED_HOSTS and OPENAI_API_KEY"
+                        )
             if self.storage_provider == "local":
                 raise ValueError("STORAGE_PROVIDER must use private object storage in staging/production")
             if not self.smtp_host:

@@ -98,6 +98,7 @@ celery_app.conf.update(
 celery_app.conf.beat_schedule = {
     "recover-stuck-jobs": {"task": "app.worker.recover_stuck_jobs", "schedule": 60.0},
     "purge-expired-data": {"task": "app.worker.purge_expired_data", "schedule": 3600.0},
+    "process-vector-deletions": {"task": "app.worker.process_vector_deletions", "schedule": 60.0},
 }
 
 MAX_RETRIES = 3
@@ -519,8 +520,21 @@ def _commit_failure(claim: _Claim, error: ProcessingError, log: _StepLog) -> str
         return "failed"
 
 
+def _enqueue_index(organization_id: uuid.UUID, document_id: uuid.UUID) -> None:
+    from app import vector_index
+
+    if not vector_index.enabled():
+        return
+    try:
+        index_document.delay(str(organization_id), str(document_id))
+    except Exception:
+        logger.warning("could not enqueue vector indexing", extra={"document_id": str(document_id)})
+
+
 def _notify(status: str, organization_id: uuid.UUID, document_id: uuid.UUID, started_at: float) -> None:
     """Metrics + webhook dispatch; runs after commit and must never raise."""
+    if status == "completed":
+        _enqueue_index(organization_id, document_id)
     PROCESSING_DURATION_SECONDS.observe(time.perf_counter() - started_at)
     DOCUMENTS_PROCESSED_TOTAL.labels(status).inc()
     event = "document.completed" if status == "completed" else "document.failed"
@@ -634,6 +648,25 @@ def recover_stuck_jobs() -> int:
     JOBS_RECOVERED_TOTAL.labels("requeued").inc(len(requeue))
     JOBS_RECOVERED_TOTAL.labels("failed").inc(len(failed))
     return len(requeue) + len(failed)
+
+
+@celery_app.task
+def process_vector_deletions() -> dict[str, int]:
+    """Remove vectors of deleted documents (outbox written by app.vector_index.queue_deletion)."""
+    from app import vector_index
+
+    return vector_index.process_deletions()
+
+
+@celery_app.task(
+    bind=True, max_retries=4, default_retry_delay=30, autoretry_for=(Exception,),
+    dont_autoretry_for=(ValueError,),
+)
+def index_document(self, organization_id: str, document_id: str) -> str:
+    """Write the masked, tenant-bound chunks of a processed document to the vector store."""
+    from app import vector_index
+
+    return vector_index.index_document(organization_id, document_id)
 
 
 @celery_app.task

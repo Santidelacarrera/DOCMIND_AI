@@ -13,7 +13,8 @@ from app.core import settings
 from app.evaluation import corpus
 from app.evaluation.pdfgen import digital_pdf
 from app.ingestion import chunking, pdf, pii, text
-from app.ingestion.pipeline import HashingEmbedder, IngestionPipeline, IngestionRefused
+from app.ingestion.embeddings import HashingEmbedder
+from app.ingestion.pipeline import IngestionPipeline, IngestionRefused
 from app.ingestion.vectorstore import Point, QdrantStore, check_points
 
 qdrant_client = pytest.importorskip("qdrant_client")

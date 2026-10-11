@@ -28,7 +28,7 @@ class Point:
     payload: dict[str, Any]
 
 
-def to_point(chunk: Chunk, vector: Sequence[float]) -> Point:
+def to_point(chunk: Chunk, vector: Sequence[float], *, embedding_model: str = "") -> Point:
     return Point(
         id=chunk.point_id,
         vector=list(vector),
@@ -42,6 +42,7 @@ def to_point(chunk: Chunk, vector: Sequence[float]) -> Point:
             "content_hash": chunk.content_hash,
             "pii": chunk.pii_counts,
             "suspicious": chunk.suspicious,
+            "embedding_model": embedding_model,
             "schema_version": SCHEMA_VERSION,
         },
     )
@@ -77,6 +78,12 @@ class QdrantStore:
                 self._collection,
                 vectors_config=models.VectorParams(size=dimension, distance=models.Distance.COSINE),
             )
+        else:
+            existing = self._c.get_collection(self._collection).config.params.vectors
+            size = getattr(existing, "size", None)
+            if size is not None and size != dimension:
+                # A different embedding model: mixing vector spaces silently ruins retrieval.
+                raise ValueError("EMBEDDING_DIMENSION_MISMATCH")
         self._c.create_payload_index(
             self._collection, TENANT_KEY,
             field_schema=models.KeywordIndexParams(type=models.KeywordIndexType.KEYWORD, is_tenant=True),

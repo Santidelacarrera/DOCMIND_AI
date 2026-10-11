@@ -142,6 +142,10 @@ class Document(Base):
     page_count: Mapped[int | None] = mapped_column(Integer)
     checksum: Mapped[str] = mapped_column(String(64), index=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Vector index state (see app.vector_index): when the masked chunks were last written, or
+    # the stable reason indexing was refused/failed. Both null = not indexed (yet).
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    index_error: Mapped[str | None] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True
     )
@@ -399,3 +403,23 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True
     )
+
+
+class VectorDeletion(Base):
+    """Outbox of vectors that must be removed from the vector store.
+
+    Written in the *same transaction* that deletes/expires/purges a document, so a crash or a
+    Qdrant outage between "document gone" and "vectors gone" cannot lose the obligation; the
+    ``process_vector_deletions`` task retries until it succeeds. Holds identifiers only.
+    """
+
+    __tablename__ = "vector_deletions"
+    __table_args__ = (UniqueConstraint("organization_id", "document_id", name="uq_vector_deletion"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)  # row may be purged
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    last_error: Mapped[str | None] = mapped_column(String(80))
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)

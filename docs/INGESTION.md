@@ -47,11 +47,43 @@ report = pipeline.ingest(tenant_id=str(org_id), document_id=str(doc_id), content
 
 Install the client with `pip install '.[qdrant]'`. Settings: `PII_MASKING_KEY`, `QDRANT_COLLECTION`, `INGEST_CHUNK_CHARS`, `INGEST_CHUNK_OVERLAP`, `INGEST_REJECT_ACTIVE_CONTENT`.
 
+## Lifecycle integration (`app/vector_index.py`)
+
+Everything below is inert unless `QDRANT_URL` is set.
+
+| Event | What happens |
+|---|---|
+| Document processed (`COMPLETED`) | the worker enqueues `index_document`; the PDF is read through the tenant-prefix storage check and ingested. Reprocessing re-ingests and **replaces** the points. Outcome is stored on the document: `indexed_at`, or `index_error` with a stable code (`ACTIVE_CONTENT_REJECTED`, `PII_RESIDUAL_AFTER_MASKING`, …) |
+| User deletes a document | in the **same transaction** as the soft delete, a row is written to the `vector_deletions` outbox; the API then kicks `process_vector_deletions` |
+| Retention: expiry or hard purge | both write the outbox row too (idempotent), so vectors die with the document even if it was deleted by another path |
+| `process_vector_deletions` (beat, every 60 s) | calls the **tenant-scoped** `delete_document(organization, document)`; success → `done_at`; failure → `attempts+1`, `last_error` (exception class only), exponential backoff 2 min … 1 h. A Qdrant outage delays a deletion, never loses it |
+| Delete racing with indexing | after writing, the indexer re-checks the document; if it was deleted meanwhile it removes what it just wrote |
+
+Metrics: `docmind_vector_deletions_total{outcome}`, `docmind_vector_indexing_total{outcome}` (remember these live in the worker process, see RELIABILITY.md). Alert on rows with `done_at IS NULL AND attempts > 5`. Erasing a whole organization = delete its documents, then run the purge with `RETENTION_DELETED_DAYS=0`; for belt and braces also `QdrantStore.tenant_filter(org)`-delete at the end.
+
+## Names and addresses (`entities.py`)
+
+`PII_DETECTORS=rules,spacy` (comma list; `rules` is the default).
+
+* **`rules`** – deterministic and configurable. A name is recognised after a label (`Name:`, `Nombre:`, `Bill to:`, `Cliente:` … extendable with `RuleConfig.name_labels`), a title (`Dr.`, `Sra.`, `Don`) or a signing phrase (`firmado por`, `signed by`); an address by street word + number (ES: `Calle/Avenida/Plaza…`, EN: `… Street/Road/Avenue…`), postal code + city lines, UK postcodes and P.O. boxes. Organisations are deliberately **not** masked (legal-form suffixes `S.A., Ltd, GmbH…` and words such as `Hotel`, `Hospital`). `PII_EXTRA_TERMS` / `PII_TERMS_FILE` add a **gazetteer** (customer names, employees, project code names) matched case-insensitively on word boundaries.
+* **`spacy`** – statistical NER for running text (PERSON; places opt-in). Probabilistic: it can miss and over-mask, and its verdict on already-masked text proves nothing, so it takes no part in the residual check — the deterministic detectors do.
+* A configured detector that cannot start (library or model missing, unknown name) is a **startup error**, never silently skipped.
+
+Measured on the annotated set in `tests/test_entities.py` (19 sentences with names/addresses, 11 negatives such as organisations and order numbers): **0 of 19 leaked, 0 false positives** with the rule detector. That set is small, was written by the same people who wrote the rules, and covers ES/EN only: treat it as a regression guard, not as a recall estimate. Measure on your own documents before claiming anonymisation. Not covered: bare names in running text (use `spacy`), non-Latin scripts, addresses without a street word, free-text locations ("near the old mill").
+
+## Embeddings and data egress (`embeddings.py`)
+
+| `EMBEDDING_PROVIDER` | Where text goes | Rules |
+|---|---|---|
+| `local` (default) | nowhere – ONNX on this host (`pip install '.[embeddings]'`) | `EMBEDDING_LOCAL_FILES_ONLY=true` forbids runtime downloads: provision `EMBEDDING_MODEL` in the image or `EMBEDDING_CACHE_DIR`; a missing model is a startup error |
+| `openai` (OpenAI-compatible) | **leaves the host** | refused unless `EMBEDDING_ALLOW_EXTERNAL=true`, the URL is `https` and its host is in `EMBEDDING_ALLOWED_HOSTS`; checked when the embedder is built and again when the pipeline is constructed, i.e. before any document is read. Look-alike hosts (`api.openai.com.evil.test`) and plain `http` are denied |
+| `hashing` | nowhere | non-semantic, **development only** – rejected in staging/production |
+
+Only masked, verified text reaches `embed()`; search questions are masked the same way (`IngestionPipeline.query_vector`), so a query naming a person cannot leak that name to a hosted API. Every point records `embedding_model`, and a collection refuses vectors of a different dimension (`EMBEDDING_DIMENSION_MISMATCH`): changing model means re-indexing into a new collection. Staging/production refuse to start with an insecure vector setup (`QDRANT_URL` not https, no API key, `hashing`, or `openai` without the egress switches). Whether masked text may go to a hosted embedder at all is a contract/DPA decision: the code only makes it explicit and opt-in.
+
 ## What is *not* done (be explicit before relying on it)
 
-* **Names, postal addresses and organisations are not detected** by the built-in rules (no reliable pattern exists). Add an NER detector via `masker_extra` (Presidio, spaCy, a hosted service) and measure its recall on your documents. Until then, treat the output as *structured-PII-masked*, not *anonymised*.
-* **Pseudonymised text is still personal data** under GDPR when a key exists; with no key (`PII_MASKING_KEY` unset) placeholders are not reversible by anyone.
-* **Not wired in automatically.** The pipeline is not called from `worker.process_document`, and deleting a document / running the retention purge does not yet delete its vectors. When you wire it: call `store.delete_document(tenant, document)` from `delete_document` and `retention.hard_delete_document`, and from the org-erasure procedure.
-* **Embedding** uses a placeholder (`HashingEmbedder`); choose a model and decide whether masked text may be sent to a hosted embedding API.
+* **Anonymisation is not claimed.** Structured PII and context-triggered names/addresses are masked; anything else a person could be re-identified by (rare job titles, free-text locations, combinations of facts) is not. Pseudonymised text (with `PII_MASKING_KEY`) remains personal data under GDPR.
+* **The local embedding model was not exercised end to end here**: the sandbox cannot download model weights. The adapter, its fail-closed behaviour with a missing model, dimension probing and the egress path are tested with injected models; run one smoke test with your real model before go-live.
+* **Qdrant itself**: use a server with API key + TLS. Per-tenant payload filters are an application-level boundary — for hard isolation use a collection or cluster per tenant. The in-memory client used in tests ignores payload indexes.
 * **The injection heuristic is a signal, not a defence**; the real controls are masking, tenant filters, no tools for the model, and validated outputs (see SECURITY.md).
-* **Qdrant itself**: use a server with API key + TLS, and per-tenant payload filters are an application-level boundary — for hard isolation requirements use collection-per-tenant or a separate cluster. The in-memory client used in tests ignores payload indexes.

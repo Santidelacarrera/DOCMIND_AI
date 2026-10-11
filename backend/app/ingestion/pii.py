@@ -175,5 +175,9 @@ class PiiMasker:
         return MaskResult("".join(out), dict(counts))
 
     def residual(self, masked_text: str) -> dict[str, int]:
-        """Re-scan already-masked text. Anything found is a masking failure (fail closed)."""
-        return dict(Counter(s.kind for s in detect(masked_text, self._extra)))
+        """Re-scan already-masked text. Anything found is a masking failure (fail closed).
+
+        Only deterministic detectors take part: an ML detector may tag a placeholder or miss the
+        same text twice, so its verdict on masked text proves nothing."""
+        deterministic = [d for d in self._extra if getattr(d, "deterministic", False)]
+        return dict(Counter(s.kind for s in detect(masked_text, deterministic)))
