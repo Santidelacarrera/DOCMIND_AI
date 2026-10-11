@@ -46,3 +46,6 @@ Size (`MAX_UPLOAD_BYTES`, enforced while streaming, not only via `Content-Length
 ## Known limitation: worker metrics
 
 `docmind_documents_processed_total`, `docmind_jobs_recovered_total`, `docmind_retention_purged_total` and the processing-duration histogram are incremented inside Celery worker processes, but Prometheus only scrapes the API's `/metrics`. Until the worker exposes its own endpoint (prefork needs `prometheus_client` multiprocess mode), alert on the database instead: the share of `FAILED` jobs by `failure_code` and the age of the oldest `QUEUED` job.
+
+---
+Relacionado: [[empresa]]

@@ -21,3 +21,6 @@
 | 13 | Data loss / orphaned objects | Storage write rolled back on DB failure, DB uniqueness constraints, backups (operator) | Objects without rows after crashes — reconcile periodically |
 
 Production deployments additionally need TLS, managed data stores, encrypted object storage, centralized logging with alerts, backups and restore drills (see [OPERATIONS](../OPERATIONS.md)).
+
+---
+Relacionado: [[empresa]]

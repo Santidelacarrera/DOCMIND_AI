@@ -44,3 +44,6 @@ Document text is untrusted: instructions and content are separate messages, inpu
 * **API-key scopes** are independent (`documents:read` ≠ `exports:read` ≠ `documents:write`) and bound to one organization.
 * **Documents are untrusted LLM input** (`tests/test_prompt_injection.py`). Text reaches the model only inside a `<document>` fence whose terminator cannot be forged from inside; the instructions are fixed; the model is given **no tools**; its answer is a JSON object validated against the envelope and the tenant schema; unexpected keys, schema violations and missing confidences force human review. Processing performs no network I/O of its own (asserted by blocking sockets during a hijacked-answer test), so an obeyed injection can at worst produce wrong *values* — which are flagged — never actions or leaks.
 * **Retention and deletion**: see [DATA_RETENTION.md](DATA_RETENTION.md).
+
+---
+Relacionado: [[empresa]]

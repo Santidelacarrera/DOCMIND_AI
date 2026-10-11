@@ -29,3 +29,6 @@ Storage failures during a purge are counted (`docmind_retention_purged_total`, t
 * Backups and logs are outside this application: set their retention to be no longer than the longest promise you make to customers.
 * Before enabling an LLM provider, document the provider, region and DPA.
 * Right to erasure for a whole organization: delete its documents (API), then run the purge with `RETENTION_DELETED_DAYS=0`.
+
+---
+Relacionado: [[empresa]]

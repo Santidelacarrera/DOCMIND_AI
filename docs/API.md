@@ -103,3 +103,6 @@ Subscribe to `document.completed` / `document.failed` and every matching event f
 Headers: `X-DocMind-Event: document.completed` and `X-DocMind-Signature: sha256=<hex HMAC-SHA256 of the raw body, keyed with the webhook's signing_secret>`. Verify it before trusting the payload. The signing secret is derived (never stored) from `JWT_SECRET` and the webhook id, and is shown to you exactly once, in the `POST /webhooks` response.
 
 The target URL must be a public, routable HTTPS endpoint — anything resolving to a private, loopback, link-local or reserved address is rejected both when the webhook is created and again on every delivery attempt (DNS can change in between).
+
+---
+Relacionado: [[empresa]]

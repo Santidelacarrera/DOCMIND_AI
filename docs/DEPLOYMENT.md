@@ -9,3 +9,6 @@ Backups are an infrastructure responsibility: take encrypted PostgreSQL point-in
 ## Compose overlay networks
 
 `docker-compose.prod.yml` puts the bundled `db`/`redis` on an internal `backend` network without egress, while `api` and `worker` also join `edge` for outbound traffic to object storage, the LLM provider and ClamAV. Set `REDIS_PASSWORD` and use it in `REDIS_URL`. Prefer managed PostgreSQL/Redis in production; the bundled services are for single-host staging.
+
+---
+Relacionado: [[empresa]]

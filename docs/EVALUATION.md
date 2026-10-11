@@ -98,3 +98,6 @@ and review the diff like code. The scanned-document checks need `tesseract-ocr` 
 * Synthetic, 19 documents, English/Spanish/German text: use it to detect regressions, not to forecast accuracy on your data. Build a held-out set of real (consented, redacted) documents before making accuracy claims to customers.
 * Layout-dependent content (tables, handwriting, stamps) is not covered.
 * Confidence calibration on 81 fields is indicative only; ECE needs a larger set.
+
+---
+Relacionado: [[empresa]]

@@ -15,3 +15,6 @@ The application purges deleted documents and (optionally) expires old ones: see 
 ## Redis/Celery guarantees
 
 The worker uses late acknowledgements, rejects tasks lost with a worker, one-task prefetch, bounded retries and task time limits. This is at-least-once delivery: idempotency is enforced by an atomic database claim, ownership fencing and a unique result per job (see RELIABILITY.md). For restart resilience, use managed Redis with persistence, HA and monitoring; Redis alone is not a durable workflow system or dead-letter queue.
+
+---
+Relacionado: [[empresa]]

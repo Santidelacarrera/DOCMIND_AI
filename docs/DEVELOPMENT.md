@@ -46,3 +46,6 @@ docker compose exec api alembic upgrade head
 ```bash
 cd frontend && npm ci && npm run lint && npm run typecheck && npm run build
 ```
+
+---
+Relacionado: [[empresa]]

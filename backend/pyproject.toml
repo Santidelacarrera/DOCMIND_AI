@@ -15,12 +15,16 @@ dependencies = [
   "opentelemetry-instrumentation-celery>=0.49b0"
 ]
 [project.optional-dependencies]
-dev = ["httpx>=0.28.1", "mypy>=1.13", "pytest>=8.3", "pytest-cov>=5", "ruff>=0.8", "types-openpyxl", "types-jsonschema", "pip-audit>=2.7", "bandit>=1.8"]
+# Vector indexing (app.ingestion.vectorstore); the dev extra also installs it for the tests.
+qdrant = ["qdrant-client>=1.12,<2"]
+ner = ["spacy>=3.7,<4"]  # then: python -m spacy download <PII_SPACY_MODEL>
+embeddings = ["fastembed>=0.4,<1"]  # local ONNX embeddings
+dev = ["qdrant-client>=1.12,<2", "httpx>=0.28.1", "mypy>=1.13", "pytest>=8.3", "pytest-cov>=5", "ruff>=0.8", "types-openpyxl", "types-jsonschema", "pip-audit>=2.7", "bandit>=1.8"]
 [build-system]
 requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
 [tool.setuptools]
-packages = ["app", "app.evaluation"]
+packages = ["app", "app.evaluation", "app.ingestion"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 [tool.ruff]
@@ -33,5 +37,5 @@ check_untyped_defs = true
 disallow_any_generics = true
 
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*", "pytesseract.*", "pdf2image.*", "celery.*", "clamd.*", "pwdlib.*", "opentelemetry.*", "prometheus_client.*"]
+module = ["fastembed.*", "spacy.*", "qdrant_client.*", "boto3.*", "botocore.*", "pytesseract.*", "pdf2image.*", "celery.*", "clamd.*", "pwdlib.*", "opentelemetry.*", "prometheus_client.*"]
 ignore_missing_imports = true
