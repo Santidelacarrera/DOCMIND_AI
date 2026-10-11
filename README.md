@@ -53,6 +53,7 @@ DocMind AI turns PDFs (invoices, contracts, forms…) into reviewable, exportabl
 - **Exports** — JSON, CSV and XLSX, hardened against spreadsheet formula injection, carrying the model value, the corrected value and the correction reason.
 - **Measured quality** — a reference corpus and `python -m app.evaluation` report precision/recall per field, OCR error, calibration and what the review gate catches ([docs/EVALUATION.md](docs/EVALUATION.md)).
 - **Recoverable jobs** — durable job state, atomic claims, bounded retries, stuck-job and lost-message recovery, no duplicate results ([docs/RELIABILITY.md](docs/RELIABILITY.md)).
+- **Vector-ready ingestion** — PDF sanitisation, checksum-validated PII masking, tenant-bound chunks and a tenant-filtered Qdrant store ([docs/INGESTION.md](docs/INGESTION.md)).
 - **Retention** — deletion removes files and text immediately and purges derived data on a schedule ([docs/DATA_RETENTION.md](docs/DATA_RETENTION.md)).
 - **Team collaboration** — email invitations to add people to a workspace, and webhooks that notify your own systems when a document finishes processing.
 - **Production observability** — structured JSON logs, Prometheus metrics (`/metrics`) and OpenTelemetry traces out of the box.

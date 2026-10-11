@@ -65,6 +65,15 @@ class Settings(BaseSettings):
     openai_input_price_per_1m: float = 0.15
     openai_output_price_per_1m: float = 0.60
 
+    # ---- Ingestion for vector indexing (app.ingestion) --------------------------
+    # Keyed HMAC for PII pseudonyms (stable per tenant). Unset -> numbered placeholders.
+    pii_masking_key: SecretStr | None = None
+    qdrant_collection: str = "docmind_chunks"
+    ingest_chunk_chars: int = 1200
+    ingest_chunk_overlap: int = 150
+    # Refuse PDFs carrying JavaScript, launch actions, embedded files or XFA (else strip them).
+    ingest_reject_active_content: bool = True
+
     # ---- Retention ---------------------------------------------------------------
     # Soft-deleted documents (and every derived record) are hard-deleted after this
     # many days. 0 = purge on the next retention run.
