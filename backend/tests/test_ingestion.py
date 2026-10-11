@@ -365,3 +365,58 @@ def test_search_requires_a_tenant_by_construction(store) -> None:
 
 def _tenant_condition(flt: Any) -> str:
     return str(flt.must[0].match.value)
+
+
+# ------------------------------------------------------------------------- PDF action coverage
+def _pdf_with_annotation(action: dict[str, str] | None = None, subtype: str = "/Link") -> bytes:
+    from pypdf.generic import (
+        ArrayObject,
+        DictionaryObject,
+        NameObject,
+        NumberObject,
+        TextStringObject,
+    )
+
+    writer = PdfWriter()
+    page = writer.add_blank_page(612, 792)
+    annot = DictionaryObject({
+        NameObject("/Type"): NameObject("/Annot"), NameObject("/Subtype"): NameObject(subtype),
+        NameObject("/Rect"): ArrayObject([NumberObject(0), NumberObject(0), NumberObject(10), NumberObject(10)]),
+    })
+    if action:
+        act = DictionaryObject({NameObject("/S"): NameObject(action["S"])})
+        if "URI" in action:
+            act[NameObject("/URI")] = TextStringObject(action["URI"])
+        annot[NameObject("/A")] = writer._add_object(act)
+    page[NameObject("/Annots")] = ArrayObject([writer._add_object(annot)])
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def test_launch_actions_in_annotations_are_active_content() -> None:
+    found = pdf.inspect_pdf(_pdf_with_annotation({"S": "/Launch"}))
+    assert "launch_action" in found.active and "annotations" in found.passive
+    with pytest.raises(pdf.UnsafeDocument):
+        pdf.sanitize_pdf(_pdf_with_annotation({"S": "/Launch"}))
+
+
+def test_javascript_actions_in_annotations_are_active_content() -> None:
+    assert "javascript" in pdf.inspect_pdf(_pdf_with_annotation({"S": "/JavaScript"})).active
+
+
+def test_uri_links_are_passive_and_removed_by_sanitisation() -> None:
+    dirty = _pdf_with_annotation({"S": "/URI", "URI": "https://tracker.example.test/pixel"})
+    found = pdf.inspect_pdf(dirty)
+    assert not found.active and "uri_action" in found.passive
+    clean, _ = pdf.sanitize_pdf(dirty)
+    assert b"tracker.example.test" not in clean and not pdf.inspect_pdf(clean).passive
+
+
+def test_file_attachment_annotations_count_as_embedded_files() -> None:
+    assert "embedded_file" in pdf.inspect_pdf(_pdf_with_annotation(subtype="/FileAttachment")).active
+
+
+def test_a_clean_pdf_reports_nothing_active() -> None:
+    found = pdf.inspect_pdf(digital_pdf([["hello world"]]))
+    assert found.pages == 1 and not found.active and not found.passive and not found.has_xmp

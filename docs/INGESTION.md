@@ -87,3 +87,6 @@ Only masked, verified text reaches `embed()`; search questions are masked the sa
 * **The local embedding model was not exercised end to end here**: the sandbox cannot download model weights. The adapter, its fail-closed behaviour with a missing model, dimension probing and the egress path are tested with injected models; run one smoke test with your real model before go-live.
 * **Qdrant itself**: use a server with API key + TLS. Per-tenant payload filters are an application-level boundary — for hard isolation use a collection or cluster per tenant. The in-memory client used in tests ignores payload indexes.
 * **The injection heuristic is a signal, not a defence**; the real controls are masking, tenant filters, no tools for the model, and validated outputs (see SECURITY.md).
+
+---
+Relacionado: [[empresa]]

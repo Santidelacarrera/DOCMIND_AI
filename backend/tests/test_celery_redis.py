@@ -178,27 +178,41 @@ def test_worker_killed_with_sigkill_mid_job_is_recovered(redis_url, register, mo
     app.conf.update(broker_url=redis_url, result_backend=redis_url)
     Redis.from_url(redis_url).flushall()
     env = {**os.environ, "REDIS_URL": redis_url, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+    log_path = tmp_path / "worker.log"
+    log_file = log_path.open("wb")
     proc = subprocess.Popen(
         [sys.executable, "-c", script], env=env, start_new_session=True,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=log_file, stderr=subprocess.STDOUT,
     )
+
+    def why() -> str:
+        """Worker output, so a failure on a slow or unusual runner explains itself."""
+        log_file.flush()
+        return f"worker exit={proc.poll()} log:\n{log_path.read_text(errors='replace')[-3000:]}"
+
     try:
         monkeypatch.delattr(worker.process_document, "delay", raising=False)
         monkeypatch.setattr(worker.process_document, "delay", lambda job_id: None)  # upload: no enqueue
         _acct, body = _upload(register)
         monkeypatch.delattr(worker.process_document, "delay")
-        time.sleep(5)  # let the worker connect
+        # Readiness, not a fixed sleep: import of the app inside the worker can take many seconds
+        # on a cold or busy runner. Wait until it answers a broadcast ping.
+        deadline = time.time() + 90
+        while time.time() < deadline and proc.poll() is None and not app.control.inspect(timeout=1).ping():
+            pass
+        assert proc.poll() is None, f"worker died on start-up. {why()}"
         worker.process_document.apply_async(args=[body["job_id"]])
-        deadline = time.time() + 40
-        while not marker.exists() and time.time() < deadline:
+        deadline = time.time() + 90
+        while not marker.exists() and time.time() < deadline and proc.poll() is None:
             time.sleep(0.2)
-        assert marker.exists(), "worker never reached the extraction step"
-        assert _status(body["job_id"]) == JobStatus.extracting
+        assert marker.exists(), f"worker never reached the extraction step. {why()}"
+        assert _status(body["job_id"]) == JobStatus.extracting, why()
         os.killpg(proc.pid, signal.SIGKILL)  # the whole worker, parent and pool child
         proc.wait(timeout=10)
     finally:
         if proc.poll() is None:
             os.killpg(proc.pid, signal.SIGKILL)
+        log_file.close()
         app.conf.update(broker_url=original[0], result_backend=original[1])
 
     assert _status(body["job_id"]) == JobStatus.extracting  # nobody is running it any more

@@ -48,3 +48,6 @@ Run a smoke test with a staging test account: register/login, create a project, 
 ## Avoiding split configuration
 
 Docker Compose injects the repository-root `.env` into API and worker. A shell launched from `backend/` instead loads `backend/.env` through Pydantic. Do not place staging S3 configuration in only one of those files: use the same Secret Manager/runtime injection source for `ENVIRONMENT`, `STORAGE_PROVIDER`, `S3_*` and `AWS_*`, then recreate both API and worker. Before uploading, verify only presence (never values): `docker compose exec api python -c "import os; print(bool(os.getenv('AWS_ACCESS_KEY_ID')))"`.
+
+---
+Relacionado: [[empresa]]
