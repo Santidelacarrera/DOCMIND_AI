@@ -13,9 +13,11 @@ type Schema = { id: string; name: string; active: boolean };
 
 const UPLOAD_ERRORS: Record<string, string> = {
   FILE_TOO_LARGE: "The file is too large.",
-  UNSUPPORTED_FILE_TYPE: "Only PDF files are supported.",
-  DOCUMENT_INVALID: "The PDF could not be read.",
-  PDF_PAGE_LIMIT_EXCEEDED: "The PDF has too many pages.",
+  UNSUPPORTED_FILE_TYPE: "Only PDF and Word (.docx) files are supported.",
+  DOCUMENT_INVALID: "The document could not be read.",
+  ACTIVE_CONTENT_REJECTED: "The document contains macros or embedded active content and was rejected.",
+  PDF_ENCRYPTED: "Encrypted documents are not supported.",
+  PDF_PAGE_LIMIT_EXCEEDED: "The document has too many pages.",
   DUPLICATE_DOCUMENT: "This document was already uploaded to the project.",
   QUOTA_EXCEEDED: "Your plan's page quota is exhausted.",
   MALWARE_DETECTED: "The file was rejected by the malware scanner.",
@@ -94,7 +96,7 @@ export default function Documents() {
   }
 
   async function remove(id: string) {
-    if (!window.confirm("Delete this document? The stored PDF is removed permanently.")) return;
+    if (!window.confirm("Delete this document? The stored file is removed permanently.")) return;
     const response = await api(
       `/api/v1/documents/${id}?organization_id=${encodeURIComponent(organizationId)}`,
       { method: "DELETE" },
@@ -127,7 +129,7 @@ export default function Documents() {
     <main>
       <Nav current="documents" />
       <section className="panel">
-        <h1>Upload a PDF</h1>
+        <h1>Upload a PDF or Word document</h1>
         <form onSubmit={createProject}>
           <label>New project
             <input value={projectName} maxLength={160} onChange={(event) => setProjectName(event.target.value)} placeholder="Invoices 2026" />
@@ -149,8 +151,8 @@ export default function Documents() {
               ))}
             </select>
           </label>
-          <label>PDF
-            <input type="file" accept="application/pdf" onChange={(event) => setFile(event.target.files?.[0] ?? null)} required />
+          <label>PDF or Word
+            <input type="file" accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => setFile(event.target.files?.[0] ?? null)} required />
           </label>
           <button disabled={!projectId || uploading}>{uploading ? "Uploading…" : "Upload and process"}</button>
         </form>

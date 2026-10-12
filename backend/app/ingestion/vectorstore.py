@@ -36,6 +36,9 @@ def to_point(chunk: Chunk, vector: Sequence[float], *, embedding_model: str = ""
             TENANT_KEY: chunk.tenant_id,
             "document_id": chunk.document_id,
             "chunk_index": chunk.index,
+            "source_name": chunk.source_name,
+            "page": chunk.page_start,  # chunks never cross a page: this is the page to cite
+            "page_basis": chunk.page_basis,
             "page_start": chunk.page_start,
             "page_end": chunk.page_end,
             "text": chunk.text,

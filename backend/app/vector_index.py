@@ -133,14 +133,14 @@ def index_document(organization_id: str, document_id: str) -> str:
         doc = db.get(Document, doc_id)
         if doc is None or doc.deleted_at is not None or doc.organization_id != org:
             return "skipped"
-        key = doc.storage_key
+        key, filename = doc.storage_key, doc.filename
     try:
         content = storage.get(owned_key(org, key))
     except (StorageAccessError, FileNotFoundError):
         _mark(doc_id, indexed=False, error="STORAGE_OBJECT_MISSING")
         return "refused:STORAGE_OBJECT_MISSING"
     try:
-        get_pipeline().ingest(tenant_id=str(org), document_id=str(doc_id), content=content)
+        get_pipeline().ingest(tenant_id=str(org), document_id=str(doc_id), content=content, source_name=filename)
     except (IngestionRefused, TenantError) as exc:
         code = getattr(exc, "code", None) or str(exc)
         _mark(doc_id, indexed=False, error=code[:80])

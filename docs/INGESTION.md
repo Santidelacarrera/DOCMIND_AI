@@ -1,5 +1,7 @@
 # Secure document ingestion for vector indexing (`app/ingestion`)
 
+> **Componente reutilizable de Nexus Security & AI Lab.** No depende de ningún cliente ni proyecto: recibe `tenant_id`, `document_id`, bytes y un nombre de archivo, y devuelve un informe; el almacén vectorial, el embedder y los detectores se inyectan. Para reutilizarlo en otro producto copia `app/ingestion/` y sus tests, y cablea `VectorStore`/`Embedder`; no arrastra datos, credenciales ni código de este proyecto.
+
 Turns an untrusted PDF into **masked, tenant-bound vectors** in Qdrant. It is a library: call `IngestionPipeline.ingest(tenant_id=…, document_id=…, content=…)` from a Celery task, an API handler or `ContextRAG_Engine`'s loader.
 
 ```
@@ -14,6 +16,13 @@ bytes ─▶ pdf.sanitize ─▶ extract (text layer / OCR) ─▶ text.normalis
 | `chunking.py` | Paragraph-aware windows (`INGEST_CHUNK_CHARS`, `INGEST_CHUNK_OVERLAP`) with page ranges. `Chunk` **cannot exist without a valid `tenant_id`** (organization UUID); its point id is `uuid5(tenant, document, index, content hash)` → re-ingestion is idempotent and ids never collide across tenants |
 | `vectorstore.py` | Qdrant adapter. One shared collection, `tenant_id` payload indexed with `is_tenant=True` (Qdrant's multitenancy layout). `search`, `delete_document` and `upsert` **require** a tenant and always add the tenant condition; there is no unfiltered variant |
 | `pipeline.py` | Orchestration and the fail-closed checks; `HashingEmbedder` (non-semantic, tests/dev only) and the `Embedder` protocol |
+
+## Word (.docx) and PDF, and answers with citations
+
+* **Formats:** PDF and Word `.docx` (`docx.py`). `.doc`, `.docm` and macro-enabled files are refused. Word is read with the standard library + `defusedxml` (no Word/LibreOffice): macros, embedded OLE objects, remote templates, zip bombs (entry count, size, ratio), path traversal and XML entity attacks are rejected with stable codes; hidden text (`w:vanish`), tracked deletions and metadata are **not** extracted. Pages follow explicit page breaks / section breaks / `lastRenderedPageBreak`; with none, pages are *estimated* (3 000 characters) and flagged `page_basis="estimated"`.
+* **Page-exact chunks:** a chunk never crosses a page, so each point carries `source_name`, `page` and `page_basis`.
+* **Answers always cite** (`answering.py`, `POST /api/v1/ask`): extractive and local (no language model). Each answer has at least one `{document, document_id, page}` citation or is an explicit abstention (`abstained: true`, no citations); enforced in the constructor and tested. Deleted documents are never cited (checked against the database even while their vectors await the deletion outbox), suspicious chunks are never used, and the tenant comes from the authenticated membership.
+* Demo and numbers: [DEMO.md](DEMO.md). Local-only operation and how to verify it: [LOCAL_PROCESSING.md](LOCAL_PROCESSING.md).
 
 ## Guarantees (each has a test in `tests/test_ingestion.py`)
 

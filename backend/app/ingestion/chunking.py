@@ -37,6 +37,8 @@ class Chunk:
     page_end: int
     pii_counts: dict[str, int] = field(default_factory=dict)
     suspicious: bool = False
+    source_name: str = ""  # the document's display name, quoted in citations
+    page_basis: str = "explicit"  # "explicit" (real pages) or "estimated" (Word without page breaks)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tenant_id", parse_tenant(self.tenant_id))
@@ -84,55 +86,57 @@ def _pieces(paragraph: str, limit: int) -> list[str]:
 def split_pages(
     pages: Sequence[str], *, max_chars: int = 1200, overlap: int = 150
 ) -> list[tuple[str, int, int]]:
-    """``(text, first_page, last_page)`` windows: at most ``max_chars`` characters of new content (plus the overlap).
+    """``(text, first_page, last_page)`` windows of at most ``max_chars`` characters of new content.
 
-    Paragraphs (blank-line separated) are the unit of packing, so a chunk rarely cuts a thought
-    in half. The last ``overlap`` characters of a chunk are repeated at the start of the next
-    one (when they fit) to keep context across the boundary.
+    **A window never crosses a page**, so ``first_page == last_page`` and a citation can name
+    exactly one page. Within a page, paragraphs (blank-line separated) are the unit of packing,
+    and the last ``overlap`` characters of a window are repeated at the start of the next one
+    (same page only) to keep context across the boundary.
     """
     if max_chars < 200 or not 0 <= overlap < max_chars // 2:
         raise ValueError("CHUNK_PARAMETERS_INVALID")
-    units: list[tuple[str, int]] = []
-    for number, page in enumerate(pages, start=1):
-        for paragraph in re.split(r"\n\s*\n", page):
-            paragraph = " ".join(paragraph.split())
-            if paragraph:
-                units.extend((piece, number) for piece in _pieces(paragraph, max_chars))
-
     windows: list[tuple[str, int, int]] = []
-    current: list[tuple[str, int]] = []  # (text, page); may begin with an overlap tail
-    fresh = 0  # units in ``current`` that are not just the overlap carried from the last window
+    for number, page in enumerate(pages, start=1):
+        units = [
+            piece
+            for paragraph in re.split(r"\n\s*\n", page)
+            for piece in _pieces(" ".join(paragraph.split()), max_chars)
+            if paragraph.strip()
+        ]
+        current: list[str] = []
+        fresh = 0  # units in ``current`` that are not just the overlap carried from the last window
 
-    def length() -> int:
-        return sum(len(t) for t, _ in current) + 2 * max(0, len(current) - 1)
+        def length(cur: list[str]) -> int:
+            return sum(len(t) for t in cur) + 2 * max(0, len(cur) - 1)
 
-    def emit() -> None:
-        nonlocal current, fresh
-        text = "\n\n".join(t for t, _ in current)
-        windows.append((text, current[0][1], current[-1][1]))
-        tail = text[-overlap:].lstrip() if overlap else ""
-        current = [(tail, current[-1][1])] if " " in tail else []
-        fresh = 0
+        def emit(cur: list[str], page_number: int = number) -> list[str]:
+            text = "\n\n".join(cur)
+            windows.append((text, page_number, page_number))
+            tail = text[-overlap:].lstrip() if overlap else ""
+            return [tail] if " " in tail else []
 
-    for unit, unit_page in units:
-        if fresh and length() + 2 + len(unit) > max_chars:
-            emit()
-        current.append((unit, unit_page))
-        fresh += 1
-    if fresh:
-        emit()
+        for unit in units:
+            if fresh and length(current) + 2 + len(unit) > max_chars:
+                current = emit(current)
+                fresh = 0
+            current.append(unit)
+            fresh += 1
+        if fresh:
+            emit(current)
     return windows
 
 
 def build_chunks(
     *, tenant_id: str, document_id: str, windows: Sequence[tuple[str, int, int]],
     pii_counts: Sequence[dict[str, int]] | None = None, suspicious: Sequence[bool] | None = None,
+    source_name: str = "", page_basis: str = "explicit",
 ) -> list[Chunk]:
     tenant = parse_tenant(tenant_id)
     return [
         Chunk(
             tenant_id=tenant, document_id=document_id, index=i, text=text, page_start=a, page_end=b,
             pii_counts=(pii_counts[i] if pii_counts else {}), suspicious=(suspicious[i] if suspicious else False),
+            source_name=source_name, page_basis=page_basis,
         )
         for i, (text, a, b) in enumerate(windows)
     ]
