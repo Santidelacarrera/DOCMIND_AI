@@ -2,7 +2,9 @@
 
 # DocMind AI
 
-**Secure, multi-tenant document intelligence: upload PDFs, extract structured data with an LLM, review it, export it.**
+**Secure, multi-tenant document intelligence: upload PDF or Word documents, extract structured data, review it, export it, and ask questions whose answers always cite document and page.**
+
+A product of **Nexus Security & AI Lab**. Local processing, cost $0 by default.
 
 [![CI](https://github.com/Santidelacarrera/DOCMIND_AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Santidelacarrera/DOCMIND_AI/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Santidelacarrera/DOCMIND_AI/actions/workflows/codeql.yml/badge.svg)](https://github.com/Santidelacarrera/DOCMIND_AI/actions/workflows/codeql.yml)
@@ -39,7 +41,7 @@
 
 ## What it does
 
-DocMind AI turns PDFs (invoices, contracts, forms…) into reviewable, exportable data.
+DocMind AI turns PDF and Word (`.docx`) documents (invoices, contracts, policies, forms…) into reviewable, exportable data and into answers that cite their sources — all of it processable locally ([docs/LOCAL_PROCESSING.md](docs/LOCAL_PROCESSING.md)).
 
 - **Multi-tenant by construction** — organizations, roles (owner/admin/member/viewer), projects, scoped API keys, usage quotas and audit logs.
 - **Safe ingestion** — magic-byte, size, page-count and parse validation, optional ClamAV scanning, checksum de-duplication, opaque storage keys.
@@ -53,6 +55,7 @@ DocMind AI turns PDFs (invoices, contracts, forms…) into reviewable, exportabl
 - **Exports** — JSON, CSV and XLSX, hardened against spreadsheet formula injection, carrying the model value, the corrected value and the correction reason.
 - **Measured quality** — a reference corpus and `python -m app.evaluation` report precision/recall per field, OCR error, calibration and what the review gate catches ([docs/EVALUATION.md](docs/EVALUATION.md)).
 - **Recoverable jobs** — durable job state, atomic claims, bounded retries, stuck-job and lost-message recovery, no duplicate results ([docs/RELIABILITY.md](docs/RELIABILITY.md)).
+- **Answers with citations** — `POST /api/v1/ask` returns an extractive answer plus `{document, page}` for every claim, or an explicit "not found"; it never answers without a source ([docs/INGESTION.md](docs/INGESTION.md), demo in [docs/DEMO.md](docs/DEMO.md)).
 - **Vector-ready ingestion** — PDF sanitisation, checksum-validated PII masking, tenant-bound chunks and a tenant-filtered Qdrant store ([docs/INGESTION.md](docs/INGESTION.md)).
 - **Retention** — deletion removes files and text immediately and purges derived data on a schedule ([docs/DATA_RETENTION.md](docs/DATA_RETENTION.md)).
 - **Team collaboration** — email invitations to add people to a workspace, and webhooks that notify your own systems when a document finishes processing.
@@ -80,6 +83,29 @@ docker compose up --build     # applies migrations automatically
 3. The worker processes it; open the document to review, edit and export the result.
 
 > The default `.env.example` uses `LLM_PROVIDER=mock`, which returns a fixed fixture so the whole flow works offline. Set `LLM_PROVIDER=openai` and `OPENAI_API_KEY` for real extraction.
+
+## Local quickstart (no Docker, no accounts, $0)
+
+Requirements: Python 3.12+ (3.13 works), `tesseract-ocr` and `poppler-utils` for scanned PDFs (optional for everything else).
+
+```bash
+git clone https://github.com/Santidelacarrera/DOCMIND_AI.git
+cd DOCMIND_AI/backend
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e '.[dev]'                       # installs the app, pytest, ruff, mypy, bandit, qdrant-client, python-docx
+sudo apt-get install -y tesseract-ocr poppler-utils   # optional: OCR for scanned PDFs
+
+# 1. Tests (SQLite, in-memory doubles; no services needed)
+pytest --cov=app --cov-fail-under=75
+
+# 2. Demo: fictitious PDF + Word documents, answers with document and page
+python -m app.ingestion.demo --output-dir demo_output
+
+# 3. Extraction-quality evaluation over the reference corpus
+python -m app.evaluation
+```
+
+Expected: tests pass (≥ 75 % coverage), the demo ends with `Citas correctas: **10/10**` and exit code 0. Everything runs on your machine; see [docs/LOCAL_PROCESSING.md](docs/LOCAL_PROCESSING.md). Static checks: `ruff check . && mypy app && bandit -r app -ll`.
 
 ## Architecture
 
@@ -308,4 +334,4 @@ See [docs/decisions/](docs/decisions/) for ADRs.
 
 ## Contributing and license
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Released under the [MIT License](LICENSE).
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Released under the [MIT License](LICENSE). Maintained by **Nexus Security & AI Lab**.

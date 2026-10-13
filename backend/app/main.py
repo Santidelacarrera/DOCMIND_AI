@@ -36,6 +36,7 @@ from app import vector_index
 from app.antivirus import antivirus
 from app.core import settings
 from app.db import get_db
+from app.ingestion.docx import DOCX_MIME, looks_like_docx
 from app.limits import MaxBodySizeMiddleware
 from app.logging_config import configure_logging
 from app.metrics import PrometheusMiddleware, metrics_response
@@ -64,6 +65,7 @@ from app.models import (
     utcnow,
 )
 from app.notifications import email_provider, invitation_email
+from app.processing import ProcessingError, extract_docx_pages
 from app.rate_limit import enforce
 from app.retention import delete_objects, scrub_derived_text
 from app.security import (
@@ -1093,17 +1095,28 @@ def upload_document(
     content = file.file.read(settings().max_upload_bytes + 1)
     if len(content) > settings().max_upload_bytes:
         raise HTTPException(413, "FILE_TOO_LARGE")
-    if not (file.filename or "").lower().endswith(".pdf") or not content.startswith(b"%PDF-"):
+    name = (file.filename or "").lower()
+    if name.endswith(".pdf") and content.startswith(b"%PDF-"):
+        is_docx = False
+    elif name.endswith(".docx") and looks_like_docx(content):
+        is_docx = True  # legacy .doc and macro-enabled .docm are not accepted
+    else:
         raise HTTPException(415, "UNSUPPORTED_FILE_TYPE")
-    try:
-        reader = PdfReader(io.BytesIO(content))
-        if reader.is_encrypted:
-            raise HTTPException(422, "PDF_ENCRYPTED")
-        page_count = len(reader.pages)
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(422, "DOCUMENT_INVALID") from None
+    if is_docx:
+        try:
+            page_count = len(extract_docx_pages(content))
+        except ProcessingError as exc:
+            raise HTTPException(422, exc.code) from None
+    else:
+        try:
+            reader = PdfReader(io.BytesIO(content))
+            if reader.is_encrypted:
+                raise HTTPException(422, "PDF_ENCRYPTED")
+            page_count = len(reader.pages)
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(422, "DOCUMENT_INVALID") from None
     if page_count < 1:
         raise HTTPException(422, "DOCUMENT_INVALID")
     if page_count > settings().max_pdf_pages:
@@ -1137,12 +1150,13 @@ def upload_document(
     )
     if existing:
         return _duplicate_response(existing)
-    key = owned_key(org_id, f"{org_id}/{uuid.uuid4()}.pdf")
+    mime = DOCX_MIME if is_docx else "application/pdf"
+    key = owned_key(org_id, f"{org_id}/{uuid.uuid4()}.{'docx' if is_docx else 'pdf'}")
     storage.put(key, content)
     try:
         document = Document(
             organization_id=org_id, project_id=project_id, filename=sanitize_filename(file.filename),
-            storage_key=key, mime_type="application/pdf", checksum=checksum, page_count=page_count,
+            storage_key=key, mime_type=mime, checksum=checksum, page_count=page_count,
         )
         db.add(document)
         db.flush()
@@ -1415,7 +1429,7 @@ def download(
         raise HTTPException(404, "DOCUMENT_NOT_FOUND") from None
     return Response(
         content,
-        media_type="application/pdf",
+        media_type=item.mime_type,
         headers={
             "Content-Disposition": content_disposition(item.filename, inline=inline),
             # Only the configured web origins may embed the PDF viewer.
@@ -1701,3 +1715,57 @@ def export(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=extraction.xlsx"},
     )
+
+
+class AskInput(BaseModel):
+    question: str = Field(min_length=3, max_length=500)
+    top_k: int = Field(default=4, ge=1, le=8)
+
+
+@app.post("/api/v1/ask")
+def ask(
+    organization_id: str,
+    payload: AskInput,
+    request: Request,
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Answer a question from this organization's indexed documents, always with its sources.
+
+    Extractive and local (no language model, no network call). The tenant is the authenticated
+    membership, never a request field; deleted documents are never cited.
+    """
+    from app.ingestion.answering import answer
+
+    enforce(request, "ask", settings().rate_limit_api)
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, scope="documents:read")
+    if not vector_index.enabled():
+        raise HTTPException(503, "VECTOR_INDEX_DISABLED")
+
+    def is_live(document_id: str) -> bool:
+        try:
+            doc_uuid = uuid.UUID(document_id)
+        except ValueError:
+            return False
+        return db.scalar(
+            select(Document.id).where(
+                Document.id == doc_uuid, Document.organization_id == org_id, Document.deleted_at.is_(None)
+            )
+        ) is not None
+
+    result = answer(
+        vector_index.get_pipeline(), tenant_id=str(org_id), question=payload.question,
+        top_k=payload.top_k, is_live=is_live,
+    )
+    audit(db, "document.ask", "organization", str(org_id), user, org_id)
+    db.commit()
+    return {
+        "answer": result.text,
+        "abstained": result.abstained,
+        "citations": [
+            {"document_id": c.document_id, "document": c.document, "page": c.page,
+             "page_basis": c.page_basis, "score": c.score, "label": c.label()}
+            for c in result.citations
+        ],
+    }

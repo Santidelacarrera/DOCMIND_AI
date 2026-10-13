@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core import settings
 from app.db import SessionLocal
+from app.ingestion.docx import DOCX_MIME
 from app.logging_config import configure_logging
 from app.metrics import (
     DOCUMENTS_PROCESSED_TOTAL,
@@ -43,6 +44,7 @@ from app.processing import (
     ProcessingError,
     estimate_cost,
     estimate_tokens,
+    extract_docx_pages,
     extract_pdf_pages,
     extraction_envelope,
     llm,
@@ -223,6 +225,7 @@ class _Claim:
     organization_id: uuid.UUID
     document_id: uuid.UUID
     storage_key: str
+    mime_type: str
     # Ownership token: the ``started_at`` this worker wrote when it claimed the job.
     # Every later write is fenced on it, so a worker that was taken over (or recovered)
     # can never overwrite the state of whoever owns the job now.
@@ -272,7 +275,7 @@ def _claim(job_id: str) -> _Claim | None:
             job.failure_message = _failure_message(job.failure_code)
             job.completed_at = now
             return None
-        return _Claim(job.id, job.organization_id, document.id, document.storage_key, now)
+        return _Claim(job.id, job.organization_id, document.id, document.storage_key, document.mime_type, now)
 
 
 def _owns(job: ProcessingJob | None, claim: _Claim) -> bool:
@@ -329,14 +332,15 @@ def _compute(claim: _Claim, log: _StepLog) -> _Computed:
     """Phase 2 (no open transaction): the slow, failure-prone work."""
     log.start("text_extraction")
     content = _read_object(claim)
-    pages_text = extract_pdf_pages(content)
+    is_docx = claim.mime_type == DOCX_MIME
+    pages_text = extract_docx_pages(content) if is_docx else extract_pdf_pages(content)
     pages = len(pages_text)
     text = "\n".join(pages_text)[: settings().max_pdf_text_chars]
     log.finish()
 
     ocr_used = False
     ocr_confidences: list[float | None] = []
-    if needs_ocr(text, pages):
+    if not is_docx and needs_ocr(text, pages):
         _set_status(claim.job_id, JobStatus.ocr_processing)
         log.start("ocr")
         try:

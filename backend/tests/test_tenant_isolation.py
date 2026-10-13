@@ -35,6 +35,7 @@ BODIES: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/api-keys"): ["documents:read"],
     ("POST", "/api/v1/webhooks"): {"url": "https://example.com/hook", "events": ["document.completed"]},
     ("PATCH", "/api/v1/extraction-fields/{field_id}"): "hacked",
+    ("POST", "/api/v1/ask"): {"question": "vacaciones del personal"},
 }
 EXTRA_QUERY = {
     ("POST", "/api/v1/members"): "&email=x@example.com&role=MEMBER",

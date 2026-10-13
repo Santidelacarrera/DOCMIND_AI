@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from app.core import settings
-from app.ingestion import chunking, pdf, pii, text, vectorstore
+from app.ingestion import chunking, docx, pdf, pii, text, vectorstore
 from app.ingestion.embeddings import EgressPolicy, Embedder
 from app.ocr import TesseractProvider, needs_ocr
 from app.processing import ProcessingError, extract_pdf_pages
@@ -28,6 +28,8 @@ class IngestionReport:
     tenant_id: str
     document_id: str
     pages: int = 0
+    format: str = "pdf"
+    page_basis: str = "explicit"
     ocr_used: bool = False
     chunks: int = 0
     pii: dict[str, int] = field(default_factory=dict)
@@ -86,21 +88,32 @@ class IngestionPipeline:
             report.ocr_used = True
         return pages
 
-    def ingest(self, *, tenant_id: str, document_id: str, content: bytes) -> IngestionReport:
-        tenant = chunking.parse_tenant(tenant_id)  # raises before any work is done
-        document = chunking.parse_tenant(document_id)
-        report = IngestionReport(tenant, document)
-
-        # 1. structural sanitisation: no active content, no metadata survives
+    def _prepare(self, content: bytes, report: IngestionReport) -> list[str]:
+        """Steps 1-3: structural sanitisation and text, for PDF and Word."""
+        if docx.looks_like_docx(content):
+            report.format = "docx"
+            try:
+                result = docx.extract_docx(content, reject_active_content=self.reject_active_content)
+            except docx.UnsafeDocx as exc:
+                raise IngestionRefused(exc.code) from None
+            report.stripped = docx.describe(result.findings)
+            report.page_basis, report.pages = result.page_basis, len(result.pages)
+            return result.pages
         try:
             clean, findings = pdf.sanitize_pdf(content, reject_active_content=self.reject_active_content)
         except pdf.UnsafeDocument as exc:
             raise IngestionRefused(exc.code) from None
         report.stripped = {"active": sorted(findings.active), "passive": sorted(findings.passive),
                            "metadata_keys": findings.metadata_keys, "xmp": ["xmp"] if findings.has_xmp else []}
+        return self._extract(clean, report)
 
-        # 2-3. text, normalised
-        pages = self._extract(clean, report)
+    def ingest(self, *, tenant_id: str, document_id: str, content: bytes, source_name: str = "") -> IngestionReport:
+        tenant = chunking.parse_tenant(tenant_id)  # raises before any work is done
+        document = chunking.parse_tenant(document_id)
+        report = IngestionReport(tenant, document)
+
+        # 1-3. sanitise (no active content, no metadata survives) and extract text per page
+        pages = self._prepare(content, report)
 
         # 4. PII masking *before* chunking, so no chunk boundary can split an identifier
         masker = self._masker(tenant)
@@ -122,6 +135,7 @@ class IngestionPipeline:
         flags = [text.looks_like_injection(w[0]) for w in windows]
         chunks = chunking.build_chunks(
             tenant_id=tenant, document_id=document, windows=windows,
+            source_name=source_name[:255], page_basis=report.page_basis,
             pii_counts=[pii.placeholder_counts(w[0]) for w in windows], suspicious=flags,
         )
         chunking.assert_single_tenant(chunks, tenant)

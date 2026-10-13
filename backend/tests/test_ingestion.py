@@ -189,16 +189,20 @@ def test_point_ids_are_stable_and_never_collide_across_tenants() -> None:
     assert make(TENANT_A.upper()).tenant_id == TENANT_A  # canonicalised
 
 
-def test_split_pages_respects_size_overlap_and_page_ranges() -> None:
+def test_split_pages_respects_size_overlap_and_never_crosses_a_page() -> None:
     pages = ["Alpha sentence one. " * 40 + "\n\n" + "Beta paragraph text. " * 30, "Gamma on page two. " * 50]
     windows = chunking.split_pages(pages, max_chars=400, overlap=60)
     assert len(windows) >= 4
     assert all(len(t) <= 400 + 60 + 2 for t, _, _ in windows)
+    assert all(a == b for _, a, b in windows)  # one page per window: citations are exact
     assert windows[0][1] == 1 and windows[-1][2] == 2
-    assert all(a <= b for _, a, b in windows)
-    # overlap: each window after the first starts with the end of the previous one
-    for (prev, _, _), (nxt, _, _) in itertools.pairwise(windows):
-        assert nxt[:20].split()[0] in prev
+    assert {p for _, p, _ in windows} == {1, 2}
+    assert "Gamma" not in " ".join(t for t, p, _ in windows if p == 1)
+    assert "Alpha" not in " ".join(t for t, p, _ in windows if p == 2)
+    # overlap: within a page each window starts with the end of the previous one
+    for (prev, page_a, _), (nxt, page_b, _) in itertools.pairwise(windows):
+        if page_a == page_b:
+            assert nxt[:20].split()[0] in prev
     assert chunking.split_pages(["", "  \n\n "]) == []
     with pytest.raises(ValueError):
         chunking.split_pages(["x"], max_chars=50)

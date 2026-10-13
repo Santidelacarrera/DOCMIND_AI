@@ -233,6 +233,18 @@ def extract_pdf_pages(content: bytes) -> list[str]:
         raise ProcessingError("DOCUMENT_INVALID") from None
 
 
+def extract_docx_pages(content: bytes) -> list[str]:
+    """Per-page text of a Word document; raises :class:`ProcessingError` with a stable code."""
+    from app.ingestion.docx import UnsafeDocx, extract_docx
+
+    try:
+        result = extract_docx(content, reject_active_content=settings().ingest_reject_active_content)
+    except UnsafeDocx as exc:
+        raise ProcessingError(exc.code) from None
+    limit = settings().max_pdf_text_chars
+    return [page[:limit] for page in result.pages]
+
+
 def extract_pdf_text(content: bytes) -> tuple[str, int]:
     pages = extract_pdf_pages(content)
     return "\n".join(pages)[: settings().max_pdf_text_chars], len(pages)
