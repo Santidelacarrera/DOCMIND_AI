@@ -11,6 +11,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import CursorResult, and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
+from app import contextrag_sync
 from app.core import settings
 from app.db import SessionLocal
 from app.ingestion.docx import DOCX_MIME
@@ -49,6 +50,7 @@ from app.processing import (
     extraction_envelope,
     llm,
 )
+from app.provenance import Evidence, evidence_for, evidence_issues
 from app.storage import StorageAccessError, owned_key, storage
 from app.telemetry import configure_worker_tracing
 from app.validation import (
@@ -101,6 +103,9 @@ celery_app.conf.beat_schedule = {
     "recover-stuck-jobs": {"task": "app.worker.recover_stuck_jobs", "schedule": 60.0},
     "purge-expired-data": {"task": "app.worker.purge_expired_data", "schedule": 3600.0},
     "process-vector-deletions": {"task": "app.worker.process_vector_deletions", "schedule": 60.0},
+    "reconcile-storage": {"task": "app.worker.reconcile_storage", "schedule": 86400.0},
+    "deliver-contextrag-events": {"task": "app.worker.deliver_contextrag_events", "schedule": 30.0},
+    "reconcile-contextrag": {"task": "app.worker.reconcile_contextrag", "schedule": 3600.0},
 }
 
 MAX_RETRIES = 3
@@ -326,6 +331,7 @@ class _Computed:
     issues: list[dict[str, Any]]
     schema_version_id: uuid.UUID | None
     usage: dict[str, Any]
+    evidence: dict[str, Evidence]
 
 
 def _compute(claim: _Claim, log: _StepLog) -> _Computed:
@@ -391,6 +397,9 @@ def _compute(claim: _Claim, log: _StepLog) -> _Computed:
     issues = validate_fields(json_schema, fields, known)
     if ocr_used and ocr_confidences:
         issues.extend(ocr_issues(ocr_confidences))
+    # Evidence: only text the pipeline really extracted can support a value (never generated).
+    evidence = evidence_for(fields, pages_text)
+    issues.extend(evidence_issues(evidence))
     if settings().schema_violation_policy == "reject" and has_schema_violations(issues):
         raise ProcessingError("LLM_SCHEMA_INVALID")
     log.finish()
@@ -400,7 +409,7 @@ def _compute(claim: _Claim, log: _StepLog) -> _Computed:
             "completion_tokens": estimate_tokens(str(result)),
             "estimated": True,
         }
-    return _Computed(pages_text, ocr_used, ocr_confidences, result, fields, confidence_by_field, issues, schema_version_id, usage)
+    return _Computed(pages_text, ocr_used, ocr_confidences, result, fields, confidence_by_field, issues, schema_version_id, usage, evidence)
 
 
 def _commit_success(claim: _Claim, computed: _Computed, log: _StepLog) -> bool:
@@ -473,6 +482,7 @@ def _commit_success(claim: _Claim, computed: _Computed, log: _StepLog) -> bool:
                 extra={"document_id": str(document.id), "run_id": str(run.id), "issue_count": len(computed.issues)},
             )
         for name, value in computed.fields.items():
+            found = computed.evidence.get(name) or Evidence("not_applicable")
             db.add(
                 ExtractionField(
                     extraction_run_id=run.id,
@@ -480,10 +490,15 @@ def _commit_success(claim: _Claim, computed: _Computed, log: _StepLog) -> bool:
                     original_value=value,
                     value=value,
                     confidence=computed.confidence_by_field.get(name),
+                    evidence_status=found.status,
+                    page_number=found.page,
+                    source_text=found.snippet,
                 )
             )
         db.add(UsageRecord(organization_id=job.organization_id, metric="documents_processed", quantity=1, document_id=document.id))
         db.add(UsageRecord(organization_id=job.organization_id, metric="pages_processed", quantity=pages, document_id=document.id))
+        # Same transaction: the outbox row exists if and only if the new content is committed.
+        contextrag_sync.enqueue_upsert(db, job.organization_id, document.id)
         _persist_steps(db, job.id, log, None)
         return True
 
@@ -572,8 +587,8 @@ def process_document(self, job_id: str) -> None:
     except SoftTimeLimitExceeded:
         error = ProcessingError("PROCESSING_TIMEOUT")
     except Exception:
-        # Raw provider/filesystem errors can carry sensitive context: log them here,
-        # persist only a stable code.
+        # Raw provider/filesystem errors can carry sensitive context: the log keeps the
+        # frames and exception classes only (app.logging_config), and only a stable code is persisted.
         logger.exception("unexpected processing failure", extra={"job_id": job_id})
         error = ProcessingError(GENERIC_FAILURE[0])
     outcome = _commit_failure(claim, error, log)
@@ -679,6 +694,26 @@ def purge_expired_data() -> dict[str, int]:
     from app.retention import purge_expired
 
     return purge_expired()
+
+
+@celery_app.task
+def deliver_contextrag_events() -> dict[str, int]:
+    """Deliver due ContextRAG outbox events (no-op unless CONTEXTRAG_SYNC_ENABLED)."""
+    return contextrag_sync.process_due()
+
+
+@celery_app.task
+def reconcile_contextrag() -> dict[str, int]:
+    """Enqueue events for inconsistencies: current content not yet sent, deletions not yet retired."""
+    return contextrag_sync.reconcile()
+
+
+@celery_app.task
+def reconcile_storage() -> dict[str, object]:
+    """Report (and, only if enabled, remove) stored objects without a database row."""
+    from app.reconcile import reconcile
+
+    return reconcile()
 
 
 @celery_app.task(

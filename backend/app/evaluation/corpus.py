@@ -18,6 +18,19 @@ from app.evaluation.pdfgen import digital_pdf, scanned_pdf
 
 CORPUS_DIR = Path(__file__).resolve().parents[2] / "eval_corpus"
 
+# Documents that existed when the baseline rules were written and tuned. Everything else added later
+# (the audit additions) is the closest thing to a held-out set, which is still written by the same author:
+# a true held-out evaluation needs documents nobody on the team has seen.
+DEVELOPMENT_IDS = frozenset(
+    {
+        "inv_digital_01", "inv_digital_02", "inv_digital_03", "inv_digital_04",
+        "contract_digital_01", "contract_digital_02", "form_digital_01", "form_digital_02",
+        "scan_invoice_clean", "scan_invoice_skewed", "scan_invoice_lowres", "scan_contract_3p",
+        "inj_invoice_01", "mal_truncated", "mal_not_a_pdf", "mal_empty", "mal_header_only",
+        "mal_encrypted", "mal_zero_pages",
+    }
+)
+
 INVOICE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -310,6 +323,85 @@ SPECS: list[Spec] = [
         truth={"effective_date": "2025-01-15", "counterparty": "Maple Street Clinics LLC",
                "term_months": 12, "governing_law": "State of California", "total_fee": 54000.00},
         note="Scanned multi-page contract: OCR across pages.",
+    ),
+    # ---------------------------------------------------------------- audit additions (synthetic)
+    Spec(
+        "inv_table_01", DIGITAL, "invoice",
+        pages=[[
+            "Northwind Fabrication Ltd.",
+            "",
+            "INVOICE",
+            "Invoice Number: NW-2025-0733",
+            "Invoice Date: 2025-06-02",
+            "Bill To: Contoso Retail",
+            "Currency: GBP",
+            "",
+            "Item            Qty    Unit price    Amount",
+            "Steel bracket    40       12.50       500.00",
+            "Mounting plate   10       45.00       450.00",
+            "Fasteners (box)   5       18.00        90.00",
+            "",
+            "Subtotal: 1,040.00",
+            "VAT (20%): 208.00",
+            "Total Due: 1,248.00",
+        ]],
+        truth={"invoice_number": "NW-2025-0733", "invoice_date": "2025-06-02",
+               "vendor_name": "Northwind Fabrication Ltd.", "customer_name": "Contoso Retail",
+               "currency": "GBP", "total_amount": 1248.00, "tax_amount": 208.00},
+        tags=["table"],
+        note="Line items in a table; totals sit below it and must not be confused with row amounts.",
+    ),
+    Spec(
+        "inv_ambiguous_date_01", DIGITAL, "invoice",
+        pages=[[
+            "Lakeside Consulting LLC",
+            "",
+            "INVOICE",
+            "Invoice Number: LC-2025-0150",
+            "Invoice Date: 04/05/2025",
+            "Bill To: Fabrikam Inc.",
+            "Currency: USD",
+            "Total Due: $2,400.00",
+        ]],
+        truth={"invoice_number": "LC-2025-0150", "invoice_date": "2025-04-05",
+               "vendor_name": "Lakeside Consulting LLC", "customer_name": "Fabrikam Inc.",
+               "currency": "USD", "total_amount": 2400.00, "tax_amount": None},
+        tags=["ambiguous_date"],
+        note="04/05/2025 can be 5 April or 4 May. The reference reads it month-first (US vendor, USD); a "
+             "correct system must not present either reading as certain.",
+    ),
+    Spec(
+        "inv_missing_required_01", DIGITAL, "invoice",
+        pages=[[
+            "Harbor Print Co.",
+            "",
+            "INVOICE",
+            "Bill To: Initech",
+            "Currency: USD",
+            "Thank you for your business.",
+        ]],
+        truth={"invoice_number": None, "invoice_date": None, "vendor_name": "Harbor Print Co.",
+               "customer_name": "Initech", "currency": "USD", "total_amount": None, "tax_amount": None},
+        tags=["missing_required"],
+        note="Both required fields (invoice number, total) are absent: they must come back empty and be "
+             "routed to review, never invented.",
+    ),
+    Spec(
+        "contract_long_30p", MULTIPAGE, "contract",
+        pages=(
+            [["SERVICES AGREEMENT", "",
+              'This Agreement is effective as of January 15, 2025 between Meridian Systems Inc. ("Provider")',
+              'and Vandelay Industries Ltd ("Client").', ""] + _filler("1. General", 2)]
+            + [[f"Section {n}", ""] + _filler(f"{n}. Clause", 4) for n in range(2, 29)]
+            + [["28. Fees", "", "The total fee for the Services is $90,000.00.", "",
+                "This Agreement is governed by the laws of the State of New York.", ""] + _filler("28. Misc", 2),
+               ["29. Term", "", "The initial term of this Agreement is 18 months from the Effective Date.", ""]
+               + _filler("29. Misc", 2)]
+        ),
+        truth={"effective_date": "2025-01-15", "counterparty": "Vandelay Industries Ltd", "term_months": 18,
+               "governing_law": "State of New York", "total_fee": 90000.00},
+        tags=["long"],
+        note="Thirty pages: the fields are on the first and last pages, with filler clauses in between.",
     ),
     # ---------------------------------------------------------------- adversarial content
     Spec(

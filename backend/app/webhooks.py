@@ -16,14 +16,16 @@ to arbitrary tenant-supplied URLs:
 
 import hashlib
 import hmac
+import http.client
 import ipaddress
 import json
 import logging
 import socket
+import urllib.request
 import uuid
 from typing import Any
 from urllib.error import URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlparse
 
 from app.core import settings
 
@@ -37,14 +39,29 @@ class WebhookURLError(ValueError):
     pass
 
 
-def validate_url(url: str, *, allow_insecure: bool = False) -> str:
-    """Raise WebhookURLError unless ``url`` is a public HTTP(S) endpoint.
+def _blocked(address: str) -> bool:
+    """True for anything that is not a public, routable unicast address."""
+    ip = ipaddress.ip_address(address)
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped  # ::ffff:127.0.0.1 is loopback, however it is spelled
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+        or not ip.is_global  # carrier-grade NAT (100.64/10) and other non-global ranges
+    )
 
-    ``allow_insecure`` only exists so local/dev environments can point webhooks
-    at ``http://`` test receivers; production configuration never sets it.
+
+def resolve_public(url: str, *, allow_insecure: bool = False) -> tuple[str, str]:
+    """Validate ``url`` and return ``(url, address)`` where ``address`` is the one IP to connect to.
+
+    Raises WebhookURLError unless every address the host resolves to is public. The caller
+    must connect to the returned address (not resolve the name again), otherwise DNS could
+    answer differently the second time (rebinding) and reach an internal service.
     """
-    from urllib.parse import urlparse
-
     parsed = urlparse(url)
     allowed_schemes = {"http", "https"} if allow_insecure else {"https"}
     if parsed.scheme not in allowed_schemes or not parsed.hostname:
@@ -53,25 +70,56 @@ def validate_url(url: str, *, allow_insecure: bool = False) -> str:
         raise WebhookURLError("WEBHOOK_URL_INVALID")
     if len(url) > 2048:
         raise WebhookURLError("WEBHOOK_URL_TOO_LONG")
-    host = parsed.hostname
     try:
-        infos = socket.getaddrinfo(host, None)
+        infos = socket.getaddrinfo(parsed.hostname, None)
     except OSError:
         raise WebhookURLError("WEBHOOK_URL_UNRESOLVABLE") from None
     if not infos:
         raise WebhookURLError("WEBHOOK_URL_UNRESOLVABLE")
-    for info in infos:
-        address = ipaddress.ip_address(info[4][0])
-        if (
-            address.is_private
-            or address.is_loopback
-            or address.is_link_local
-            or address.is_multicast
-            or address.is_reserved
-            or address.is_unspecified
-        ):
-            raise WebhookURLError("WEBHOOK_URL_NOT_ALLOWED")
-    return url
+    addresses = [str(info[4][0]) for info in infos]
+    if any(_blocked(address) for address in addresses):
+        raise WebhookURLError("WEBHOOK_URL_NOT_ALLOWED")
+    return url, addresses[0]
+
+
+def validate_url(url: str, *, allow_insecure: bool = False) -> str:
+    """Raise WebhookURLError unless ``url`` is a public HTTP(S) endpoint.
+
+    ``allow_insecure`` only exists so local/dev environments can point webhooks
+    at ``http://`` test receivers; production configuration never sets it.
+    """
+    return resolve_public(url, allow_insecure=allow_insecure)[0]
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A 3xx from a public endpoint must not make us call whatever it points at (SSRF)."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        return None
+
+
+def _pinned_handlers(address: str) -> list[urllib.request.BaseHandler]:
+    class HTTPConnection(http.client.HTTPConnection):
+        def connect(self) -> None:
+            self.sock = socket.create_connection((address, self.port), self.timeout)
+
+    class HTTPSConnection(http.client.HTTPSConnection):
+        def connect(self) -> None:
+            sock = socket.create_connection((address, self.port), self.timeout)
+            # Certificate and SNI are still checked against the real host name.
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)  # type: ignore[attr-defined]
+
+    class HTTPHandler(urllib.request.HTTPHandler):
+        def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+            return self.do_open(HTTPConnection, req)
+
+    class HTTPSHandler(urllib.request.HTTPSHandler):
+        def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+            return self.do_open(HTTPSConnection, req)
+
+    # ProxyHandler({}): ignore HTTP(S)_PROXY. Pinning the address only means something when we
+    # connect to the target ourselves; a proxy would resolve the name again on its side.
+    return [urllib.request.ProxyHandler({}), HTTPHandler(), HTTPSHandler(), _NoRedirect()]
 
 
 def signing_secret(webhook_id: uuid.UUID) -> str:
@@ -84,7 +132,9 @@ def sign_payload(webhook_id: uuid.UUID, body: bytes) -> str:
     return hmac.new(signing_secret(webhook_id).encode(), body, hashlib.sha256).hexdigest()
 
 
-def deliver(webhook_id: uuid.UUID, url: str, event: str, payload: dict[str, Any]) -> tuple[bool, int | None, str | None]:
+def deliver(
+    webhook_id: uuid.UUID, url: str, event: str, payload: dict[str, Any]
+) -> tuple[bool, int | None, str | None]:
     """POST the event to ``url``. Returns (success, status_code, error).
 
     Never raises: delivery failures (network, DNS, non-2xx, SSRF re-check) are
@@ -92,13 +142,15 @@ def deliver(webhook_id: uuid.UUID, url: str, event: str, payload: dict[str, Any]
     and decide whether to retry.
     """
     try:
-        validate_url(url, allow_insecure=settings().environment.lower() == "development")
+        url, address = resolve_public(
+            url, allow_insecure=settings().environment.lower() == "development"
+        )
     except WebhookURLError as exc:
         return False, None, str(exc)
     body = json.dumps({"event": event, "data": payload}, default=str).encode()
     if len(body) > MAX_PAYLOAD_BYTES:
         return False, None, "PAYLOAD_TOO_LARGE"
-    request = Request(
+    request = urllib.request.Request(
         url,
         data=body,
         method="POST",
@@ -110,11 +162,11 @@ def deliver(webhook_id: uuid.UUID, url: str, event: str, payload: dict[str, Any]
         },
     )
     try:
-        # The target URL is tenant-supplied, which is exactly what bandit's B310
-        # flags -- but validate_url() above (and again at creation/update time)
-        # already restricts it to a resolvable public HTTPS host, so this isn't
-        # an open redirect/SSRF/file:// vector.
-        with urlopen(request, timeout=DELIVERY_TIMEOUT_SECONDS) as response:  # nosec B310
+        # The target URL is tenant-supplied, which is what bandit's B310 flags. It is safe
+        # here because resolve_public() above accepted only public addresses, the connection
+        # goes to that exact address (no second DNS lookup) and redirects are not followed.
+        opener = urllib.request.build_opener(*_pinned_handlers(address))
+        with opener.open(request, timeout=DELIVERY_TIMEOUT_SECONDS) as response:  # nosec B310
             status_code = response.status
             return 200 <= status_code < 300, status_code, None
     except URLError as exc:

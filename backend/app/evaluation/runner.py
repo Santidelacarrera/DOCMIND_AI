@@ -170,7 +170,10 @@ def _summarize(results: list[dict[str, Any]], manifest: dict[str, Any], provider
             f = fields.get(name)
             correct = m.values_match(expected, f["original_value"] if f else None)
             observations.append(
-                m.Observation(r["id"], name, correct, f["confidence"] if f else None, bool(f and f["needs_review"]))
+                m.Observation(
+                    r["id"], name, correct, f["confidence"] if f else None, bool(f and f["needs_review"]),
+                    evidence=(f or {}).get("evidence", {}).get("status") if f else None,
+                )
             )
             oracle_ok = m.values_match(expected, r["oracle_fields"].get(name))
             if correct:
@@ -252,7 +255,15 @@ def _summarize(results: list[dict[str, Any]], manifest: dict[str, Any], provider
             "documents": text_rows,
         },
         "confidence": m.calibration(observations),
+        "confidence_breakdown": m.calibration_breakdown(
+            observations,
+            {
+                "development": corpus_mod.DEVELOPMENT_IDS,
+                "added_later": frozenset(e["id"] for e in manifest["documents"]) - corpus_mod.DEVELOPMENT_IDS,
+            },
+        ),
         "review_routing": m.review_routing(observations),
+        "evidence": m.evidence_breakdown(observations),
         "rejections": {
             "correct": sum(r["ok"] for r in rejection_rows), "total": len(rejection_rows), "documents": rejection_rows,
         },
@@ -452,6 +463,16 @@ def to_markdown(report: dict[str, Any]) -> str:
                  f"Accuracy without review {pct(rr['raw_accuracy'])}; ",
                  f"accuracy of the auto-accepted fields {pct(rr['auto_accept_accuracy'])}. ",
                  f"Wrong fields that were *not* flagged: {', '.join(rr['silent_errors']) or 'none'}.")]
+    ev = report.get("evidence")
+    if ev:
+        lines += ["", "### Textual evidence vs correctness", "",
+                  ("A value is `exact`/`normalized` when it was found in the extracted text; `not_found` when it was not. "
+                   "This is not a probability: it is the share of values in each group that match the reference."), "",
+                  "| Evidence status | Fields | Correct | Wrong | Precision | Flagged for review |",
+                  "|---|---:|---:|---:|---:|---:|"]
+        for status, row in ev["by_status"].items():
+            lines.append(f"| {status} | {row['n']} | {row['correct']} | {row['wrong']} | "
+                         f"{pct(row['precision'])} | {row['flagged']} |")
 
     rej = report["rejections"]
     lines += ["", "## Invalid inputs", "",

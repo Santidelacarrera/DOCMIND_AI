@@ -16,6 +16,7 @@ from fastapi import (
     Depends,
     FastAPI,
     File,
+    Header,
     HTTPException,
     Query,
     Request,
@@ -32,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app import vector_index
+from app import contextrag_sync, vector_index
 from app.antivirus import antivirus
 from app.core import settings
 from app.db import get_db
@@ -44,6 +45,7 @@ from app.models import (
     ApiKey,
     AuditLog,
     Document,
+    DocumentPage,
     DocumentVersion,
     ExtractionField,
     ExtractionRun,
@@ -88,7 +90,7 @@ from app.worker import process_document, process_vector_deletions
 configure_logging()
 logger = logging.getLogger("docmind")
 _config = settings()
-_production = _config.environment.lower() in {"staging", "production"}
+_production = _config.is_production
 app = FastAPI(
     title="DocMind AI",
     version="0.1.0",
@@ -123,9 +125,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         ):
             csrf_cookie = request.cookies.get("csrf_token", "")
             csrf_header = request.headers.get("x-csrf-token", "")
-            if not csrf_cookie or not compare_digest(
-                csrf_cookie.encode(), csrf_header.encode()
-            ):
+            if not csrf_cookie or not compare_digest(csrf_cookie.encode(), csrf_header.encode()):
                 return Response(status_code=403, content="CSRF_FAILED")
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -142,9 +142,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if request.url.path.startswith("/api/") and "Cache-Control" not in response.headers:
             response.headers["Cache-Control"] = "no-store"
         if settings().effective_cookie_secure:
-            response.headers["Strict-Transport-Security"] = (
-                "max-age=31536000; includeSubDomains"
-            )
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
 
 
@@ -177,8 +175,14 @@ def password_problem(password: str, email: str) -> str | None:
 
 COMMON_PASSWORDS = frozenset(
     {
-        "passwordpassword", "123456789012", "qwertyuiopas", "password1234",
-        "administrator", "letmein123456", "iloveyou1234", "welcome12345",
+        "passwordpassword",
+        "123456789012",
+        "qwertyuiopas",
+        "password1234",
+        "administrator",
+        "letmein123456",
+        "iloveyou1234",
+        "welcome12345",
     }
 )
 
@@ -272,19 +276,38 @@ def ready(db: Session = Depends(get_db)) -> dict[str, str]:
 
 
 @app.get("/metrics")
-def metrics() -> Response:
-    # Scraped by Prometheus on the internal network; not tenant data, so it is
-    # intentionally unauthenticated like /health. Restrict network access to it
-    # at the ingress/load balancer in staging/production.
+def metrics(authorization: str | None = Header(default=None)) -> Response:
+    # Scraped by Prometheus on the internal network. The network restriction at the ingress is the primary
+    # control; METRICS_TOKEN, when set, adds a bearer check so that a misrouted request is still refused.
+    token = settings().metrics_token
+    if token is not None:
+        scheme, _, value = (authorization or "").partition(" ")
+        presented = value if scheme == "Bearer" else ""
+        if not presented or not compare_digest(presented.encode(), token.get_secret_value().encode()):
+            raise HTTPException(401, "METRICS_TOKEN_REQUIRED")
     return metrics_response()
 
 
 def set_session_cookies(response: Response, token: str) -> None:
     config = settings()
-    response.set_cookie("access_token", token, httponly=True, secure=config.effective_cookie_secure,
-                        samesite=config.cookie_samesite, max_age=config.access_token_minutes * 60, path="/")
-    response.set_cookie("csrf_token", token_urlsafe(32), httponly=False, secure=config.effective_cookie_secure,
-                        samesite=config.cookie_samesite, max_age=config.access_token_minutes * 60, path="/")
+    response.set_cookie(
+        "access_token",
+        token,
+        httponly=True,
+        secure=config.effective_cookie_secure,
+        samesite=config.cookie_samesite,
+        max_age=config.access_token_minutes * 60,
+        path="/",
+    )
+    response.set_cookie(
+        "csrf_token",
+        token_urlsafe(32),
+        httponly=False,
+        secure=config.effective_cookie_secure,
+        samesite=config.cookie_samesite,
+        max_age=config.access_token_minutes * 60,
+        path="/",
+    )
 
 
 @app.post("/api/v1/auth/register", status_code=201)
@@ -322,7 +345,9 @@ def register(
 
 
 @app.post("/api/v1/auth/login")
-def login(payload: LoginInput, request: Request, response: Response, db: Session = Depends(get_db)) -> dict[str, object]:
+def login(
+    payload: LoginInput, request: Request, response: Response, db: Session = Depends(get_db)
+) -> dict[str, object]:
     email = payload.email.lower()
     enforce(request, "login", settings().rate_limit_login)
     # Per-account bucket slows credential stuffing that rotates source addresses.
@@ -382,7 +407,9 @@ def create_organization(
 
 
 @app.get("/api/v1/organizations")
-def organizations(user: User = Depends(require_user), db: Session = Depends(get_db)) -> list[dict[str, str]]:
+def organizations(
+    user: User = Depends(require_user), db: Session = Depends(get_db)
+) -> list[dict[str, str]]:
     return [
         {"id": str(o.id), "name": o.name, "role": m.role.value}
         for o, m in db.execute(
@@ -400,7 +427,9 @@ def _member_view(user: User, member: OrganizationMember) -> dict[str, object]:
     return {"user_id": str(user.id), "email": user.email, "role": member.role.value}
 
 
-def _guard_role_change(actor: OrganizationMember | None, target_role: Role, new_role: Role | None) -> None:
+def _guard_role_change(
+    actor: OrganizationMember | None, target_role: Role, new_role: Role | None
+) -> None:
     """Admins manage members below them; only owners create, change or remove owners."""
     assert actor is not None  # members endpoints are user-only
     if actor.role != Role.owner and (
@@ -414,7 +443,9 @@ def _owner_count(db: Session, org_id: uuid.UUID) -> int:
         db.scalar(
             select(func.count())
             .select_from(OrganizationMember)
-            .where(OrganizationMember.organization_id == org_id, OrganizationMember.role == Role.owner)
+            .where(
+                OrganizationMember.organization_id == org_id, OrganizationMember.role == Role.owner
+            )
         )
         or 0
     )
@@ -620,7 +651,9 @@ def revoke_invitation(
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, Role.admin)
     invitation = db.scalar(
-        select(Invitation).where(Invitation.id == invitation_id, Invitation.organization_id == org_id)
+        select(Invitation).where(
+            Invitation.id == invitation_id, Invitation.organization_id == org_id
+        )
     )
     if not invitation:
         raise HTTPException(404, "INVITATION_NOT_FOUND")
@@ -660,7 +693,9 @@ def accept_invitation(
         )
     invitation.status = InvitationStatus.accepted
     invitation.accepted_at = utcnow()
-    audit(db, "invitation.accept", "invitation", str(invitation.id), user, invitation.organization_id)
+    audit(
+        db, "invitation.accept", "invitation", str(invitation.id), user, invitation.organization_id
+    )
     db.commit()
     return {"organization_id": str(invitation.organization_id), "role": invitation.role.value}
 
@@ -687,7 +722,9 @@ def create_project(
 
 @app.get("/api/v1/projects")
 def projects(
-    organization_id: str, user: User | ApiPrincipal = Depends(current_user), db: Session = Depends(get_db)
+    organization_id: str,
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
 ) -> list[dict[str, object]]:
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, scope="documents:read")
@@ -728,7 +765,10 @@ def create_schema(
     db.add(schema)
     db.flush()
     version = ExtractionSchemaVersion(
-        schema_id=schema.id, version=1, json_schema=json_schema, prompt_instructions=prompt_instructions
+        schema_id=schema.id,
+        version=1,
+        json_schema=json_schema,
+        prompt_instructions=prompt_instructions,
     )
     db.add(version)
     audit(db, "schema.create", "schema", str(schema.id), user, org_id)
@@ -738,7 +778,9 @@ def create_schema(
 
 @app.get("/api/v1/schemas")
 def schemas(
-    organization_id: str, user: User | ApiPrincipal = Depends(current_user), db: Session = Depends(get_db)
+    organization_id: str,
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
 ) -> list[dict[str, object]]:
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, scope="schemas:read")
@@ -912,6 +954,86 @@ def usage(
     }
 
 
+@app.get("/api/v1/contextrag/events")
+def contextrag_events(
+    organization_id: str,
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Synchronisation state with ContextRAG for administrators: counts and recent problems.
+    Holds status and error codes only, never document content. API keys cannot read it."""
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.admin)
+    return contextrag_sync.status_summary(db, org_id)
+
+
+@app.get("/api/v1/contextrag/events/list")
+def contextrag_events_list(
+    organization_id: str,
+    status: str | None = Query(
+        default=None, pattern="^(pending|processing|done|failed|cancelled)$"
+    ),
+    limit: int = Query(default=50, ge=1, le=200),
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Inspect outbox events of the organization (administrators only). Identifiers and status, no content."""
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.admin)
+    return {"events": contextrag_sync.list_events(db, org_id, status, limit)}
+
+
+class CancelEventInput(BaseModel):
+    confirm: str = Field(
+        min_length=36, max_length=36, description="Must equal the event id in the path"
+    )
+    reason: str = Field(min_length=10, max_length=300)
+
+
+@app.post("/api/v1/contextrag/events/{event_id}/cancel")
+def contextrag_event_cancel(
+    event_id: uuid.UUID,
+    organization_id: str,
+    payload: CancelEventInput,
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Cancel one failed or pending upsert. Deletions cannot be cancelled. Requires the event id in the body,
+    a reason, administrator rights, and leaves an audit record."""
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.admin)
+    try:
+        outcome = contextrag_sync.cancel_upsert(
+            db, org_id, event_id, confirm=payload.confirm, reason=payload.reason
+        )
+    except contextrag_sync.OutboxAdminError as exc:
+        db.rollback()
+        raise HTTPException(exc.status, exc.code) from None
+    # Same transaction as the cancellation: either both happen or neither does.
+    db.add(
+        AuditLog(
+            organization_id=org_id,
+            actor_id=user.id if isinstance(user, User) else None,
+            action="contextrag.event.cancel",
+            target_type="contextrag_event",
+            target_id=str(event_id),
+            metadata_={
+                "reason": outcome["reason"],
+                "previous_status": outcome["previous"]["status"],
+                "attempts": outcome["previous"]["attempts"],
+                "last_error": outcome["previous"]["last_error"],
+                "document_id": outcome["document_id"],
+            },
+        )
+    )
+    db.commit()
+    return {
+        "event_id": outcome["event_id"],
+        "status": "cancelled",
+        "previous_status": outcome["previous"]["status"],
+    }
+
+
 @app.get("/api/v1/audit-logs")
 def audit_logs(
     organization_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)
@@ -968,7 +1090,9 @@ def create_webhook(
     if not payload.events or set(payload.events) - ALLOWED_WEBHOOK_EVENTS:
         raise HTTPException(422, "INVALID_WEBHOOK_EVENT")
     try:
-        validate_webhook_url(payload.url, allow_insecure=settings().environment.lower() == "development")
+        validate_webhook_url(
+            payload.url, allow_insecure=settings().environment.lower() == "development"
+        )
     except WebhookURLError as exc:
         raise HTTPException(422, str(exc)) from None
     webhook = Webhook(
@@ -1057,7 +1181,9 @@ def _enqueue(job_id: uuid.UUID) -> None:
     try:
         process_document.delay(str(job_id))
     except Exception:
-        logger.warning("broker unavailable; job stays queued for recovery", extra={"job_id": str(job_id)})
+        logger.warning(
+            "broker unavailable; job stays queued for recovery", extra={"job_id": str(job_id)}
+        )
 
 
 def _kick_vector_deletions() -> None:
@@ -1127,7 +1253,9 @@ def upload_document(
         raise HTTPException(503 if str(exc) == "ANTIVIRUS_UNAVAILABLE" else 422, str(exc)) from None
     # Lock the organization row so concurrent uploads cannot each observe the
     # same remaining quota and collectively exceed it.
-    organization = db.scalar(select(Organization).where(Organization.id == org_id).with_for_update())
+    organization = db.scalar(
+        select(Organization).where(Organization.id == org_id).with_for_update()
+    )
     if organization is None:
         raise HTTPException(404, "ORGANIZATION_NOT_FOUND")
     reserved_pages = int(
@@ -1138,7 +1266,10 @@ def upload_document(
         )
         or 0
     )
-    if organization.plan.value == "FREE" and reserved_pages + page_count > settings().free_pages_per_month:
+    if (
+        organization.plan.value == "FREE"
+        and reserved_pages + page_count > settings().free_pages_per_month
+    ):
         raise HTTPException(402, "QUOTA_EXCEEDED")
     checksum = hashlib.sha256(content).hexdigest()
     existing = db.scalar(
@@ -1155,8 +1286,13 @@ def upload_document(
     storage.put(key, content)
     try:
         document = Document(
-            organization_id=org_id, project_id=project_id, filename=sanitize_filename(file.filename),
-            storage_key=key, mime_type=mime, checksum=checksum, page_count=page_count,
+            organization_id=org_id,
+            project_id=project_id,
+            filename=sanitize_filename(file.filename),
+            storage_key=key,
+            mime_type=mime,
+            checksum=checksum,
+            page_count=page_count,
         )
         db.add(document)
         db.flush()
@@ -1165,10 +1301,19 @@ def upload_document(
             organization_id=org_id,
             document_id=document.id,
             status=JobStatus.queued,
-            requested_schema_version_id=requested_schema_version.id if requested_schema_version else None,
+            requested_schema_version_id=requested_schema_version.id
+            if requested_schema_version
+            else None,
         )
         db.add(job)
-        db.add(UsageRecord(organization_id=org_id, metric="pages_reserved", quantity=page_count, document_id=document.id))
+        db.add(
+            UsageRecord(
+                organization_id=org_id,
+                metric="pages_reserved",
+                quantity=page_count,
+                document_id=document.id,
+            )
+        )
         audit(db, "document.upload", "document", str(document.id), user, org_id)
         db.commit()
     except IntegrityError:
@@ -1282,7 +1427,12 @@ def process_existing_document(
         .order_by(ProcessingJob.created_at.desc())
     )
     if active:
-        return {"document_id": str(item.id), "job_id": str(active.id), "status": active.status.value, "reused": True}
+        return {
+            "document_id": str(item.id),
+            "job_id": str(active.id),
+            "status": active.status.value,
+            "reused": True,
+        }
     prior_attempt = db.scalar(
         select(func.coalesce(func.max(ProcessingJob.attempt), 0)).where(
             ProcessingJob.document_id == item.id, ProcessingJob.organization_id == org_id
@@ -1293,14 +1443,21 @@ def process_existing_document(
         document_id=item.id,
         status=JobStatus.queued,
         attempt=int(prior_attempt or 0) + 1,
-        requested_schema_version_id=requested_schema_version.id if requested_schema_version else None,
+        requested_schema_version_id=requested_schema_version.id
+        if requested_schema_version
+        else None,
     )
     db.add(job)
     db.flush()
     audit(db, "document.process", "document", str(item.id), user, org_id)
     db.commit()
     _enqueue(job.id)
-    return {"document_id": str(item.id), "job_id": str(job.id), "status": job.status.value, "reused": False}
+    return {
+        "document_id": str(item.id),
+        "job_id": str(job.id),
+        "status": job.status.value,
+        "reused": False,
+    }
 
 
 @app.get("/api/v1/documents/{document_id}/status")
@@ -1385,11 +1542,14 @@ def delete_document(
     if not item:
         raise HTTPException(404, "DOCUMENT_NOT_FOUND")
     keys = {item.storage_key} | set(
-        db.scalars(select(DocumentVersion.storage_key).where(DocumentVersion.document_id == item.id))
+        db.scalars(
+            select(DocumentVersion.storage_key).where(DocumentVersion.document_id == item.id)
+        )
     )
     item.deleted_at = datetime.now(UTC)
     scrub_derived_text(db, item.id)
     vector_index.queue_deletion(db, org_id, item.id)  # same transaction: cannot be lost
+    contextrag_sync.enqueue_retire(db, org_id, item.id)  # same transaction
     audit(db, "document.delete", "document", str(item.id), user, org_id)
     db.commit()
     _kick_vector_deletions()
@@ -1418,9 +1578,7 @@ def download(
     )
     if not item:
         raise HTTPException(404, "DOCUMENT_NOT_FOUND")
-    frame_ancestors = " ".join(
-        o.strip() for o in settings().cors_origins.split(",") if o.strip()
-    )
+    frame_ancestors = " ".join(o.strip() for o in settings().cors_origins.split(",") if o.strip())
     try:
         # The key must live under the caller's organization prefix, independently of the
         # database lookup above.
@@ -1480,20 +1638,47 @@ def _review_state(run: ExtractionRun, fields: list[ExtractionField]) -> dict[str
     }
 
 
+def _field_trust(f: ExtractionField, flagged: set[str]) -> str:
+    """What a consumer may assume about a value, strongest first.
+
+    ``human_reviewed``      a person confirmed or corrected it;
+    ``automatic_evidenced`` extracted by the model, found in the document, no open issue;
+    ``automatic_unverified`` extracted by the model without that support (not located in the
+                             text, flagged by validation, or from a run predating provenance).
+    """
+    if f.manually_verified:
+        return "human_reviewed"
+    if f.evidence_status in ("exact", "normalized") and f.name not in flagged:
+        return "automatic_evidenced"
+    return "automatic_unverified"
+
+
 def _extraction_payload(db: Session, org_id: uuid.UUID, document_id: uuid.UUID) -> dict[str, Any]:
     """The extraction view shared by the read and export endpoints. Callers authorize first."""
-    live_document(db, org_id, document_id)
+    document = live_document(db, org_id, document_id)
     run = _latest_run(db, org_id, document_id)
     fields = list(
         db.scalars(select(ExtractionField).where(ExtractionField.extraction_run_id == run.id)).all()
     )
     flagged = _flagged_fields(run)
+    ocr_used = bool(
+        db.scalar(
+            select(DocumentPage.id)
+            .where(DocumentPage.document_id == document.id, DocumentPage.ocr_used.is_(True))
+            .limit(1)
+        )
+    )
+    text_source = (
+        "docx" if document.mime_type == DOCX_MIME else ("ocr" if ocr_used else "embedded_text")
+    )
     return {
         "run_id": str(run.id),
+        "document_id": str(document.id),
         "result": run.result,
         "requires_review": run.requires_review,
         "validation_issues": run.validation_issues,
         "review": _review_state(run, fields),
+        "method": {"kind": "llm", "text_source": text_source, "confidence_calibrated": False},
         "model": {
             "provider": run.provider,
             "name": run.model,
@@ -1507,11 +1692,19 @@ def _extraction_payload(db: Session, org_id: uuid.UUID, document_id: uuid.UUID) 
                 "name": f.name,
                 "value": f.value,
                 "original_value": f.original_value,
+                # Self-reported by the model and not calibrated: a ranking hint, not a probability.
                 "confidence": f.confidence,
                 "manually_verified": f.manually_verified,
                 "needs_review": f.name in flagged and not f.manually_verified,
                 "correction_reason": f.correction_reason,
                 "corrected_at": f.corrected_at,
+                "trust": _field_trust(f, flagged),
+                "evidence": {
+                    "status": f.evidence_status or "unavailable",
+                    "document_id": str(document.id),
+                    "page": f.page_number,
+                    "snippet": f.source_text,
+                },
             }
             for f in fields
         ],
@@ -1631,7 +1824,8 @@ def review_queue(
         .join(Document, Document.id == ExtractionRun.document_id)
         .join(
             latest,
-            (latest.c.document_id == ExtractionRun.document_id) & (latest.c.at == ExtractionRun.created_at),
+            (latest.c.document_id == ExtractionRun.document_id)
+            & (latest.c.at == ExtractionRun.created_at),
         )
         .where(
             ExtractionRun.organization_id == org_id,
@@ -1669,8 +1863,18 @@ def export(
     fields: list[dict[str, Any]] = data["fields"]
     review_status = data["review"]["status"]
     columns = [
-        "name", "value", "original_value", "confidence", "manually_verified",
-        "needs_review", "correction_reason", "review_status",
+        "name",
+        "value",
+        "original_value",
+        "confidence",
+        "manually_verified",
+        "needs_review",
+        "correction_reason",
+        "review_status",
+        "trust",
+        "evidence_status",
+        "evidence_page",
+        "evidence_snippet",
     ]
 
     def cell(value: object) -> object:
@@ -1678,9 +1882,18 @@ def export(
 
     def row(f: dict[str, Any]) -> list[object]:
         return [
-            neutralize_formula(f["name"]), cell(f["value"]), cell(f["original_value"]),
-            f["confidence"], f["manually_verified"], f["needs_review"],
-            neutralize_formula(f["correction_reason"]), review_status,
+            neutralize_formula(f["name"]),
+            cell(f["value"]),
+            cell(f["original_value"]),
+            f["confidence"],
+            f["manually_verified"],
+            f["needs_review"],
+            neutralize_formula(f["correction_reason"]),
+            review_status,
+            f["trust"],
+            f["evidence"]["status"],
+            f["evidence"]["page"],
+            neutralize_formula(f["evidence"]["snippet"]),  # document text: may start with = + - @
         ]
 
     if format == "json":
@@ -1748,15 +1961,23 @@ def ask(
             doc_uuid = uuid.UUID(document_id)
         except ValueError:
             return False
-        return db.scalar(
-            select(Document.id).where(
-                Document.id == doc_uuid, Document.organization_id == org_id, Document.deleted_at.is_(None)
+        return (
+            db.scalar(
+                select(Document.id).where(
+                    Document.id == doc_uuid,
+                    Document.organization_id == org_id,
+                    Document.deleted_at.is_(None),
+                )
             )
-        ) is not None
+            is not None
+        )
 
     result = answer(
-        vector_index.get_pipeline(), tenant_id=str(org_id), question=payload.question,
-        top_k=payload.top_k, is_live=is_live,
+        vector_index.get_pipeline(),
+        tenant_id=str(org_id),
+        question=payload.question,
+        top_k=payload.top_k,
+        is_live=is_live,
     )
     audit(db, "document.ask", "organization", str(org_id), user, org_id)
     db.commit()
@@ -1764,8 +1985,14 @@ def ask(
         "answer": result.text,
         "abstained": result.abstained,
         "citations": [
-            {"document_id": c.document_id, "document": c.document, "page": c.page,
-             "page_basis": c.page_basis, "score": c.score, "label": c.label()}
+            {
+                "document_id": c.document_id,
+                "document": c.document,
+                "page": c.page,
+                "page_basis": c.page_basis,
+                "score": c.score,
+                "label": c.label(),
+            }
             for c in result.citations
         ],
     }

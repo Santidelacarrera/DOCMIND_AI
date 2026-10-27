@@ -1,0 +1,53 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 529 >>
+stream
+BT
+/F1 11 Tf
+18 TL
+56 740 Td
+(Northwind Fabrication Ltd.) Tj T*
+() Tj T*
+(INVOICE) Tj T*
+(Invoice Number: NW-2025-0733) Tj T*
+(Invoice Date: 2025-06-02) Tj T*
+(Bill To: Contoso Retail) Tj T*
+(Currency: GBP) Tj T*
+() Tj T*
+(Item            Qty    Unit price    Amount) Tj T*
+(Steel bracket    40       12.50       500.00) Tj T*
+(Mounting plate   10       45.00       450.00) Tj T*
+(Fasteners \(box\)   5       18.00        90.00) Tj T*
+() Tj T*
+(Subtotal: 1,040.00) Tj T*
+(VAT \(20%\): 208.00) Tj T*
+(Total Due: 1,248.00) Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000218 00000 n 
+0000000798 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+924
+%%EOF

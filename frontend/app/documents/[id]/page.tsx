@@ -3,6 +3,13 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Nav from "../../../components/Nav";
 import { API_URL, api } from "../../../lib/api";
+type Trust = "human_reviewed" | "automatic_evidenced" | "automatic_unverified";
+type Evidence = {
+  status: "exact" | "normalized" | "not_found" | "not_applicable" | "unavailable";
+  document_id: string;
+  page: number | null;
+  snippet: string | null;
+};
 type Field = {
   id: string;
   name: string;
@@ -12,7 +19,27 @@ type Field = {
   manually_verified: boolean;
   needs_review: boolean;
   correction_reason: string | null;
+  trust: Trust;
+  evidence: Evidence;
 };
+// What a reader may conclude, in words (never a colour alone). The backend decides the trust level;
+// this page only presents it.
+const TRUST_TEXT: Record<Trust, string> = {
+  human_reviewed: "Confirmed or corrected by a person",
+  automatic_evidenced: "Found in the document text",
+  automatic_unverified: "Not verified automatically",
+};
+function evidenceNote(evidence: Evidence): string {
+  if (evidence.status === "not_found") {
+    return "The value could not be found in the document text. Check it against the original.";
+  }
+  if (evidence.status === "exact" || evidence.status === "normalized") {
+    const where = evidence.page !== null ? `page ${evidence.page}` : "the document";
+    const how = evidence.status === "normalized" ? " (same number or date, different notation)" : "";
+    return `Source: ${where}${how}`;
+  }
+  return "No source location is available for this value.";
+}
 type ValidationIssue = { field: string | null; rule: string; message: string };
 type Review = { status: "not_required" | "pending" | "approved"; pending_fields: string[] };
 // Why a person changed a value; stored with the correction and shown in exports.
@@ -208,6 +235,14 @@ export default function DocumentDetail() {
               </ul>
             </div>
           )}
+          {fields.length > 0 && (
+            <p>
+              <small>
+                Confidence values are scores reported by the extraction model. They are not calibrated probabilities:
+                use the source location, not the percentage, to decide whether a value is right.
+              </small>
+            </p>
+          )}
           {fields.map((field) => {
             const lowConfidence = field.needs_review;
             const corrected =
@@ -239,10 +274,20 @@ export default function DocumentDetail() {
               ) : (
                 <>
                   <strong>{String(field.value ?? "—")}</strong>
+                  <small>{TRUST_TEXT[field.trust] ?? "Verification status unknown"}</small>
+                  <small>{evidenceNote(field.evidence)}</small>
+                  {field.evidence.snippet && (
+                    <blockquote>
+                      <small>{field.evidence.snippet}</small>
+                    </blockquote>
+                  )}
+                  {field.evidence.status === "not_found" && field.value !== null && (
+                    <small role="status">Not found in the document text</small>
+                  )}
                   <small>
                     {field.confidence !== null
-                      ? `${Math.round(field.confidence * 100)}% confidence`
-                      : "Confidence unavailable"}
+                      ? `Model score ${Math.round(field.confidence * 100)}% (not calibrated)`
+                      : "No model score"}
                     {lowConfidence ? " · Needs review" : ""}
                     {field.manually_verified ? " · Verified manually" : ""}
                   </small>

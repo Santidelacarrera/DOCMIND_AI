@@ -148,6 +148,8 @@ def report():  # type: ignore[no-untyped-def]
     mp.setattr(rate_limit, "Redis", _Ok)
     mp.setattr(worker, "TesseractProvider", __import__("app.ocr", fromlist=["x"]).TesseractProvider)
     mp.setenv("PYTHONHASHSEED", "0")
+    # The corpus is larger than the FREE plan's monthly page quota; the CLI lifts it the same way.
+    mp.setattr(__import__("app.core", fromlist=["x"]).settings(), "free_pages_per_month", 100_000)
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     del os, tempfile

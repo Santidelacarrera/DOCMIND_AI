@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
-from app import vector_index
+from app import contextrag_sync, vector_index
 from app.core import settings
 from app.db import SessionLocal
 from app.metrics import RETENTION_PURGED_TOTAL
@@ -70,6 +70,7 @@ def hard_delete_document(db: Session, document: Document) -> int:
     # Idempotent: a normal delete already queued it, but a purge must never skip the vectors
     # (e.g. documents deleted before indexing was enabled, or by direct database edits).
     vector_index.queue_deletion(db, document.organization_id, document.id)
+    contextrag_sync.enqueue_retire(db, document.organization_id, document.id)
     run_ids = select(ExtractionRun.id).where(ExtractionRun.document_id == document.id)
     job_ids = select(ProcessingJob.id).where(ProcessingJob.document_id == document.id)
     db.execute(delete(ExtractionField).where(ExtractionField.extraction_run_id.in_(run_ids)))
@@ -99,6 +100,7 @@ def purge_expired(now: datetime | None = None) -> dict[str, int]:
                 document.deleted_at = now
                 scrub_derived_text(db, document.id)
                 vector_index.queue_deletion(db, document.organization_id, document.id)
+                contextrag_sync.enqueue_retire(db, document.organization_id, document.id)
                 db.add(
                     AuditLog(
                         organization_id=document.organization_id,
