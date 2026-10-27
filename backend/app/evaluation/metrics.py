@@ -148,9 +148,33 @@ class Observation:
     correct: bool
     confidence: float | None
     flagged: bool  # would be routed to a human by the validation layer
+    evidence: str | None = None  # exact | normalized | not_found | not_applicable (app.provenance)
 
 
 BINS = ((0.0, 0.5), (0.5, 0.7), (0.7, 0.9), (0.9, 1.0001))
+
+
+def evidence_breakdown(observations: list[Observation]) -> dict[str, Any]:
+    """Does the textual-evidence status predict correctness? Unlike a stated confidence, this does not
+    depend on any constant the rules assign: it asks whether the value was found in the extracted text.
+
+    ``precision`` of a group = share of its values that are correct. A status is informative only if it
+    separates correct from wrong values; a high ``precision`` for ``exact``/``normalized`` and a low one
+    for ``not_found`` is the desired behaviour."""
+    groups: dict[str, list[Observation]] = {}
+    for o in observations:
+        groups.setdefault(o.evidence or "unavailable", []).append(o)
+    rows = {}
+    for status, members in sorted(groups.items()):
+        correct = sum(o.correct for o in members)
+        rows[status] = {
+            "n": len(members),
+            "correct": correct,
+            "wrong": len(members) - correct,
+            "precision": round(correct / len(members), 4) if members else None,
+            "flagged": sum(o.flagged for o in members),
+        }
+    return {"n": len(observations), "by_status": rows}
 
 
 def calibration(observations: list[Observation]) -> dict[str, Any]:
@@ -174,6 +198,39 @@ def calibration(observations: list[Observation]) -> dict[str, Any]:
             }
         )
     return {"n": len(rated), "ece": round(ece, 4) if rated else None, "bins": bins}
+
+
+def calibration_breakdown(
+    observations: list[Observation], groups: dict[str, frozenset[str]]
+) -> dict[str, Any]:
+    """Calibration per field and per document group (e.g. development vs added-later documents).
+
+    Small subsets give unstable ECE values: every row carries its ``n`` so a reader can see that a
+    field with a handful of fields says little. Nothing here is tuned; these are descriptive splits."""
+    by_field = {
+        name: calibration([o for o in observations if o.field == name])
+        for name in sorted({o.field for o in observations})
+    }
+    by_group = {
+        name: calibration([o for o in observations if o.doc_id in ids]) for name, ids in groups.items()
+    }
+    # Abstentions (no value extracted) are reported apart. The baseline gives them confidence 0.0, so a
+    # correct empty answer counts as a "wrong prediction with confidence zero" in the ECE above. Calibration
+    # of the values the system actually asserts is the number that matters for a reader; both are shown.
+    asserted = [o for o in observations if o.evidence != "not_applicable"]
+    abstained = [o for o in observations if o.evidence == "not_applicable"]
+    return {
+        "by_field": by_field,
+        "by_group": by_group,
+        "values_asserted": calibration(asserted),
+        "values_asserted_by_group": {
+            name: calibration([o for o in asserted if o.doc_id in ids]) for name, ids in groups.items()
+        },
+        "abstentions": {
+            "n": len(abstained),
+            "correct": sum(o.correct for o in abstained),
+        },
+    }
 
 
 def review_routing(observations: list[Observation]) -> dict[str, Any]:

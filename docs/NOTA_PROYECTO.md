@@ -41,6 +41,12 @@ Los 11 skipped del entorno de desarrollo son exactamente las pruebas `tests/test
 | 2026-10-12 | Primera versión del criterio de la demo era laxa (aceptaba una cita correcta aunque la respuesta no contuviera el dato); se endureció y se mejoró la selección de frases (rareza de términos + raíces) | evitar un «10/10» engañoso; la comprobación estricta exige primera cita correcta **y** dato en el texto |
 | 2026-10-12 | `POST /ask` inactivo (503) salvo `QDRANT_URL` | no activar infraestructura que el operador no configuró |
 | 2026-10-12 | `gh` sin autenticar: push con `git` y PR con la herramienta MCP de GitHub | la instrucción permite abrir el PR; no se forzó nada |
+| 2026-10-26 | Procedencia por valor: búsqueda exacta/normalizada en el texto extraído, sin inferencia | una cita generada sería una invención; solo se usa texto que de verdad se extrajo |
+| 2026-10-26 | Umbrales de `baseline_expected.json` sin cambios; solo se actualizan las cifras medidas | al principio se rebajó la precisión de 0.97 a 0.96 sin motivo; se revirtió antes de cerrar |
+| 2026-10-26 | Reconciliación de almacenamiento: solo informa por defecto, borrado con tope del 50 % | un patrón de base de datos equivocada no debe vaciar el bucket |
+| 2026-10-26 | `next` 16.4.0 → 16.4.3 (misma versión menor) | vulnerabilidad crítica con solución en parche; sin cambio de API |
+| 2026-10-26 | Adaptador a ContextRAG como librería opcional, sin conectarlo al worker | el borrado y la sincronización son decisiones de despliegue de Santiago |
+| 2026-10-26 | Postgres 16 y Redis locales (no Docker) para verificar migraciones y e2e | el sandbox no tiene Docker; el directorio de datos está en `/var/lib/docmind-pg` porque el scratchpad es privado de root |
 | 2026-10-12 | Visor de Word en la interfaz no implementado | requeriría convertir a PDF (LibreOffice); se deja como pendiente |
 
 ## 4. Pendientes para Santiago

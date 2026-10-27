@@ -1,0 +1,12 @@
+beat.log:[2026-10-27 18:54:17,728: INFO/MainProcess] Scheduler: Sending due task deliver-contextrag-events (app.worker.deliver_contextrag_events)
+beat.log:[2026-10-27 18:54:47,725: INFO/MainProcess] Scheduler: Sending due task process-vector-deletions (app.worker.process_vector_deletions)
+beat.log:[2026-10-27 18:54:47,727: INFO/MainProcess] Scheduler: Sending due task recover-stuck-jobs (app.worker.recover_stuck_jobs)
+beat.log:[2026-10-27 18:54:47,728: INFO/MainProcess] Scheduler: Sending due task deliver-contextrag-events (app.worker.deliver_contextrag_events)
+beat-worker.log:[2026-10-27 18:54:17,735: INFO/MainProcess] Task app.worker.deliver_contextrag_events[57628a92-59ba-47e3-afc8-39a775d72f5a] received
+beat-worker.log:[2026-10-27 18:54:17,740: INFO/ForkPoolWorker-2] Task app.worker.deliver_contextrag_events[57628a92-59ba-47e3-afc8-39a775d72f5a] succeeded in 0.003981700000167621s: {'done': 0, 'cancelled': 0, 'retried': 
+beat-worker.log:[2026-10-27 18:54:47,728: INFO/MainProcess] Task app.worker.process_vector_deletions[1932ef84-e15b-4c9a-a6b7-9c0e05893769] received
+beat-worker.log:[2026-10-27 18:54:47,729: INFO/MainProcess] Task app.worker.recover_stuck_jobs[87f152a7-e4a1-4fd5-99d7-4ed63c62b1bb] received
+beat-worker.log:[2026-10-27 18:54:47,738: INFO/ForkPoolWorker-2] Task app.worker.process_vector_deletions[1932ef84-e15b-4c9a-a6b7-9c0e05893769] succeeded in 0.009001423999961844s: {'deleted': 0, 'failed': 0}
+beat-worker.log:[2026-10-27 18:54:47,740: INFO/MainProcess] Task app.worker.deliver_contextrag_events[4680604d-41ee-40ad-b1a9-5f4b0cb89ff9] received
+beat-worker.log:[2026-10-27 18:54:47,741: INFO/ForkPoolWorker-2] Task app.worker.deliver_contextrag_events[4680604d-41ee-40ad-b1a9-5f4b0cb89ff9] succeeded in 0.0006712229996992392s: {'done': 0, 'cancelled': 0, 'retried':
+beat-worker.log:[2026-10-27 18:54:47,780: INFO/ForkPoolWorker-1] Task app.worker.recover_stuck_jobs[87f152a7-e4a1-4fd5-99d7-4ed63c62b1bb] succeeded in 0.05024501199977749s: 0

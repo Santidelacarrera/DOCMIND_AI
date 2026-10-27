@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core import settings
 from app.db import get_db
-from app.models import ApiKey, OrganizationMember, Role, User
+from app.models import ApiKey, OrganizationMember, Role, User, as_aware_utc
 
 password_hash = PasswordHash.recommended()
 bearer = HTTPBearer(auto_error=False)
@@ -144,7 +144,7 @@ def issue_api_key() -> tuple[str, str, str]:
 def lookup_api_key(token: str, db: Session) -> ApiKey | None:
     digest = hashlib.sha256(token.encode()).hexdigest()
     key = db.scalar(select(ApiKey).where(ApiKey.key_hash == digest))
-    if key and not key.revoked_at and (not key.expires_at or key.expires_at > datetime.now(UTC)):
+    if key and not key.revoked_at and (not key.expires_at or as_aware_utc(key.expires_at) > datetime.now(UTC)):
         key.last_used_at = datetime.now(UTC)
         db.commit()
         return key

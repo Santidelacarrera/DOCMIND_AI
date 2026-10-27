@@ -63,6 +63,9 @@ class FakeRedis:
         return [FakeRedis.counters[key]]
 
 
+OCR_TEXT = "Invoice TEST-001 (test_document)\nCustomer: Juan Pérez\nTotal due: 15,000"
+
+
 class FakeOCR:
     """Blank test PDFs (``make_pdf``) always trigger OCR; stub out Tesseract/Poppler,
     which aren't installed in every test environment, for every test that may run
@@ -73,7 +76,9 @@ class FakeOCR:
 
         from pypdf import PdfReader
 
-        return ["scanned text"] * len(PdfReader(BytesIO(content)).pages)
+        # Contains the values MockLLMProvider returns, so a clean happy path has real evidence;
+        # tests of unsupported values override this (see test_provenance.py).
+        return [OCR_TEXT] * len(PdfReader(BytesIO(content)).pages)
 
 
 @pytest.fixture(autouse=True)
@@ -100,6 +105,11 @@ def _environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     # Recreated tables invalidate server-side prepared statements held by pooled Postgres
     # connections ("cached plan must not change result type"); start each test with fresh ones.
     engine.dispose()
+    # The database is rebuilt per test; stored objects must be too, or tests see each other's files.
+    from app.storage import storage as _storage
+
+    for stale_key, _ in list(_storage.list_objects()):
+        _storage.delete(stale_key)
     FakeRedis.counters = {}
     FakeRedis.unavailable = False
     monkeypatch.setattr(rate_limit, "Redis", FakeRedis)

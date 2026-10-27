@@ -1,21 +1,21 @@
 {
   "meta": {
     "provider": "baseline-rules",
-    "documents": 19,
-    "scored_documents": 13,
+    "documents": 23,
+    "scored_documents": 17,
     "tesseract": "5.3.4",
     "note": "Deterministic sections are reproducible for a given corpus, provider and OCR engine; 'timing' is machine-dependent."
   },
   "extraction": {
     "micro": {
-      "tp": 68,
-      "fp": 1,
-      "fn": 12,
-      "precision": 0.9855,
-      "recall": 0.85,
-      "f1": 0.9128
+      "tp": 87,
+      "fp": 2,
+      "fn": 14,
+      "precision": 0.9775,
+      "recall": 0.8614,
+      "f1": 0.9158
     },
-    "macro_f1": 0.9441,
+    "macro_f1": 0.942,
     "per_field": {
       "applicant_name": {
         "tp": 2,
@@ -26,7 +26,7 @@
         "f1": 1.0
       },
       "counterparty": {
-        "tp": 3,
+        "tp": 4,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
@@ -42,7 +42,7 @@
         "f1": 1.0
       },
       "currency": {
-        "tp": 8,
+        "tp": 11,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
@@ -50,12 +50,12 @@
         "f1": 1.0
       },
       "customer_name": {
-        "tp": 6,
+        "tp": 9,
         "fp": 0,
         "fn": 2,
         "precision": 1.0,
-        "recall": 0.75,
-        "f1": 0.8571
+        "recall": 0.8182,
+        "f1": 0.9
       },
       "date_of_birth": {
         "tp": 2,
@@ -66,7 +66,7 @@
         "f1": 1.0
       },
       "effective_date": {
-        "tp": 3,
+        "tp": 4,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
@@ -82,7 +82,7 @@
         "f1": 1.0
       },
       "governing_law": {
-        "tp": 3,
+        "tp": 4,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
@@ -98,6 +98,22 @@
         "f1": 1.0
       },
       "invoice_date": {
+        "tp": 7,
+        "fp": 1,
+        "fn": 3,
+        "precision": 0.875,
+        "recall": 0.7,
+        "f1": 0.7778
+      },
+      "invoice_number": {
+        "tp": 7,
+        "fp": 0,
+        "fn": 3,
+        "precision": 1.0,
+        "recall": 0.7,
+        "f1": 0.8235
+      },
+      "tax_amount": {
         "tp": 6,
         "fp": 0,
         "fn": 2,
@@ -105,24 +121,8 @@
         "recall": 0.75,
         "f1": 0.8571
       },
-      "invoice_number": {
-        "tp": 5,
-        "fp": 0,
-        "fn": 3,
-        "precision": 1.0,
-        "recall": 0.625,
-        "f1": 0.7692
-      },
-      "tax_amount": {
-        "tp": 5,
-        "fp": 0,
-        "fn": 2,
-        "precision": 1.0,
-        "recall": 0.7143,
-        "f1": 0.8333
-      },
       "term_months": {
-        "tp": 3,
+        "tp": 4,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
@@ -130,28 +130,28 @@
         "f1": 1.0
       },
       "total_amount": {
-        "tp": 6,
+        "tp": 8,
         "fp": 0,
         "fn": 2,
         "precision": 1.0,
-        "recall": 0.75,
-        "f1": 0.8571
+        "recall": 0.8,
+        "f1": 0.8889
       },
       "total_fee": {
         "tp": 3,
         "fp": 0,
-        "fn": 0,
+        "fn": 1,
         "precision": 1.0,
-        "recall": 1.0,
-        "f1": 1.0
+        "recall": 0.75,
+        "f1": 0.8571
       },
       "vendor_name": {
-        "tp": 7,
+        "tp": 10,
         "fp": 1,
         "fn": 1,
-        "precision": 0.875,
-        "recall": 0.875,
-        "f1": 0.875
+        "precision": 0.9091,
+        "recall": 0.9091,
+        "f1": 0.9091
       }
     },
     "by_kind": {
@@ -164,20 +164,20 @@
         "f1": 1.0
       },
       "digital": {
-        "tp": 31,
-        "fp": 0,
-        "fn": 6,
-        "precision": 1.0,
-        "recall": 0.8378,
-        "f1": 0.9118
+        "tp": 46,
+        "fp": 1,
+        "fn": 7,
+        "precision": 0.9787,
+        "recall": 0.8679,
+        "f1": 0.92
       },
       "multipage": {
-        "tp": 10,
+        "tp": 14,
         "fp": 0,
-        "fn": 0,
+        "fn": 1,
         "precision": 1.0,
-        "recall": 1.0,
-        "f1": 1.0
+        "recall": 0.9333,
+        "f1": 0.9655
       },
       "scanned": {
         "tp": 20,
@@ -240,7 +240,7 @@
         "fields_correct": 5,
         "fields_expected": 5,
         "wrong_fields": [],
-        "requires_review": false
+        "requires_review": true
       },
       {
         "id": "contract_digital_02",
@@ -310,7 +310,47 @@
         "fields_correct": 5,
         "fields_expected": 5,
         "wrong_fields": [],
+        "requires_review": true
+      },
+      {
+        "id": "inv_table_01",
+        "kind": "digital",
+        "ocr_used": false,
+        "fields_correct": 7,
+        "fields_expected": 7,
+        "wrong_fields": [],
         "requires_review": false
+      },
+      {
+        "id": "inv_ambiguous_date_01",
+        "kind": "digital",
+        "ocr_used": false,
+        "fields_correct": 5,
+        "fields_expected": 6,
+        "wrong_fields": [
+          "invoice_date"
+        ],
+        "requires_review": true
+      },
+      {
+        "id": "inv_missing_required_01",
+        "kind": "digital",
+        "ocr_used": false,
+        "fields_correct": 3,
+        "fields_expected": 3,
+        "wrong_fields": [],
+        "requires_review": true
+      },
+      {
+        "id": "contract_long_30p",
+        "kind": "multipage",
+        "ocr_used": false,
+        "fields_correct": 4,
+        "fields_expected": 5,
+        "wrong_fields": [
+          "total_fee"
+        ],
+        "requires_review": true
       },
       {
         "id": "inj_invoice_01",
@@ -324,9 +364,9 @@
     ]
   },
   "error_attribution": {
-    "correct": 69,
+    "correct": 93,
     "ocr_or_text_layer_error": 6,
-    "extraction_error": 6
+    "extraction_error": 8
   },
   "text_quality": {
     "ocr_mean_cer": 0.0632,
@@ -405,6 +445,30 @@
         "wer": 0.0
       },
       {
+        "id": "inv_table_01",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "inv_ambiguous_date_01",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "inv_missing_required_01",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "contract_long_30p",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
         "id": "inj_invoice_01",
         "source": "text_layer",
         "cer": 0.0,
@@ -413,16 +477,16 @@
     ]
   },
   "confidence": {
-    "n": 81,
-    "ece": 0.0877,
+    "n": 107,
+    "ece": 0.1243,
     "bins": [
       {
         "range": [
           0.0,
           0.5
         ],
-        "n": 12,
-        "accuracy": 0.0833,
+        "n": 18,
+        "accuracy": 0.3333,
         "mean_confidence": 0.0
       },
       {
@@ -430,8 +494,8 @@
           0.5,
           0.7
         ],
-        "n": 2,
-        "accuracy": 1.0,
+        "n": 3,
+        "accuracy": 0.6667,
         "mean_confidence": 0.6
       },
       {
@@ -439,30 +503,992 @@
           0.7,
           0.9
         ],
-        "n": 15,
-        "accuracy": 0.9333,
-        "mean_confidence": 0.79
+        "n": 19,
+        "accuracy": 0.9474,
+        "mean_confidence": 0.7868
       },
       {
         "range": [
           0.9,
           1.0
         ],
-        "n": 52,
+        "n": 67,
         "accuracy": 1.0,
-        "mean_confidence": 0.9394
+        "mean_confidence": 0.9396
       }
     ]
   },
+  "confidence_breakdown": {
+    "by_field": {
+      "applicant_name": {
+        "n": 2,
+        "ece": 0.05,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 2,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
+      "counterparty": {
+        "n": 4,
+        "ece": 0.2125,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 1,
+            "accuracy": 1.0,
+            "mean_confidence": 0.6
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 3,
+            "accuracy": 1.0,
+            "mean_confidence": 0.85
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          }
+        ]
+      },
+      "country": {
+        "n": 2,
+        "ece": 0.05,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 2,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
+      "currency": {
+        "n": 11,
+        "ece": 0.0909,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 4,
+            "accuracy": 1.0,
+            "mean_confidence": 0.8375
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 7,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
+      "customer_name": {
+        "n": 11,
+        "ece": 0.0409,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 2,
+            "accuracy": 0.0,
+            "mean_confidence": 0.0
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 9,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
+      "date_of_birth": {
+        "n": 2,
+        "ece": 0.05,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 2,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
+      "effective_date": {
+        "n": 4,
+        "ece": 0.1,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 4,
+            "accuracy": 1.0,
+            "mean_confidence": 0.9
+          }
+        ]
+      },
+      "email": {
+        "n": 2,
+        "ece": 0.05,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 2,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
+      "governing_law": {
+        "n": 4,
+        "ece": 0.1,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 4,
+            "accuracy": 1.0,
+            "mean_confidence": 0.9
+          }
+        ]
+      },
+      "id_number": {
+        "n": 2,
+        "ece": 0.05,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 2,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
+      "invoice_date": {
+        "n": 11,
+        "ece": 0.1364,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 3,
+            "accuracy": 0.3333,
+            "mean_confidence": 0.0
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 2,
+            "accuracy": 0.5,
+            "mean_confidence": 0.6
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 6,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
+      "invoice_number": {
+        "n": 11,
+        "ece": 0.1227,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 4,
+            "accuracy": 0.25,
+            "mean_confidence": 0.0
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 7,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
+      "tax_amount": {
+        "n": 11,
+        "ece": 0.3,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 5,
+            "accuracy": 0.6,
+            "mean_confidence": 0.0
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 6,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
+      "term_months": {
+        "n": 4,
+        "ece": 0.1,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 4,
+            "accuracy": 1.0,
+            "mean_confidence": 0.9
+          }
+        ]
+      },
+      "total_amount": {
+        "n": 11,
+        "ece": 0.1273,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 3,
+            "accuracy": 0.3333,
+            "mean_confidence": 0.0
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 8,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
+      "total_fee": {
+        "n": 4,
+        "ece": 0.1,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 1,
+            "accuracy": 0.0,
+            "mean_confidence": 0.0
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 1,
+            "accuracy": 1.0,
+            "mean_confidence": 0.8
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 2,
+            "accuracy": 1.0,
+            "mean_confidence": 0.9
+          }
+        ]
+      },
+      "vendor_name": {
+        "n": 11,
+        "ece": 0.1591,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 11,
+            "accuracy": 0.9091,
+            "mean_confidence": 0.75
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          }
+        ]
+      }
+    },
+    "by_group": {
+      "development": {
+        "n": 81,
+        "ece": 0.0877,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 12,
+            "accuracy": 0.0833,
+            "mean_confidence": 0.0
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 2,
+            "accuracy": 1.0,
+            "mean_confidence": 0.6
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 15,
+            "accuracy": 0.9333,
+            "mean_confidence": 0.79
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 52,
+            "accuracy": 1.0,
+            "mean_confidence": 0.9394
+          }
+        ]
+      },
+      "added_later": {
+        "n": 26,
+        "ece": 0.2846,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 6,
+            "accuracy": 0.8333,
+            "mean_confidence": 0.0
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 1,
+            "accuracy": 0.0,
+            "mean_confidence": 0.6
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 4,
+            "accuracy": 1.0,
+            "mean_confidence": 0.775
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 15,
+            "accuracy": 1.0,
+            "mean_confidence": 0.94
+          }
+        ]
+      }
+    },
+    "values_asserted": {
+      "n": 89,
+      "ece": 0.082,
+      "bins": [
+        {
+          "range": [
+            0.0,
+            0.5
+          ],
+          "n": 0,
+          "accuracy": null,
+          "mean_confidence": null
+        },
+        {
+          "range": [
+            0.5,
+            0.7
+          ],
+          "n": 3,
+          "accuracy": 0.6667,
+          "mean_confidence": 0.6
+        },
+        {
+          "range": [
+            0.7,
+            0.9
+          ],
+          "n": 19,
+          "accuracy": 0.9474,
+          "mean_confidence": 0.7868
+        },
+        {
+          "range": [
+            0.9,
+            1.0
+          ],
+          "n": 67,
+          "accuracy": 1.0,
+          "mean_confidence": 0.9396
+        }
+      ]
+    },
+    "values_asserted_by_group": {
+      "development": {
+        "n": 69,
+        "ece": 0.0884,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 2,
+            "accuracy": 1.0,
+            "mean_confidence": 0.6
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 15,
+            "accuracy": 0.9333,
+            "mean_confidence": 0.79
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 52,
+            "accuracy": 1.0,
+            "mean_confidence": 0.9394
+          }
+        ]
+      },
+      "added_later": {
+        "n": 20,
+        "ece": 0.12,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 1,
+            "accuracy": 0.0,
+            "mean_confidence": 0.6
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 4,
+            "accuracy": 1.0,
+            "mean_confidence": 0.775
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 15,
+            "accuracy": 1.0,
+            "mean_confidence": 0.94
+          }
+        ]
+      }
+    },
+    "abstentions": {
+      "n": 18,
+      "correct": 6
+    }
+  },
   "review_routing": {
-    "fields": 81,
-    "wrong": 12,
-    "flagged": 16,
-    "raw_accuracy": 0.8519,
+    "fields": 107,
+    "wrong": 14,
+    "flagged": 27,
+    "raw_accuracy": 0.8692,
     "error_capture_rate": 1.0,
-    "review_load": 0.1975,
+    "review_load": 0.2523,
     "auto_accept_accuracy": 1.0,
     "silent_errors": []
+  },
+  "evidence": {
+    "n": 107,
+    "by_status": {
+      "exact": {
+        "n": 64,
+        "correct": 63,
+        "wrong": 1,
+        "precision": 0.9844,
+        "flagged": 7
+      },
+      "normalized": {
+        "n": 25,
+        "correct": 24,
+        "wrong": 1,
+        "precision": 0.96,
+        "flagged": 2
+      },
+      "not_applicable": {
+        "n": 18,
+        "correct": 6,
+        "wrong": 12,
+        "precision": 0.3333,
+        "flagged": 18
+      }
+    }
   },
   "rejections": {
     "correct": 6,
@@ -533,31 +1559,32 @@
     }
   ],
   "timing": {
-    "seconds_per_document_mean": 0.3436,
-    "seconds_per_document_p50": 0.0456,
-    "seconds_per_document_p95": 1.0053,
-    "digital_mean": 0.0458,
-    "scanned_ocr_mean": 1.0139
+    "seconds_per_document_mean": 0.3415,
+    "seconds_per_document_p50": 0.0621,
+    "seconds_per_document_p95": 0.9208,
+    "digital_mean": 0.0728,
+    "scanned_ocr_mean": 1.2148
   },
   "cost": {
-    "prompt_tokens": 2544,
-    "completion_tokens": 1113,
-    "per_document_usd_projected": 8.1e-05,
+    "prompt_tokens": 9685,
+    "completion_tokens": 1460,
+    "per_document_usd_projected": 0.000137,
     "note": "Projected from token counts at the configured per-1M-token prices (OPENAI_INPUT_PRICE_PER_1M / OPENAI_OUTPUT_PRICE_PER_1M); a rule-based provider actually costs nothing. Token counts are character-based estimates unless the provider reports usage."
   },
   "review_workflow": {
-    "documents_in_review_queue": 5,
-    "fields_reviewed": 16,
-    "fields_corrected": 12,
-    "fields_confirmed_unchanged": 4,
-    "approved": 13,
+    "documents_in_review_queue": 10,
+    "fields_reviewed": 27,
+    "fields_corrected": 14,
+    "fields_confirmed_unchanged": 13,
+    "approved": 17,
     "approval_blocked": 0,
-    "accuracy_before_review": 0.8519,
+    "accuracy_before_review": 0.8692,
     "accuracy_after_review": 1.0,
     "reasons": {
-      "confirmed": 4,
-      "missing_value": 6,
-      "ocr_misread": 6
+      "confirmed": 13,
+      "missing_value": 7,
+      "ocr_misread": 6,
+      "wrong_value": 1
     },
     "corrections": [
       {
@@ -633,11 +1660,29 @@
         "changed": false
       },
       {
+        "document": "contract_digital_01",
+        "field": "term_months",
+        "model_value": 24,
+        "corrected_value": 24,
+        "confidence": 0.9,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
         "document": "contract_digital_02",
         "field": "counterparty",
         "model_value": "Kestrel Components B.V.",
         "corrected_value": "Kestrel Components B.V.",
         "confidence": 0.6,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "contract_digital_02",
+        "field": "term_months",
+        "model_value": 36,
+        "corrected_value": 36,
+        "confidence": 0.9,
         "reason": "confirmed",
         "changed": false
       },
@@ -703,6 +1748,87 @@
         "confidence": 0.0,
         "reason": "ocr_misread",
         "changed": true
+      },
+      {
+        "document": "scan_contract_3p",
+        "field": "term_months",
+        "model_value": 12,
+        "corrected_value": 12,
+        "confidence": 0.9,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "inv_ambiguous_date_01",
+        "field": "invoice_date",
+        "model_value": "2025-05-04",
+        "corrected_value": "2025-04-05",
+        "confidence": 0.6,
+        "reason": "wrong_value",
+        "changed": true
+      },
+      {
+        "document": "inv_ambiguous_date_01",
+        "field": "tax_amount",
+        "model_value": null,
+        "corrected_value": null,
+        "confidence": 0.0,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "inv_missing_required_01",
+        "field": "invoice_number",
+        "model_value": null,
+        "corrected_value": null,
+        "confidence": 0.0,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "inv_missing_required_01",
+        "field": "invoice_date",
+        "model_value": null,
+        "corrected_value": null,
+        "confidence": 0.0,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "inv_missing_required_01",
+        "field": "total_amount",
+        "model_value": null,
+        "corrected_value": null,
+        "confidence": 0.0,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "inv_missing_required_01",
+        "field": "tax_amount",
+        "model_value": null,
+        "corrected_value": null,
+        "confidence": 0.0,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "contract_long_30p",
+        "field": "term_months",
+        "model_value": 18,
+        "corrected_value": 18,
+        "confidence": 0.9,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "contract_long_30p",
+        "field": "total_fee",
+        "model_value": null,
+        "corrected_value": 90000.0,
+        "confidence": 0.0,
+        "reason": "missing_value",
+        "changed": true
       }
     ],
     "exported_rows": {
@@ -718,6 +1844,10 @@
       "scan_invoice_skewed": 7,
       "scan_invoice_lowres": 7,
       "scan_contract_3p": 5,
+      "inv_table_01": 7,
+      "inv_ambiguous_date_01": 7,
+      "inv_missing_required_01": 7,
+      "contract_long_30p": 5,
       "inj_invoice_01": 7
     },
     "reviewer": "simulated (reference annotation used as oracle)"

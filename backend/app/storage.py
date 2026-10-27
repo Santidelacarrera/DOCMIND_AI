@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -26,6 +28,9 @@ class StorageProvider(Protocol):
     def put(self, key: str, content: bytes) -> None: ...
     def get(self, key: str) -> bytes: ...
     def delete(self, key: str) -> None: ...
+    def list_objects(self) -> Iterator[tuple[str, datetime]]:
+        """Every stored object as ``(key, last_modified_utc)``; used only by reconciliation."""
+        ...
 
 
 class LocalStorageProvider:
@@ -52,6 +57,11 @@ class LocalStorageProvider:
         if path.exists():
             path.unlink()
 
+    def list_objects(self) -> Iterator[tuple[str, datetime]]:
+        for path in self.root.rglob("*"):
+            if path.is_file() and not path.is_symlink():
+                yield path.relative_to(self.root).as_posix(), datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+
 
 class S3StorageProvider:
     """Private S3-compatible object storage; credentials come from workload identity/env."""
@@ -75,6 +85,11 @@ class S3StorageProvider:
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=key)
+
+    def list_objects(self) -> Iterator[tuple[str, datetime]]:
+        for page in self.client.get_paginator("list_objects_v2").paginate(Bucket=self.bucket):
+            for item in page.get("Contents", []):
+                yield item["Key"], item["LastModified"]
 
 
 def build_storage() -> StorageProvider:

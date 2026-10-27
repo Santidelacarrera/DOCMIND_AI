@@ -4,7 +4,6 @@ The route-table test is the safety net: it enumerates every endpoint FastAPI reg
 future endpoint that forgets tenant scoping fails here even if nobody wrote a test for it.
 """
 
-import io
 import json
 import re
 import uuid
@@ -82,6 +81,9 @@ class World:
             "document_id": self.document, "field_id": self.field, "schema_id": self.schema,
             "key_id": self.api_key, "webhook_id": self.webhook, "invitation_id": self.invitation,
             "user_id": self.user, "project_id": self.project,
+            # Membership is checked before the event is looked up, so an id that does not exist is
+            # enough to prove that an outsider gets 403 and never learns whether it exists.
+            "event_id": str(uuid.uuid4()),
         }
         self.secrets = [
             self.document, "victim-secret-contract", self.schema, "victim-schema", self.webhook,
@@ -99,6 +101,10 @@ class World:
             return self.client.post(
                 url, files={"file": ("x.pdf", make_pdf(), "application/pdf")}, headers=headers
             )
+        if (method, template) == ("POST", "/api/v1/contextrag/events/{event_id}/cancel"):
+            # The outsider's body is well-formed, so the refusal must come from the membership check.
+            body = {"confirm": self.ids["event_id"], "reason": "outsider attempt to cancel"}
+            return self.client.post(url, json=body, headers=headers)
         body = BODIES.get((method, template))
         if body is not None:
             return self.client.request(
@@ -315,7 +321,6 @@ def test_download_and_export_come_back_only_for_live_documents(client, register)
         assert client.get(
             f"/api/v1/documents/{world.document}/{path}?organization_id={v.org}", headers=v.headers
         ).status_code == 404, path
-    assert io.BytesIO  # keep imports honest
     assert settings().environment == "development"
 
 

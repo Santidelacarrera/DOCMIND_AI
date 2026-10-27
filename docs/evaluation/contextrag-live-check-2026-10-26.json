@@ -1,0 +1,40 @@
+{
+  "create": {
+    "done": 1,
+    "cancelled": 0,
+    "retried": 0,
+    "failed": 175,
+    "released": 0
+  },
+  "retrievable_after_create": true,
+  "delete": {
+    "done": 1,
+    "cancelled": 0,
+    "retried": 0,
+    "failed": 0,
+    "released": 0
+  },
+  "retrievable_after_delete": false,
+  "during_outage": {
+    "done": 0,
+    "cancelled": 0,
+    "retried": 1,
+    "failed": 0,
+    "released": 0
+  },
+  "after_restart": {
+    "done": 1,
+    "cancelled": 0,
+    "retried": 0,
+    "failed": 0,
+    "released": 0
+  },
+  "retrievable_after_recovery": true,
+  "admin_view_counts": {
+    "done": 3
+  },
+  "settings": {
+    "content_mode": "masked",
+    "url": "http://127.0.0.1:8100"
+  }
+}

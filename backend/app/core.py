@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     openai_max_concurrency: int = 4
     cors_origins: str = "http://localhost:3000"
     jwt_secret: str | None = None
+    # Optional second layer for /metrics (the ingress must still restrict the network). Unset = open, as before.
+    metrics_token: SecretStr | None = None
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 60
     cookie_secure: bool | None = None
@@ -106,6 +108,25 @@ class Settings(BaseSettings):
     # Automatically expire live documents this many days after upload. 0 = keep until
     # a user deletes them (the default; retention is an operator decision).
     retention_document_days: int = 0
+    # Storage reconciliation (docs/DATA_RETENTION.md): objects with no database row are reported;
+    # deleting them is opt-in. Younger objects are skipped (an upload writes the object first).
+    storage_reconcile_grace_hours: int = 24
+    storage_reconcile_delete: bool = False
+    storage_reconcile_max_delete_fraction: float = 0.5
+    # ContextRAG sync (docs/CONTEXTRAG_INTEGRATION.md). Events are always recorded in the outbox;
+    # nothing is delivered unless CONTEXTRAG_SYNC_ENABLED=true and the URL/keys are configured.
+    contextrag_sync_enabled: bool = False
+    contextrag_url: str | None = None
+    contextrag_keys_file: str | None = (
+        None  # JSON {"<org uuid>": "<contextrag admin key>"}, outside the repo
+    )
+    contextrag_allowed_hosts: str = ""  # comma-separated; required for any non-localhost URL
+    # "masked" (default): PII-masked page text, labelled as masked in the metadata. Masking can hurt
+    # retrieval (names and numbers become placeholders); see docs/CONTEXTRAG_INTEGRATION.md.
+    # "raw": original text. Needs CONTEXTRAG_ALLOW_RAW_TEXT=true and is refused in staging/production.
+    contextrag_content_mode: Literal["masked", "raw"] = "masked"
+    contextrag_allow_raw_text: bool = False
+    contextrag_max_attempts: int = 25
     free_pages_per_month: int = 20
     rate_limit_login: int = 10
     rate_limit_register: int = 5
@@ -132,7 +153,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_runtime_configuration(self) -> "Settings":
-        production = self.environment.lower() in {"staging", "production"}
+        production = self.is_production
+        if self.contextrag_content_mode == "raw" and not self.contextrag_allow_raw_text:
+            raise ValueError("CONTENT_MODE raw needs CONTEXTRAG_ALLOW_RAW_TEXT=true")
         if production:
             required = {
                 "DATABASE_URL": self.database_url,
@@ -150,32 +173,56 @@ class Settings(BaseSettings):
                 raise ValueError("COOKIE_SECURE=true is required in staging/production")
             origins = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
             if not origins or any(not origin.startswith("https://") for origin in origins):
-                raise ValueError("CORS_ORIGINS must contain explicit HTTPS origins in staging/production")
+                raise ValueError(
+                    "CORS_ORIGINS must contain explicit HTTPS origins in staging/production"
+                )
             if self.llm_provider == "openai" and not self.openai_api_key:
                 raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
             if self.antivirus_provider == "disabled":
                 raise ValueError("ANTIVIRUS_PROVIDER must be configured in staging/production")
             if self.qdrant_url:
                 if not self.qdrant_url.startswith("https://") or not self.qdrant_api_key:
-                    raise ValueError("QDRANT_URL must be https:// and QDRANT_API_KEY set in staging/production")
+                    raise ValueError(
+                        "QDRANT_URL must be https:// and QDRANT_API_KEY set in staging/production"
+                    )
                 if self.embedding_provider == "hashing":
                     raise ValueError("EMBEDDING_PROVIDER=hashing is for development only")
                 if self.embedding_provider == "openai":
                     from urllib.parse import urlparse
 
                     host = urlparse(self.embedding_base_url).hostname or ""
-                    allowed = {h.strip().lower() for h in self.embedding_allowed_hosts.split(",") if h.strip()}
-                    if not self.embedding_allow_external or host.lower() not in allowed or not self.openai_api_key:
+                    allowed = {
+                        h.strip().lower()
+                        for h in self.embedding_allowed_hosts.split(",")
+                        if h.strip()
+                    }
+                    if (
+                        not self.embedding_allow_external
+                        or host.lower() not in allowed
+                        or not self.openai_api_key
+                    ):
                         raise ValueError(
                             "EMBEDDING_PROVIDER=openai needs EMBEDDING_ALLOW_EXTERNAL=true, the host in "
                             "EMBEDDING_ALLOWED_HOSTS and OPENAI_API_KEY"
                         )
             if self.storage_provider == "local":
-                raise ValueError("STORAGE_PROVIDER must use private object storage in staging/production")
+                raise ValueError(
+                    "STORAGE_PROVIDER must use private object storage in staging/production"
+                )
             if not self.smtp_host:
                 raise ValueError("SMTP_HOST is required in staging/production (invitation emails)")
             if not self.frontend_base_url.startswith("https://"):
-                raise ValueError("FRONTEND_BASE_URL must be an explicit HTTPS origin in staging/production")
+                raise ValueError(
+                    "FRONTEND_BASE_URL must be an explicit HTTPS origin in staging/production"
+                )
+            if self.contextrag_content_mode == "raw" or self.contextrag_allow_raw_text:
+                raise ValueError("Unmasked text cannot be sent to ContextRAG in staging/production")
+            if self.contextrag_sync_enabled and not self.contextrag_url:
+                raise ValueError("CONTEXTRAG_SYNC_ENABLED needs CONTEXTRAG_URL")
+            if self.contextrag_sync_enabled and not (self.contextrag_url or "").startswith(
+                "https://"
+            ):
+                raise ValueError("CONTEXTRAG_URL must be https:// in staging/production")
             if self.storage_provider == "s3":
                 s3_required = {"S3_BUCKET": self.s3_bucket, "S3_REGION": self.s3_region}
                 missing_s3 = [name for name, value in s3_required.items() if not value]
@@ -196,16 +243,25 @@ class Settings(BaseSettings):
         return self.redis_url or "redis://localhost:6379/0"
 
     @property
+    def is_production(self) -> bool:
+        """Fail closed: anything that is not an explicit development or test environment is production.
+        A misspelled or new environment name (``prod``, ``live``) must never get the relaxed defaults."""
+        return self.environment.lower() not in {"development", "test"}
+
+    @property
     def effective_jwt_secret(self) -> str:
-        # Local development is deliberately explicit and is never accepted in staging/production.
-        return self.jwt_secret or "local-development-only-not-for-deployment"
+        if self.jwt_secret:
+            return self.jwt_secret
+        if self.is_production:
+            raise RuntimeError("JWT_SECRET is required outside development and test")
+        # Local development is deliberately explicit and is never accepted in any other environment.
+        return "local-development-only-not-for-deployment"
 
     @property
     def effective_cookie_secure(self) -> bool:
-        return self.cookie_secure if self.cookie_secure is not None else self.environment.lower() != "development"
+        return self.cookie_secure if self.cookie_secure is not None else self.is_production
 
 
 @lru_cache
 def settings() -> Settings:
     return Settings()
-

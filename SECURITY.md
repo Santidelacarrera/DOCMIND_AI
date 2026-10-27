@@ -30,6 +30,15 @@ Only the `main` branch receives security fixes.
 | LLM | Document text is passed as untrusted data, never as instructions; bounded input/output, timeouts and concurrency |
 | Secrets | API keys are shown once and stored as SHA-256 hashes; staging/production refuse to start without strong secrets, secure cookies, HTTPS CORS, S3 and antivirus |
 | Supply chain | Dependabot, CodeQL, `pip-audit`, `npm audit` and `bandit` run in CI; lockfile-based installs |
+| Webhook SSRF | The host is resolved once, validated (every address must be public), and the connection goes to that address; redirects and proxies are not followed |
+| Logs | Exception messages are not logged (only frames and exception types), so a provider echoing document text does not leak it |
+| Extracted values | Each value must appear as whole words in the extracted text (`exact`, `normalized`) or it is `not_found`; short numbers and years are `weak` and go to human review; the dollar sign never evidences USD |
+| Orphaned objects | Daily reconciliation reports storage objects with no database row; deletion is opt-in, capped, and has a dry-run mode |
+| Cross-organization access | Negative tests with a double-member user, foreign ids, foreign or revoked API keys, removed members and logout (`backend/tests/test_cross_org_negative.py`) |
+| Configuration | Any environment other than `development` or `test` is production: the JWT fallback key and the relaxed defaults are never used (a misspelled `prod` used to start with the published fallback key) |
+| Metrics | Route labels are templates; unmatched paths are grouped as `unmatched`, so request data never becomes a metric label. `/metrics` remains unauthenticated and must be restricted at the ingress |
+| Storage errors | Read and write failures return a generic server error with no path, exception type or document content |
+| ContextRAG sync | Transactional outbox; unmasked text refused in staging/production; deletion verified by listing what remains retrievable; no document text in logs or in the outbox |
 
 The full analysis lives in [docs/security/threat-model.md](docs/security/threat-model.md)
 and operational guidance in [docs/SECURITY.md](docs/SECURITY.md).

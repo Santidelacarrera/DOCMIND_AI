@@ -74,7 +74,8 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         duration = time.perf_counter() - start
         route = request.scope.get("route")
-        template = route.path if route is not None else request.url.path
+        # Unmatched paths are attacker-controlled strings: they must not become label values.
+        template = route.path if route is not None else "unmatched"
         HTTP_REQUESTS_TOTAL.labels(request.method, template, str(response.status_code)).inc()
         HTTP_REQUEST_DURATION_SECONDS.labels(request.method, template).observe(duration)
         return response

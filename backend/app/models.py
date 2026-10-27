@@ -291,6 +291,9 @@ class ExtractionField(Base):
     page_number: Mapped[int | None]
     source_text: Mapped[str | None] = mapped_column(Text)
     bounding_box: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    # How the value was matched against the extracted text: exact | normalized | not_found |
+    # not_applicable (see app.provenance). ``None`` on runs created before provenance existed.
+    evidence_status: Mapped[str | None] = mapped_column(String(24))
     manually_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     # Why a human changed (or confirmed) the value, by whom and when; ``original_value``
     # always keeps what the model produced.
@@ -423,3 +426,34 @@ class VectorDeletion(Base):
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     last_error: Mapped[str | None] = mapped_column(String(80))
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class ContextRagEvent(Base):
+    """Outbox of changes that must reach ContextRAG_Engine (see docs/CONTEXTRAG_INTEGRATION.md).
+
+    Written in the same transaction as the DOCMIND state change it describes (processing completed,
+    deleted, expired, purged), so a crash cannot lose the obligation. ``dedupe_key`` makes enqueueing
+    idempotent: ``upsert:<doc>:<version>:<content digest>`` and ``retire:<doc>``. Holds identifiers and
+    status only; document text is read from the database when the event is delivered, never copied here.
+    """
+
+    __tablename__ = "contextrag_events"
+    __table_args__ = (UniqueConstraint("dedupe_key", name="uq_contextrag_event_dedupe"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)  # row may be purged
+    kind: Mapped[str] = mapped_column(String(16))  # upsert | retire
+    dedupe_key: Mapped[str] = mapped_column(String(160))
+    # pending -> processing -> done | failed | cancelled ; failed events are retried until the attempt budget
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Fencing token of the current claim. A timestamp is not used: SQLite returns naive datetimes, so a
+    # Python-side comparison with the claimed value silently fails and events stay "processing" forever.
+    claim_token: Mapped[str | None] = mapped_column(String(36))
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(String(80))
+    correlation_id: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

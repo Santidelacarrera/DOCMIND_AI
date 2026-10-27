@@ -56,7 +56,9 @@ test("upload, extraction edit, and XLSX export use the real processing pipeline"
   const documentLink = page.getByRole("link", { name: "test-document.pdf" });
   await expect(documentLink).toBeVisible();
   await documentLink.click();
-  await expect(page.getByText("customer_name")).toBeVisible({ timeout: 20_000 });
+  // Exact match: the review panel also lists "customer_name: <issue>" when the value is not found in the
+  // (blank) test PDF, so a substring match would hit two elements.
+  await expect(page.getByText("customer_name", { exact: true })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText("Juan Pérez")).toBeVisible();
   const customerField = page.locator(".field").filter({ hasText: "customer_name" });
   await customerField.getByRole("button", { name: "Edit" }).click();
