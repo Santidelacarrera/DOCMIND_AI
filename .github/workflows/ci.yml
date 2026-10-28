@@ -40,7 +40,7 @@ jobs:
       - name: Extraction quality gate (reference corpus, offline baseline)
         run: python -m app.evaluation --min-f1 0.89 --output-dir eval_reports
       - name: Keep the evaluation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: evaluation-report
           path: backend/eval_reports/
