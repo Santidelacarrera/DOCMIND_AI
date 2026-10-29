@@ -80,7 +80,7 @@ class World:
         self.ids = {
             "document_id": self.document, "field_id": self.field, "schema_id": self.schema,
             "key_id": self.api_key, "webhook_id": self.webhook, "invitation_id": self.invitation,
-            "user_id": self.user, "project_id": self.project,
+            "user_id": self.user, "member_user_id": self.user, "project_id": self.project,
             # Membership is checked before the event is looked up, so an id that does not exist is
             # enough to prove that an outsider gets 403 and never learns whether it exists.
             "event_id": str(uuid.uuid4()),
@@ -101,6 +101,12 @@ class World:
             return self.client.post(
                 url, files={"file": ("x.pdf", make_pdf(), "application/pdf")}, headers=headers
             )
+        if (method, template) == ("PUT", "/api/v1/projects/{project_id}/members"):
+            # Well-formed grant request, so the refusal must come from the membership check.
+            return self.client.put(url, json={"user_id": self.user, "access": "write"}, headers=headers)
+        if (method, template) == ("POST", "/api/v1/projects/{project_id}/ask"):
+            # Well-formed body, so the refusal must come from the membership check, not validation.
+            return self.client.post(url, json={"question": "outsider attempt to read"}, headers=headers)
         if (method, template) == ("POST", "/api/v1/contextrag/events/{event_id}/cancel"):
             # The outsider's body is well-formed, so the refusal must come from the membership check.
             body = {"confirm": self.ids["event_id"], "reason": "outsider attempt to cancel"}

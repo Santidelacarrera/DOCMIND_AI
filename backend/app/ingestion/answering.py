@@ -107,20 +107,38 @@ def answer(
     top_k: int = 4,
     min_score: float = 0.05,
     is_live: Callable[[str], bool] | None = None,
+    project_id: str | None = None,
+    project_ids: Sequence[str] | None = None,
 ) -> Answer:
     """Answer ``question`` from this tenant's documents only.
 
-    ``is_live(document_id)`` lets the caller drop hits whose document was deleted but whose
-    vectors are still waiting in the deletion outbox: a deleted document is never cited.
+    Scope, at most one of the two (neither = the whole tenant, which internal callers and the tests use;
+    every endpoint passes one):
+
+    * ``project_id``: one case. The vector query carries that condition.
+    * ``project_ids``: the cases the caller may read. An empty list abstains without querying.
+
+    Each hit is checked against the scope again, so a chunk without a project, or with another one,
+    is never used. ``is_live(document_id)`` drops hits whose document was deleted but whose vectors are
+    still waiting in the deletion outbox: a deleted document is never cited.
     """
+    if project_id is not None and project_ids is not None:
+        raise ValueError("ONE_SCOPE_ONLY")
     tenant = parse_tenant(tenant_id)
+    project = parse_tenant(project_id) if project_id is not None else None
+    allowed = {parse_tenant(p) for p in project_ids} if project_ids is not None else None
     question = question.strip()
-    if not terms(question):
+    if not terms(question) or (allowed is not None and not allowed):
         return Answer(question, ABSTENTION, (), True)
     vector = pipeline.query_vector(tenant_id=tenant, question=question)
     hits = [
-        h for h in pipeline.store.search(tenant, vector, limit=top_k)
+        h for h in pipeline.store.search(
+            tenant, vector, limit=top_k, project_id=project,
+            project_ids=sorted(allowed) if allowed is not None else None,
+        )
         if h.get("score", 0.0) >= min_score and h.get("tenant_id") == tenant
+        and (project is None or h.get("project_id") == project)
+        and (allowed is None or h.get("project_id") in allowed)
         and (is_live is None or is_live(str(h.get("document_id"))))
     ]
     picked = _best_sentences(question, hits)

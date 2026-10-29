@@ -19,6 +19,7 @@ from typing import Any, Protocol
 from app.ingestion.chunking import SCHEMA_VERSION, Chunk, assert_single_tenant, parse_tenant
 
 TENANT_KEY = "tenant_id"
+PROJECT_KEY = "project_id"  # the case a chunk belongs to; project-scoped queries require it
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ def to_point(chunk: Chunk, vector: Sequence[float], *, embedding_model: str = ""
         vector=list(vector),
         payload={
             TENANT_KEY: chunk.tenant_id,
+            PROJECT_KEY: chunk.project_id,
             "document_id": chunk.document_id,
             "chunk_index": chunk.index,
             "source_name": chunk.source_name,
@@ -55,7 +57,13 @@ class VectorStore(Protocol):
     def ensure_collection(self, dimension: int) -> None: ...
     def upsert(self, tenant_id: str, points: Sequence[Point]) -> None: ...
     def delete_document(self, tenant_id: str, document_id: str) -> None: ...
-    def search(self, tenant_id: str, vector: Sequence[float], limit: int = 5, *, include_suspicious: bool = False) -> list[dict[str, Any]]: ...
+    def search(
+        self, tenant_id: str, vector: Sequence[float], limit: int = 5, *,
+        include_suspicious: bool = False, project_id: str | None = None,
+        project_ids: Sequence[str] | None = None,
+    ) -> list[dict[str, Any]]: ...
+    def set_document_project(self, tenant_id: str, document_id: str, project_id: str) -> None: ...
+    def count_without_project(self, tenant_id: str) -> int: ...
 
 
 def check_points(tenant_id: str, points: Sequence[Point]) -> str:
@@ -92,14 +100,26 @@ class QdrantStore:
             field_schema=models.KeywordIndexParams(type=models.KeywordIndexType.KEYWORD, is_tenant=True),
         )
         self._c.create_payload_index(self._collection, "document_id", field_schema=models.PayloadSchemaType.KEYWORD)
+        self._c.create_payload_index(self._collection, PROJECT_KEY, field_schema=models.PayloadSchemaType.KEYWORD)
 
     @staticmethod
-    def tenant_filter(tenant_id: str, *, document_id: str | None = None, include_suspicious: bool = True) -> Any:
+    def tenant_filter(
+        tenant_id: str, *, document_id: str | None = None, project_id: str | None = None,
+        project_ids: Sequence[str] | None = None, include_suspicious: bool = True,
+    ) -> Any:
         from qdrant_client import models
 
         must: list[Any] = [models.FieldCondition(key=TENANT_KEY, match=models.MatchValue(value=parse_tenant(tenant_id)))]
         if document_id:
             must.append(models.FieldCondition(key="document_id", match=models.MatchValue(value=document_id)))
+        if project_id:
+            # A point without this key (legacy, or indexed without a project) cannot match.
+            must.append(models.FieldCondition(key=PROJECT_KEY, match=models.MatchValue(value=parse_tenant(project_id))))
+        if project_ids is not None:
+            # An empty list is handled by the caller (nothing may match); MatchAny([]) is never sent.
+            must.append(models.FieldCondition(
+                key=PROJECT_KEY, match=models.MatchAny(any=[parse_tenant(p) for p in project_ids]),
+            ))
         must_not: list[Any] = [] if include_suspicious else [
             models.FieldCondition(key="suspicious", match=models.MatchValue(value=True))
         ]
@@ -124,12 +144,44 @@ class QdrantStore:
             wait=True,
         )
 
-    def search(self, tenant_id: str, vector: Sequence[float], limit: int = 5, *, include_suspicious: bool = False) -> list[dict[str, Any]]:
+    def search(
+        self, tenant_id: str, vector: Sequence[float], limit: int = 5, *,
+        include_suspicious: bool = False, project_id: str | None = None,
+        project_ids: Sequence[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        if project_ids is not None and not project_ids:
+            return []  # the caller may read no project: nothing can match, so do not query at all
+        # The project condition is part of the vector query itself, so Qdrant never scores or
+        # returns another project's chunks; nothing is filtered afterwards.
         hits = self._c.query_points(
             self._collection, query=list(vector), limit=limit, with_payload=True,
-            query_filter=self.tenant_filter(tenant_id, include_suspicious=include_suspicious),
+            query_filter=self.tenant_filter(
+                tenant_id, project_id=project_id, project_ids=project_ids, include_suspicious=include_suspicious,
+            ),
         ).points
         return [{"score": h.score, **(h.payload or {})} for h in hits]
+
+    def set_document_project(self, tenant_id: str, document_id: str, project_id: str) -> None:
+        """Stamp the project on this document's existing points (no re-embedding). Idempotent."""
+        from qdrant_client import models
+
+        self._c.set_payload(
+            self._collection,
+            payload={PROJECT_KEY: parse_tenant(project_id)},
+            points=models.FilterSelector(filter=self.tenant_filter(tenant_id, document_id=document_id)),
+            wait=True,
+        )
+
+    def count_without_project(self, tenant_id: str) -> int:
+        """Points of this tenant that carry no project (legacy or unverifiable): they are never returned
+        by a project-scoped query. Used to verify a backfill."""
+        from qdrant_client import models
+
+        tenant_only = self.tenant_filter(tenant_id)
+        unscoped = models.Filter(
+            must=[*tenant_only.must, models.IsEmptyCondition(is_empty=models.PayloadField(key=PROJECT_KEY))]
+        )
+        return self._c.count(self._collection, count_filter=unscoped, exact=True).count
 
 
 __all__ = ["Point", "QdrantStore", "VectorStore", "assert_single_tenant", "check_points", "to_point"]

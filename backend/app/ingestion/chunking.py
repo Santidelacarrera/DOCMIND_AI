@@ -39,10 +39,15 @@ class Chunk:
     suspicious: bool = False
     source_name: str = ""  # the document's display name, quoted in citations
     page_basis: str = "explicit"  # "explicit" (real pages) or "estimated" (Word without page breaks)
+    # The case (project) the document belongs to. None means "unknown": such a vector can never
+    # match a project-scoped query, because the filter requires this exact value.
+    project_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tenant_id", parse_tenant(self.tenant_id))
         object.__setattr__(self, "document_id", parse_tenant(self.document_id))
+        if self.project_id is not None:
+            object.__setattr__(self, "project_id", parse_tenant(self.project_id))
         if not self.text.strip():
             raise ValueError("CHUNK_EMPTY")
 
@@ -129,14 +134,14 @@ def split_pages(
 def build_chunks(
     *, tenant_id: str, document_id: str, windows: Sequence[tuple[str, int, int]],
     pii_counts: Sequence[dict[str, int]] | None = None, suspicious: Sequence[bool] | None = None,
-    source_name: str = "", page_basis: str = "explicit",
+    source_name: str = "", page_basis: str = "explicit", project_id: str | None = None,
 ) -> list[Chunk]:
     tenant = parse_tenant(tenant_id)
     return [
         Chunk(
             tenant_id=tenant, document_id=document_id, index=i, text=text, page_start=a, page_end=b,
             pii_counts=(pii_counts[i] if pii_counts else {}), suspicious=(suspicious[i] if suspicious else False),
-            source_name=source_name, page_basis=page_basis,
+            source_name=source_name, page_basis=page_basis, project_id=project_id,
         )
         for i, (text, a, b) in enumerate(windows)
     ]

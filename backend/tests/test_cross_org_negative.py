@@ -70,6 +70,13 @@ def worlds(register, client, monkeypatch):
             )
         )
         db.commit()
+    # Phase 3C: a member reads a document only through a project grant, so A's owner grants read access.
+    grant = client.put(
+        f"/api/v1/projects/{project_a}/members?organization_id={a.org}",
+        json={"user_id": _uid(double), "access": "read"},
+        headers=a.headers,
+    )
+    assert grant.status_code == 200, grant.text
     outsider = register("outsider")
     _join(outsider, b.org)
     return {

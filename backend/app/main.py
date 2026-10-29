@@ -8,7 +8,7 @@ import unicodedata
 import uuid
 from datetime import UTC, datetime, timedelta
 from secrets import compare_digest, token_urlsafe
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 from fastapi import (
@@ -33,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app import contextrag_sync, vector_index
+from app import contextrag_sync, request_context, vector_index
 from app.antivirus import antivirus
 from app.core import settings
 from app.db import get_db
@@ -58,6 +58,7 @@ from app.models import (
     OrganizationMember,
     ProcessingJob,
     Project,
+    ProjectMember,
     Role,
     RunStatus,
     UsageRecord,
@@ -68,6 +69,7 @@ from app.models import (
 )
 from app.notifications import email_provider, invitation_email
 from app.processing import ProcessingError, extract_docx_pages
+from app.project_access import accessible_project_ids, as_strings, require_document, require_project
 from app.rate_limit import enforce
 from app.retention import delete_objects, scrub_derived_text
 from app.security import (
@@ -104,7 +106,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in _config.cors_origins.split(",") if o.strip()],
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
+    allow_headers=["Authorization", "Content-Type", "X-CSRF-Token", "X-Request-Id"],
+    expose_headers=["X-Request-Id"],
     allow_credentials=True,
     max_age=600,
 )
@@ -146,6 +149,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    """One identifier per request: echoed in the response and written to the audit trail and logs."""
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        request_id = request_context.from_header(request.headers.get(request_context.REQUEST_ID_HEADER))
+        token = request_context.current_request_id.set(request_id)
+        try:
+            response = await call_next(request)
+        finally:
+            request_context.current_request_id.reset(token)
+        response.headers[request_context.REQUEST_ID_HEADER] = request_id
+        return response
+
+
+app.add_middleware(RequestIdMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     MaxBodySizeMiddleware,
@@ -728,10 +746,97 @@ def projects(
 ) -> list[dict[str, object]]:
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, scope="documents:read")
+    # Phase 3C: members and viewers see only the projects they may read; owners and admins see all.
+    # Filtered in the query, so hidden projects are neither listed nor counted.
+    visible = accessible_project_ids(db, org_id, user)
     return [
         {"id": str(x.id), "name": x.name, "description": x.description}
-        for x in db.scalars(select(Project).where(Project.organization_id == org_id)).all()
+        for x in db.scalars(
+            select(Project).where(Project.organization_id == org_id, Project.id.in_(visible))
+        ).all()
     ]
+
+
+class ProjectMemberInput(BaseModel):
+    user_id: uuid.UUID
+    access: Literal["read", "write"] = "read"
+
+
+def _project_in_org(db: Session, project_id: uuid.UUID, org_id: uuid.UUID) -> None:
+    if not db.scalar(select(Project.id).where(Project.id == project_id, Project.organization_id == org_id)):
+        raise HTTPException(404, "PROJECT_NOT_FOUND")
+
+
+@app.get("/api/v1/projects/{project_id}/members")
+def project_members(
+    project_id: uuid.UUID,
+    organization_id: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    """Who has an explicit grant on this project (administrators only; API keys cannot read it)."""
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.admin)
+    _project_in_org(db, project_id, org_id)
+    rows = db.scalars(
+        select(ProjectMember).where(ProjectMember.project_id == project_id).order_by(ProjectMember.created_at)
+    ).all()
+    return [{"user_id": str(r.user_id), "access": r.access} for r in rows]
+
+
+@app.put("/api/v1/projects/{project_id}/members")
+def grant_project_access(
+    project_id: uuid.UUID,
+    organization_id: str,
+    payload: ProjectMemberInput,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Give a person read or write access to one project. Owners and admins already have it."""
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.admin)
+    _project_in_org(db, project_id, org_id)
+    target = db.scalar(
+        select(OrganizationMember).where(
+            OrganizationMember.organization_id == org_id, OrganizationMember.user_id == payload.user_id
+        )
+    )
+    if target is None:
+        raise HTTPException(422, "USER_NOT_IN_ORGANIZATION")
+    grant = db.scalar(
+        select(ProjectMember).where(ProjectMember.project_id == project_id, ProjectMember.user_id == payload.user_id)
+    )
+    if grant is None:
+        db.add(ProjectMember(project_id=project_id, user_id=payload.user_id, access=payload.access, granted_by=user.id))
+    else:
+        grant.access, grant.granted_by = payload.access, user.id
+    db.flush()
+    audit(db, "project.member.grant", "project", str(project_id), user, org_id)
+    db.commit()
+    return {"project_id": str(project_id), "user_id": str(payload.user_id), "access": payload.access}
+
+
+@app.delete("/api/v1/projects/{project_id}/members/{member_user_id}", status_code=204)
+def revoke_project_access(
+    project_id: uuid.UUID,
+    member_user_id: uuid.UUID,
+    organization_id: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Take a grant away. Effective on the next request: access is checked on every call."""
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, Role.admin)
+    _project_in_org(db, project_id, org_id)
+    grant = db.scalar(
+        select(ProjectMember).where(ProjectMember.project_id == project_id, ProjectMember.user_id == member_user_id)
+    )
+    if grant is None:
+        raise HTTPException(404, "GRANT_NOT_FOUND")
+    db.delete(grant)
+    audit(db, "project.member.revoke", "project", str(project_id), user, org_id)
+    db.commit()
+    return Response(status_code=204)
 
 
 @app.post("/api/v1/schemas", status_code=201)
@@ -875,6 +980,9 @@ def create_api_key(
     organization_id: str,
     name: str = Name,
     scopes: list[str] = Body(min_length=1, max_length=len(ALLOWED_SCOPES)),
+    # Repeat the parameter to limit the key to those projects. Without it the key is organization-wide
+    # (legacy behaviour): it works on organization endpoints but is refused by the project endpoints.
+    project_id: list[uuid.UUID] | None = Query(default=None),
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
@@ -883,15 +991,22 @@ def create_api_key(
     if set(scopes) - ALLOWED_SCOPES:
         raise HTTPException(422, "INVALID_SCOPE")
     scopes = sorted(set(scopes))
+    project_ids: list[str] | None = None
+    if project_id is not None:
+        for pid in set(project_id):
+            if not db.scalar(select(Project.id).where(Project.id == pid, Project.organization_id == org_id)):
+                raise HTTPException(404, "PROJECT_NOT_FOUND")
+        project_ids = sorted(str(pid) for pid in set(project_id))
     secret, prefix, key_hash = issue_api_key()
     key = ApiKey(
-        organization_id=org_id, name=name.strip(), prefix=prefix, key_hash=key_hash, scopes=scopes
+        organization_id=org_id, name=name.strip(), prefix=prefix, key_hash=key_hash, scopes=scopes,
+        project_ids=project_ids,
     )
     db.add(key)
     db.flush()
     audit(db, "api_key.create", "api_key", str(key.id), user, org_id)
     db.commit()
-    return {"id": str(key.id), "key": secret, "prefix": prefix, "scopes": scopes}
+    return {"id": str(key.id), "key": secret, "prefix": prefix, "scopes": scopes, "project_ids": project_ids}
 
 
 @app.get("/api/v1/api-keys")
@@ -1214,10 +1329,7 @@ def upload_document(
     # Multipart framing adds a small overhead; reject clearly oversized bodies before reading.
     if declared and declared.isdigit() and int(declared) > settings().max_upload_bytes + 65_536:
         raise HTTPException(413, "FILE_TOO_LARGE")
-    if not db.scalar(
-        select(Project).where(Project.id == project_id, Project.organization_id == org_id)
-    ):
-        raise HTTPException(404, "PROJECT_NOT_FOUND")
+    require_project(db, org_id, user, project_id, write=True)  # phase 3B: a grant with write access, or a key for it
     content = file.file.read(settings().max_upload_bytes + 1)
     if len(content) > settings().max_upload_bytes:
         raise HTTPException(413, "FILE_TOO_LARGE")
@@ -1349,6 +1461,10 @@ def list_documents(
 ) -> list[dict[str, object]]:
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, scope="documents:read")
+    # Phase 3C: filter in the query, so hidden documents are neither returned nor counted.
+    visible = accessible_project_ids(db, org_id, user)
+    if not visible:
+        return []
     # Latest job per document in one query (avoids N+1).
     latest = (
         select(ProcessingJob.document_id, func.max(ProcessingJob.attempt).label("attempt"))
@@ -1364,7 +1480,11 @@ def list_documents(
             (ProcessingJob.document_id == latest.c.document_id)
             & (ProcessingJob.attempt == latest.c.attempt),
         )
-        .where(Document.organization_id == org_id, Document.deleted_at.is_(None))
+        .where(
+            Document.organization_id == org_id,
+            Document.deleted_at.is_(None),
+            Document.project_id.in_(visible),
+        )
     )
     if status is not None:
         query = query.where(ProcessingJob.status == status)
@@ -1396,6 +1516,7 @@ def process_existing_document(
     enforce(request, "process", settings().rate_limit_api)
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, Role.member, scope="documents:write")
+    require_document(db, org_id, user, document_id, write=True)  # phase 3C: project write access
     requested_schema_version = _resolve_requested_schema_version(db, org_id, schema_id)
     # The document row lock is the database-level serialization point. It is
     # deliberately not an application-only existence check.
@@ -1469,7 +1590,7 @@ def document_status(
 ) -> dict[str, object]:
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, scope="documents:read")
-    live_document(db, org_id, document_id)
+    require_document(db, org_id, user, document_id)
     job = db.scalar(
         select(ProcessingJob)
         .where(ProcessingJob.document_id == document_id, ProcessingJob.organization_id == org_id)
@@ -1500,15 +1621,7 @@ def document(
 ) -> dict[str, object]:
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, scope="documents:read")
-    item = db.scalar(
-        select(Document).where(
-            Document.id == document_id,
-            Document.organization_id == org_id,
-            Document.deleted_at.is_(None),
-        )
-    )
-    if not item:
-        raise HTTPException(404, "DOCUMENT_NOT_FOUND")
+    item = require_document(db, org_id, user, document_id)
     return {
         "id": str(item.id),
         "filename": item.filename,
@@ -1530,6 +1643,7 @@ def delete_document(
     after ``retention_deleted_days`` (see docs/DATA_RETENTION.md)."""
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, Role.member, scope="documents:write")
+    require_document(db, org_id, user, document_id, write=True)  # phase 3C: project write access
     item = db.scalar(
         select(Document)
         .where(
@@ -1569,15 +1683,7 @@ def download(
 ) -> Response:
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, scope="documents:read")
-    item = db.scalar(
-        select(Document).where(
-            Document.id == document_id,
-            Document.organization_id == org_id,
-            Document.deleted_at.is_(None),
-        )
-    )
-    if not item:
-        raise HTTPException(404, "DOCUMENT_NOT_FOUND")
+    item = require_document(db, org_id, user, document_id)
     frame_ancestors = " ".join(o.strip() for o in settings().cors_origins.split(",") if o.strip())
     try:
         # The key must live under the caller's organization prefix, independently of the
@@ -1720,6 +1826,7 @@ def extraction(
 ) -> dict[str, object]:
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, scope="documents:read")
+    require_document(db, org_id, user, document_id)
     return _extraction_payload(db, org_id, document_id)
 
 
@@ -1757,6 +1864,8 @@ def edit_field(
     ).first()
     if not row:
         raise HTTPException(404, "FIELD_NOT_FOUND")
+    # Phase 3C: the field's document decides, and changing it needs project write access.
+    require_document(db, org_id, user, row[1].document_id, write=True, not_found="FIELD_NOT_FOUND")
     field = row[0]
     cleaned_reason = (reason or "").strip() or None
     changed = value != field.original_value
@@ -1786,7 +1895,7 @@ def approve_review(
     """Human sign-off. Refused while any flagged field is still unverified."""
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, Role.member, scope="documents:write")
-    live_document(db, org_id, document_id)
+    require_document(db, org_id, user, document_id, write=True)
     run = _latest_run(db, org_id, document_id)
     fields = list(
         db.scalars(select(ExtractionField).where(ExtractionField.extraction_run_id == run.id)).all()
@@ -1832,6 +1941,7 @@ def review_queue(
             ExtractionRun.requires_review.is_(True),
             ExtractionRun.reviewed_at.is_(None),
             Document.deleted_at.is_(None),
+            Document.project_id.in_(accessible_project_ids(db, org_id, user)),
         )
         .order_by(ExtractionRun.created_at.asc())
         .limit(100)
@@ -1859,6 +1969,7 @@ def export(
 ) -> Response:
     org_id = globals()["organization_id"](organization_id)
     membership(org_id, user, db, scope="exports:read")
+    require_document(db, org_id, user, document_id)
     data = _extraction_payload(db, org_id, document_id)
     fields: list[dict[str, Any]] = data["fields"]
     review_status = data["review"]["status"]
@@ -1972,15 +2083,117 @@ def ask(
             is not None
         )
 
+    # Phase 3B: only the projects the caller may read. Vectors without a project (legacy, not yet
+    # backfilled) match no list, so they are excluded instead of being answered without an owner.
     result = answer(
         vector_index.get_pipeline(),
         tenant_id=str(org_id),
         question=payload.question,
         top_k=payload.top_k,
         is_live=is_live,
+        project_ids=as_strings(accessible_project_ids(db, org_id, user)),
     )
     audit(db, "document.ask", "organization", str(org_id), user, org_id)
     db.commit()
+    return {
+        "answer": result.text,
+        "abstained": result.abstained,
+        "citations": [
+            {
+                "document_id": c.document_id,
+                "document": c.document,
+                "page": c.page,
+                "page_basis": c.page_basis,
+                "score": c.score,
+                "label": c.label(),
+            }
+            for c in result.citations
+        ],
+    }
+
+
+@app.post("/api/v1/projects/{project_id}/ask")
+def project_ask(
+    project_id: str,
+    organization_id: str,
+    payload: AskInput,
+    request: Request,
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Answer a question from one case (project) of the organization. Same response as ``/api/v1/ask``.
+
+    Order of checks: organization membership (or a key with ``documents:read`` for this organization),
+    then the project must belong to that organization. A project of another organization and a
+    project that does not exist get the same 404, so the response reveals nothing about identifiers.
+    Retrieval is filtered by project inside the vector query. Question and document text are not logged.
+    """
+    from app.ingestion.answering import answer
+
+    enforce(request, "project_ask", settings().rate_limit_api)
+    org_id = globals()["organization_id"](organization_id)
+    membership(org_id, user, db, scope="documents:read")
+    try:
+        project_uuid = uuid.UUID(project_id)
+    except ValueError:
+        raise HTTPException(404, "PROJECT_NOT_FOUND") from None
+    # A legacy key names no project, so it cannot use a case endpoint (phase 3B).
+    if isinstance(user, ApiPrincipal) and user.key.project_ids is None:
+        raise HTTPException(404, "PROJECT_NOT_FOUND")
+    # Phase 3B: the caller must be allowed to read this project (grant, org role, or key list).
+    # Refusals are 404 like a missing project, and come before the feature check.
+    require_project(db, org_id, user, project_uuid)
+    if not vector_index.enabled():
+        raise HTTPException(503, "VECTOR_INDEX_DISABLED")
+
+    def is_live(document_id: str) -> bool:
+        try:
+            doc_uuid = uuid.UUID(document_id)
+        except ValueError:
+            return False
+        return (
+            db.scalar(
+                select(Document.id).where(
+                    Document.id == doc_uuid,
+                    Document.organization_id == org_id,
+                    Document.project_id == project_uuid,
+                    Document.deleted_at.is_(None),
+                )
+            )
+            is not None
+        )
+
+    request_id = request_context.get()
+    result = answer(
+        vector_index.get_pipeline(),
+        tenant_id=str(org_id),
+        question=payload.question,
+        top_k=payload.top_k,
+        is_live=is_live,
+        project_id=str(project_uuid),
+    )
+    # Same transaction as the response: the audit record exists if and only if the answer was given.
+    db.add(
+        AuditLog(
+            organization_id=org_id,
+            actor_id=user.id if isinstance(user, User) else None,
+            action="document.project_ask",
+            target_type="project",
+            target_id=str(project_uuid),
+            metadata_={"request_id": request_id, "citations": len(result.citations), "abstained": result.abstained},
+        )
+    )
+    db.commit()
+    logger.info(
+        "project query answered",
+        extra={
+            "request_id": request_id,
+            "organization_id": str(org_id),
+            "project_id": str(project_uuid),
+            "citations": len(result.citations),
+            "abstained": result.abstained,
+        },
+    )
     return {
         "answer": result.text,
         "abstained": result.abstained,
