@@ -43,7 +43,7 @@ Ver `.env.example` para la lista completa y los valores de desarrollo.
 ### No verificado
 
 * **Celery beat, ventanas largas.** Beat sí se ha ejecutado localmente con Redis y PostgreSQL reales (`backend/scripts/beat_smoke.sh`): `deliver-contextrag-events` (30 s), `recover-stuck-jobs` y `process-vector-deletions` (60 s) se enviaron y terminaron con éxito. **No observado:** `purge-expired-data` y `reconcile-contextrag` (3600 s) y `reconcile-storage` (86400 s), porque la ventana de la prueba fue de 75 s. Su lógica sí está probada a mano y en `tests/test_periodic_tasks.py`. Ver `docs/EXTERNAL_DEPENDENCIES.md`.
-* Despliegue en staging con `docker compose -f docker-compose.yml -f docker-compose.prod.yml`. Docker no estaba disponible.
+* Despliegue en staging con `docker compose -f docker-compose.yml -f docker-compose.prod.yml`. No ejecutado: el daemon de Docker se arrancó en el sandbox y se usaron contenedores sueltos (PostgreSQL 17, Qdrant, ClamAV, SMTP y S3 de prueba) para las pruebas en vivo, pero la composición completa no se ha levantado. Ver `docs/EXTERNAL_DEPENDENCIES.md`.
 * Migraciones contra PostgreSQL 17 (el de CI).
 * Object storage S3 real, ClamAV real, SMTP real.
 

@@ -15,7 +15,7 @@ from fastapi.routing import APIRoute
 from app import main
 
 OUT = Path(__file__).resolve().parents[2] / "docs" / "AUTHORIZATION_MATRIX.md"
-CHECK = re.compile(r"membership\([^)]*\)")
+CHECK = re.compile(r"(?:membership|require_document|require_project|accessible_project_ids)\([^)]*\)")
 NO_CHECK_BY_DESIGN = {
     "/api/v1/auth/login",
     "/api/v1/auth/register",

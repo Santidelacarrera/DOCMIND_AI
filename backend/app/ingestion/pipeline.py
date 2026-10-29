@@ -107,7 +107,10 @@ class IngestionPipeline:
                            "metadata_keys": findings.metadata_keys, "xmp": ["xmp"] if findings.has_xmp else []}
         return self._extract(clean, report)
 
-    def ingest(self, *, tenant_id: str, document_id: str, content: bytes, source_name: str = "") -> IngestionReport:
+    def ingest(
+        self, *, tenant_id: str, document_id: str, content: bytes, source_name: str = "",
+        project_id: str | None = None,
+    ) -> IngestionReport:
         tenant = chunking.parse_tenant(tenant_id)  # raises before any work is done
         document = chunking.parse_tenant(document_id)
         report = IngestionReport(tenant, document)
@@ -137,6 +140,7 @@ class IngestionPipeline:
             tenant_id=tenant, document_id=document, windows=windows,
             source_name=source_name[:255], page_basis=report.page_basis,
             pii_counts=[pii.placeholder_counts(w[0]) for w in windows], suspicious=flags,
+            project_id=project_id,
         )
         chunking.assert_single_tenant(chunks, tenant)
         report.chunks = len(chunks)

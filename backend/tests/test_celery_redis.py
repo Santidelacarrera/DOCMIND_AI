@@ -118,7 +118,6 @@ def test_duplicate_messages_for_one_job_produce_one_result(live_worker, register
 
 
 def test_transient_failure_is_retried_through_the_broker(live_worker, register, monkeypatch) -> None:
-    _acct, body = _upload(register)
     real = storage.get
     calls = {"n": 0}
 
@@ -128,7 +127,9 @@ def test_transient_failure_is_retried_through_the_broker(live_worker, register, 
             raise OSError("storage blip")
         return real(key)
 
+    # Patch before uploading: the upload itself enqueues the job, and the worker may run it at once.
     monkeypatch.setattr(storage, "get", flaky)
+    _acct, body = _upload(register)
     worker.process_document.apply_async(args=[body["job_id"]])
     job = _wait(body["job_id"], {JobStatus.completed, JobStatus.failed})
     assert job.status == JobStatus.completed

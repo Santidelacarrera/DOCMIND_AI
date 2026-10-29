@@ -133,14 +133,16 @@ def index_document(organization_id: str, document_id: str) -> str:
         doc = db.get(Document, doc_id)
         if doc is None or doc.deleted_at is not None or doc.organization_id != org:
             return "skipped"
-        key, filename = doc.storage_key, doc.filename
+        key, filename, project = doc.storage_key, doc.filename, str(doc.project_id)
     try:
         content = storage.get(owned_key(org, key))
     except (StorageAccessError, FileNotFoundError):
         _mark(doc_id, indexed=False, error="STORAGE_OBJECT_MISSING")
         return "refused:STORAGE_OBJECT_MISSING"
     try:
-        get_pipeline().ingest(tenant_id=str(org), document_id=str(doc_id), content=content, source_name=filename)
+        get_pipeline().ingest(
+            tenant_id=str(org), document_id=str(doc_id), content=content, source_name=filename, project_id=project,
+        )
     except (IngestionRefused, TenantError) as exc:
         code = getattr(exc, "code", None) or str(exc)
         _mark(doc_id, indexed=False, error=code[:80])
@@ -156,6 +158,43 @@ def index_document(organization_id: str, document_id: str) -> str:
         return "skipped"
     VECTOR_INDEXING_TOTAL.labels("indexed").inc()
     return "indexed"
+
+
+def backfill_project_ids(*, store: VectorStore | None = None) -> dict[str, int]:
+    """Stamp ``project_id`` on the vectors of documents indexed before the field existed.
+
+    Idempotent and read-only for the database: it only sets a payload value on points that belong to
+    a live, indexed document, using the project recorded on that document. Running it twice changes
+    nothing the second time. It does not re-embed, and it does not touch deleted documents (their
+    vectors are removed by the deletion outbox).
+
+    A document whose vectors cannot be stamped is counted in ``failed`` and left unscoped, so project
+    queries keep excluding it. Use :func:`unscoped_points` to verify the result.
+    """
+    result = {"documents": 0, "failed": 0}
+    if not enabled():
+        return result
+    target = store or get_store()
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(Document.organization_id, Document.id, Document.project_id).where(
+                Document.deleted_at.is_(None), Document.indexed_at.is_not(None)
+            )
+        ).all()
+    for org_id, doc_id, project_id in rows:
+        try:
+            target.set_document_project(str(org_id), str(doc_id), str(project_id))
+        except Exception as exc:
+            result["failed"] += 1
+            logger.warning("project backfill failed", extra={"document_id": str(doc_id), "error": type(exc).__name__})
+        else:
+            result["documents"] += 1
+    return result
+
+
+def unscoped_points(organization_id: str, *, store: VectorStore | None = None) -> int:
+    """Vectors of this organization that carry no project: they are invisible to project queries."""
+    return (store or get_store()).count_without_project(organization_id)
 
 
 def snapshot(store: VectorStore | None = None) -> Any:  # pragma: no cover - debugging aid

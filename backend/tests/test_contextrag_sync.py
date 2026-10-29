@@ -279,13 +279,20 @@ def test_a_removed_member_cannot_reach_documents_through_the_sync_path(
             )
         )
         db.commit()
+    # Phase 3C: a member reads a document only through a project grant.
+    project = client.get(f"/api/v1/documents/{doc}?organization_id={acct.org}", headers=acct.headers).json()["project_id"]
+    uid = member.client.get("/api/v1/auth/me", headers=member.headers).json()["id"]
+    grant = client.put(
+        f"/api/v1/projects/{project}/members?organization_id={acct.org}",
+        json={"user_id": uid, "access": "read"}, headers=acct.headers,
+    )
+    assert grant.status_code == 200, grant.text
     assert (
         client.get(
             f"/api/v1/documents/{doc}?organization_id={acct.org}", headers=member.headers
         ).status_code
         == 200
     )
-    uid = member.client.get("/api/v1/auth/me", headers=member.headers).json()["id"]
     assert (
         client.delete(
             f"/api/v1/members/{uid}?organization_id={acct.org}", headers=acct.headers
