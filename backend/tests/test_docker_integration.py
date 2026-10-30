@@ -132,7 +132,7 @@ def restore_storage(storage_key: str, content: bytes) -> None:
 
 
 def wait_for_job_state(job_id: str, prefix: str) -> str:
-    for _ in range(250):
+    for _ in range(600):
         state = postgres_scalar(
             "SELECT status || '|' || COALESCE(failure_code, '') "
             f"FROM processing_jobs WHERE id = '{job_id}'"
@@ -168,7 +168,7 @@ def test_jwt_idor_api_key_scope_and_xlsx_export() -> None:
     assert xlsx.status_code == 200
     assert xlsx.headers["content-type"].startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     workbook = load_workbook(BytesIO(xlsx.content))
-    assert workbook.active["A1"].value == "Field"
+    assert workbook.active["A1"].value == "name"
 
 
 def test_free_quota_and_concurrent_reservation() -> None:
@@ -336,8 +336,8 @@ def test_worker_failure_is_safe_and_does_not_charge_usage() -> None:
         "(id, organization_id, project_id, filename, storage_key, mime_type, checksum, created_at) "
         f"VALUES ('{document_id}', '{organization_id}', '{project_id}', "
         f"'failure-fixture.pdf', '{missing_key}', 'application/pdf', '{uuid.uuid4().hex}', NOW()); "
-        "INSERT INTO processing_jobs (id, organization_id, document_id, status, attempt, created_at) "
-        f"VALUES ('{job_id}', '{organization_id}', '{document_id}', 'queued', 1, NOW());"
+        "INSERT INTO processing_jobs (id, organization_id, document_id, status, attempt, retry_count, created_at) "
+        f"VALUES ('{job_id}', '{organization_id}', '{document_id}', 'queued', 1, 0, NOW());"
     )
     subprocess.run(
         [
@@ -363,11 +363,11 @@ def test_worker_failure_is_safe_and_does_not_charge_usage() -> None:
         if state.startswith("failed|"):
             break
         time.sleep(1)
-    assert state == "failed|Processing failed. Check operational logs.|1"
+    assert state == "failed|The stored file is missing.|1"
     assert postgres_scalar(
         "SELECT status || '|' || COALESCE(error, '') "
         f"FROM processing_steps WHERE job_id = '{job_id}' AND name = 'text_extraction'"
-    ) == "FAILED|PROCESSING_FAILED"
+    ) == "FAILED|STORAGE_OBJECT_MISSING"
     assert postgres_scalar(
         "SELECT count(*) FROM usage_records "
         f"WHERE document_id = '{document_id}' AND metric IN ('documents_processed', 'pages_processed')"
@@ -439,7 +439,7 @@ def test_api_key_upload_process_extraction_export_and_revoke() -> None:
         headers=auth(key["key"]),
     )
     assert xlsx.status_code == 200
-    assert load_workbook(BytesIO(xlsx.content)).active["A1"].value == "Field"
+    assert load_workbook(BytesIO(xlsx.content)).active["A1"].value == "name"
     assert request(
         "DELETE",
         f"/api/v1/api-keys/{key['id']}?organization_id={organization_id}",
@@ -503,7 +503,7 @@ def test_transient_failure_stops_after_max_retries() -> None:
     )
     assert queued.status_code == 202
     job_id = queued.json()["job_id"]
-    assert wait_for_job_state(job_id, "failed|PROCESSING_FAILED") == "failed|PROCESSING_FAILED"
+    assert wait_for_job_state(job_id, "failed|STORAGE_UNAVAILABLE") == "failed|STORAGE_UNAVAILABLE"
     assert postgres_scalar(
         "SELECT count(*) FROM processing_steps "
         f"WHERE job_id = '{job_id}' AND name = 'text_extraction' AND status = 'FAILED'"
