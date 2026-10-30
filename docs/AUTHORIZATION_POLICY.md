@@ -1,6 +1,6 @@
 # Política de acceso a los totales de uso
 
-**Estado: política actual documentada y probada. No modificada.** La alternativa de la sección 4 requiere aprobación.
+**Estado: decidida el 2026-10-30 (opción A) e implementada.** `GET /api/v1/usage` exige rol `admin` para personas; las claves API siguen rigiéndose por el scope `usage:read`. Las secciones 1–3 describen la política anterior.
 
 ## 1. Qué puede ver hoy un viewer
 
@@ -45,7 +45,7 @@ La prueba `tests/test_usage_visibility.py` documenta el comportamiento actual y 
 
 ## 6. Decisión
 
-Pendiente del propietario. Recomendación: opción A.
+**Opción A aprobada** (propietario, 2026-10-30) e implementada en `app/main.py`. Las pruebas de la sección 5 están en `tests/test_usage_visibility.py`; `pages_reserved` se mantiene en la respuesta porque ahora solo lo ven administradores.
 
 ---
 Relacionado: [[empresa]]

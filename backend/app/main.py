@@ -1053,7 +1053,7 @@ def usage(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     org_id = globals()["organization_id"](organization_id)
-    membership(org_id, user, db, scope="usage:read")
+    membership(org_id, user, db, Role.admin, scope="usage:read")
     rows = db.execute(
         select(UsageRecord.metric, func.sum(UsageRecord.quantity))
         .where(UsageRecord.organization_id == org_id)

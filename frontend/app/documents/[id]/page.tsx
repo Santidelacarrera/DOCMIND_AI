@@ -65,6 +65,7 @@ export default function DocumentDetail() {
   const [draft, setDraft] = useState("");
   const [failed, setFailed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [filename, setFilename] = useState("");
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -80,6 +81,8 @@ export default function DocumentDetail() {
         return;
       }
       setOrg(list[0].id);
+      const info = await api(`/api/v1/documents/${params.id}?organization_id=${list[0].id}`);
+      if (info.ok && !cancelled) setFilename(((await info.json()) as { filename?: string }).filename ?? "");
       const data = await api(
         `/api/v1/documents/${params.id}/extraction?organization_id=${list[0].id}`,
       );
@@ -178,13 +181,14 @@ export default function DocumentDetail() {
         "noopener,noreferrer",
       );
   }
+  const isWord = /\.docx$/i.test(filename);
   return (
     <main>
       <Nav current="documents" />
       <div className="detail">
         <section className="viewer">
           <div className="viewerbar">
-            <span>Original PDF</span>
+            <span>{isWord ? "Original Word document" : "Original PDF"}</span>
             {org && (
               <a
                 href={`${API_URL}/api/v1/documents/${params.id}/download?organization_id=${org}`}
@@ -193,7 +197,12 @@ export default function DocumentDetail() {
               </a>
             )}
           </div>
-          {org ? (
+          {org && isWord ? (
+            <p className="panel">
+              Word documents cannot be previewed here. Download the original to read it; each extracted value on the
+              right names the page it came from.
+            </p>
+          ) : org ? (
             <iframe
               title="PDF document"
               src={`${API_URL}/api/v1/documents/${params.id}/download?organization_id=${org}&inline=true`}
