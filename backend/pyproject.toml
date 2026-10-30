@@ -9,7 +9,7 @@ dependencies = [
   "sqlalchemy>=2.0,<3", "uvicorn[standard]>=0.32,<1", "pdf2image>=1.17,<2", "pytesseract>=0.3.13,<1", "pypdf>=6.21.2,<7",
   "jsonschema>=4.23,<5", "defusedxml>=0.7.1,<1", "httpx>=0.28.1,<1", "prometheus-client>=0.21,<1",
   "opentelemetry-api>=1.28,<2", "opentelemetry-sdk>=1.45.1,<2",
-  "opentelemetry-exporter-otlp-proto-http>=1.28,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1.45.1,<2",
   "opentelemetry-instrumentation-fastapi>=0.49b0",
   "opentelemetry-instrumentation-sqlalchemy>=0.49b0",
   "opentelemetry-instrumentation-celery>=0.49b0"
