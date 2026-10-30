@@ -17,7 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 # Vector indexing (app.ingestion.vectorstore); the dev extra also installs it for the tests.
 qdrant = ["qdrant-client>=1.12,<2"]
-ner = ["spacy>=3.7,<4"]  # then: python -m spacy download <PII_SPACY_MODEL>
+ner = ["spacy>=3.8.18,<4"]  # then: python -m spacy download <PII_SPACY_MODEL>
 embeddings = ["fastembed>=0.4,<1"]  # local ONNX embeddings
 dev = ["python-docx>=1.1,<2", "qdrant-client>=1.12,<2", "httpx>=0.28.1", "mypy>=1.13", "pytest>=8.3", "pytest-cov>=5", "ruff>=0.17.2", "types-openpyxl", "types-jsonschema", "pip-audit>=2.7", "bandit>=1.8"]
 [build-system]
