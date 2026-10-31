@@ -99,5 +99,19 @@ and review the diff like code. The scanned-document checks need `tesseract-ocr` 
 * Layout-dependent content (tables, handwriting, stamps) is not covered.
 * Confidence calibration on 81 fields is indicative only; ECE needs a larger set.
 
+## Gemini run (2026-10-30)
+
+`python -m app.evaluation --provider gemini` (needs `GEMINI_API_KEY`; model `gemini-3.1-flash-lite`, the default of `GEMINI_MODEL`). Full report: [evaluation/gemini-report.md](evaluation/gemini-report.md).
+
+| | Result |
+|---|---|
+| Field extraction, no review | precision **96.0 %**, recall **96.0 %**, F1 **96.0 %** (17 documents, 107 annotated fields); the rule baseline scores 91.3 % F1 |
+| Where errors come from | 103 correct, 3 wrong because the text was damaged, 1 wrong even on perfect text |
+| Review gate | catches only **25 %** of wrong fields (load 16.8 % of fields); 3 wrong values were **not** flagged: `contract_digital_01:governing_law`, `contract_digital_02:counterparty`, `scan_contract_3p:governing_law` |
+| Calibration | ECE 0.068 |
+| Time and cost | about 7.7 s per document; roughly $0.0007 per document at the configured prices (placeholders, set current ones) |
+
+What this does **not** prove: the corpus is synthetic (the same documents the baseline was tuned on), one run is not a distribution, and the weak review capture means model confidence alone must not be used to skip human review of contract fields. 23 documents were submitted, 17 scored; the rest are the malformed and unscored cases.
+
 ---
 Relacionado: [[empresa]]
