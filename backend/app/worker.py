@@ -49,6 +49,7 @@ from app.processing import (
     extract_pdf_pages,
     extraction_envelope,
     llm,
+    llm_model,
 )
 from app.provenance import Evidence, evidence_for, evidence_issues
 from app.storage import StorageAccessError, owned_key, storage
@@ -463,7 +464,7 @@ def _commit_success(claim: _Claim, computed: _Computed, log: _StepLog) -> bool:
             organization_id=job.organization_id,
             document_id=document.id,
             provider=provider,
-            model=settings().openai_model if provider == "openai" else None,
+            model=llm_model(),
             result=computed.result,
             schema_version_id=computed.schema_version_id,
             status=RunStatus.completed,
@@ -471,7 +472,9 @@ def _commit_success(claim: _Claim, computed: _Computed, log: _StepLog) -> bool:
             requires_review=bool(computed.issues),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            estimated_cost=estimate_cost(prompt_tokens, completion_tokens) if provider == "openai" else 0.0,
+            estimated_cost=(
+                estimate_cost(prompt_tokens, completion_tokens) if provider in ("openai", "gemini") else 0.0
+            ),
         )
         db.add(run)
         db.flush()

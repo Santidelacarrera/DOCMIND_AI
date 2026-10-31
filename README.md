@@ -82,7 +82,7 @@ docker compose up --build     # applies migrations automatically
 2. In **Documents**, create a project and upload a PDF.
 3. The worker processes it; open the document to review, edit and export the result.
 
-> The default `.env.example` uses `LLM_PROVIDER=mock`, which returns a fixed fixture so the whole flow works offline. Set `LLM_PROVIDER=openai` and `OPENAI_API_KEY` for real extraction.
+> The default `.env.example` uses `LLM_PROVIDER=mock`, which returns a fixed fixture so the whole flow works offline. Set `LLM_PROVIDER=openai` with `OPENAI_API_KEY`, or `LLM_PROVIDER=gemini` with `GEMINI_API_KEY`, for real extraction.
 
 ## Local quickstart (no Docker, no accounts, $0)
 
@@ -236,7 +236,7 @@ All settings are environment variables (see [.env.example](.env.example)).
 | Retention | `RETENTION_DELETED_DAYS`, `RETENTION_DOCUMENT_DAYS` (see [docs/DATA_RETENTION.md](docs/DATA_RETENTION.md)) |
 | Data | `DATABASE_URL`, `REDIS_URL`, `POSTGRES_*` |
 | Storage | `STORAGE_PROVIDER` (`local`\|`s3`), `LOCAL_STORAGE_PATH`, `S3_BUCKET`, `S3_ENDPOINT_URL`, `S3_REGION`, `S3_KMS_KEY_ID`, `AWS_*` |
-| LLM / OCR | `LLM_PROVIDER` (`mock`\|`openai`), `OPENAI_*`, `MAX_OCR_PAGES`, `OCR_TIMEOUT_SECONDS` |
+| LLM / OCR | `LLM_PROVIDER` (`mock`\|`openai`\|`gemini`), `OPENAI_*`, `GEMINI_*`, `MAX_OCR_PAGES`, `OCR_TIMEOUT_SECONDS` |
 | Security | `JWT_SECRET`, `JWT_ALGORITHM`, `ACCESS_TOKEN_MINUTES`, `COOKIE_SECURE`, `COOKIE_SAMESITE`, `CSRF_ENABLED`, `CORS_ORIGINS`, `RATE_LIMIT_*`, `ANTIVIRUS_PROVIDER`, `CLAMAV_*` |
 | Email (invitations) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_USE_TLS`, `SMTP_FROM`, `INVITATION_EXPIRY_HOURS`, `FRONTEND_BASE_URL` |
 | Observability | `LOG_LEVEL`, `LOG_FORMAT`, `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT` (see [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)) |

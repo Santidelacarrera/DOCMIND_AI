@@ -5,11 +5,12 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.evaluation", description=__doc__)
-    parser.add_argument("--provider", choices=["baseline", "openai"], default="baseline",
+    parser.add_argument("--provider", choices=["baseline", "openai", "gemini"], default="baseline",
                         help="baseline = offline rule-based extractor (reproducible, no key); "
                              "openai = real model (needs OPENAI_API_KEY, costs money)")
     parser.add_argument("--output-dir", type=Path, default=Path("eval_reports"))
@@ -24,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
         ENVIRONMENT="development", DATABASE_URL=f"sqlite:///{(work / 'eval.db').as_posix()}",
         LOCAL_STORAGE_PATH=str(work / "uploads"), STORAGE_PROVIDER="local", ANTIVIRUS_PROVIDER="disabled",
         JWT_SECRET="evaluation-secret-evaluation-secret-123", COOKIE_SECURE="false",
-        LLM_PROVIDER="openai" if args.provider == "openai" else "mock",
+        LLM_PROVIDER=args.provider if args.provider in ("openai", "gemini") else "mock",
         FREE_PAGES_PER_MONTH="100000",
         **{k: "100000" for k in ("RATE_LIMIT_LOGIN", "RATE_LIMIT_REGISTER", "RATE_LIMIT_UPLOAD", "RATE_LIMIT_API")},
     )
@@ -35,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
     from app.db import Base, engine
     from app.evaluation import runner
     from app.evaluation.baseline import RuleBasedProvider
-    from app.processing import OpenAIProvider
+    from app.processing import GeminiProvider, OpenAIProvider
 
     class _NoRedis:  # the limiter is irrelevant here; avoid needing a Redis server
         @classmethod
@@ -56,8 +57,9 @@ def main(argv: list[str] | None = None) -> int:
 
     worker.dispatch_webhooks.delay = lambda *a, **k: None  # type: ignore[method-assign,assignment]
     Base.metadata.create_all(engine)
-    provider = OpenAIProvider() if args.provider == "openai" else RuleBasedProvider()
-    name = "openai" if args.provider == "openai" else "baseline-rules"
+    providers: dict[str, Any] = {"openai": OpenAIProvider, "gemini": GeminiProvider, "baseline": RuleBasedProvider}
+    provider = providers[args.provider]()
+    name = "baseline-rules" if args.provider == "baseline" else args.provider
     with TestClient(api.app) as client:
         report = runner.run_evaluation(client, provider, review=not args.no_review, provider_name=name)
     runner.write_reports(report, args.output_dir, f"report-{args.provider}")
