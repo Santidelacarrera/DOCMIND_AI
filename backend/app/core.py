@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     openai_max_output_tokens: int = 2_000
     openai_max_input_chars: int = 100_000
     openai_max_concurrency: int = 4
+    # Google Gemini through its OpenAI-compatible endpoint (LLM_PROVIDER=gemini).
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3.1-flash-lite"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    gemini_input_price_per_1m: float = 0.30
+    gemini_output_price_per_1m: float = 2.50
     cors_origins: str = "http://localhost:3000"
     jwt_secret: str | None = None
     # Optional second layer for /metrics (the ingress must still restrict the network). Unset = open, as before.
@@ -178,6 +184,8 @@ class Settings(BaseSettings):
                 )
             if self.llm_provider == "openai" and not self.openai_api_key:
                 raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
+            if self.llm_provider == "gemini" and not self.gemini_api_key:
+                raise ValueError("GEMINI_API_KEY is required when LLM_PROVIDER=gemini")
             if self.antivirus_provider == "disabled":
                 raise ValueError("ANTIVIRUS_PROVIDER must be configured in staging/production")
             if self.qdrant_url:
