@@ -18,3 +18,11 @@ Decididas por el propietario del proyecto, que delegó la elección en el asiste
 * **Evaluación con LLM real**: la clave `OPENAI_API_KEY` del `.env` local está vacía; falta una clave. Comando: `python -m app.evaluation --provider openai`.
 * **RLS**: implementar la migración por fases (decisión 4).
 * **Veredicto**: sigue siendo "apto para piloto controlado, no para producción" hasta cerrar los dos puntos anteriores.
+
+## Addendum 2026-10-31
+
+| # | Tema | Decisión | Estado |
+|---|---|---|---|
+| 5 | LLM y datos | Se usa la **API gratuita de Gemini** (`gemini-3.1-flash-lite`); coste registrado 0. **Límite:** Google puede usar el contenido de la capa gratuita para mejorar sus productos, así que solo con documentos sintéticos o no confidenciales. Para clientes reales hay que pasar a la capa de pago o Vertex AI (retención cero, acuerdo de tratamiento de datos) y fijar los precios vigentes. | Decidido por el propietario; la restricción es condición de salida a producción |
+| 6 | Licencia | Propietaria, todos los derechos reservados, titular Santiago de la Carrera (`LICENSE`, `docs/LICENSING.md`) | Decidida; revisión jurídica pendiente |
+| 7 | Revisión obligatoria | `ALWAYS_REVIEW_FIELDS=governing_law,counterparty`: siempre a revisión humana con valor, sea cual sea la confianza | Implementada |

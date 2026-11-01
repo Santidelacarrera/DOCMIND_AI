@@ -48,6 +48,7 @@ def validate_fields(
     issues.extend(_schema_issues(json_schema, fields))
     issues.extend(_unexpected_field_issues(json_schema, fields))
     issues.extend(_confidence_issues(fields, confidence or {}))
+    issues.extend(_mandatory_review_issues(fields))
     return issues
 
 
@@ -159,6 +160,20 @@ def _confidence_issues(
                 }
             )
     return issues
+
+
+def _mandatory_review_issues(fields: dict[str, Any]) -> list[dict[str, Any]]:
+    """Fields that are always confirmed by a person, independent of the model's confidence."""
+    mandatory = {n.strip() for n in settings().always_review_fields.split(",") if n.strip()}
+    return [
+        {
+            "field": name,
+            "rule": "mandatory_review",
+            "message": "This field type is always confirmed by a person.",
+        }
+        for name in fields
+        if name in mandatory and fields[name] is not None
+    ]
 
 
 def clamp_confidence(value: Any) -> float | None:
