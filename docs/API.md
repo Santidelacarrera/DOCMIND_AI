@@ -91,7 +91,8 @@ A schema can have multiple versions (`POST /schemas/{id}/versions`); `GET /schem
 Every extraction asks the model for a 0–1 confidence score per field alongside the value itself (`ExtractionField.confidence`, also in the `GET .../extraction` response). Right after extraction, two independent checks run before the result is considered final:
 
 1. **JSON Schema conformance** — the extracted `fields` object is validated against the resolved schema version (`app.validation.validate_fields`).
-2. **Confidence thresholding** — any field below `CONFIDENCE_REVIEW_THRESHOLD` (default `0.70`) is flagged, regardless of schema validity.
+2. **Mandatory review** — fields named in `ALWAYS_REVIEW_FIELDS` (default `governing_law,counterparty`) are always flagged when they have a value, because the evaluation showed the model is confidently wrong on them.
+3. **Confidence thresholding** — any field below `CONFIDENCE_REVIEW_THRESHOLD` (default `0.70`) is flagged, regardless of schema validity.
 
 Neither check blocks persistence — the run is still saved with whatever the model returned — but a run with any issue is marked `requires_review: true`, and `GET /documents/{id}/extraction` returns both that flag and the `validation_issues` list (`{field, rule, message}`) so a reviewer or an automated pipeline can route it before trusting it.
 

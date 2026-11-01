@@ -44,8 +44,9 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.1-flash-lite"
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    gemini_input_price_per_1m: float = 0.30
-    gemini_output_price_per_1m: float = 2.50
+    # Free tier costs nothing; set the real prices when moving to a paid tier or Vertex AI.
+    gemini_input_price_per_1m: float = 0.0
+    gemini_output_price_per_1m: float = 0.0
     cors_origins: str = "http://localhost:3000"
     jwt_secret: str | None = None
     # Optional second layer for /metrics (the ingress must still restrict the network). Unset = open, as before.
@@ -59,6 +60,9 @@ class Settings(BaseSettings):
     clamav_host: str = "localhost"
     clamav_port: int = 3310
     confidence_review_threshold: float = 0.70
+    # Fields a human must always confirm, whatever confidence the model reports: the
+    # evaluation showed the model is confidently wrong on these in contracts.
+    always_review_fields: str = "governing_law,counterparty"
     # Mean OCR word confidence (0-1) below which a scanned document is sent to human review.
     ocr_review_threshold: float = 0.80
     # What to do with an LLM answer that violates the tenant's JSON Schema:

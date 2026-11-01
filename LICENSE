@@ -1,21 +1,28 @@
-MIT License
+DocMind AI — Proprietary Software License
 
-Copyright (c) 2026 DocMind AI contributors
+Copyright (c) 2026 Santiago de la Carrera. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This software and its documentation (the "Software") are proprietary and
+confidential. No licence is granted except as stated here or in a separate
+written agreement signed by the copyright holder.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Permitted use. The copyright holder, and people the copyright holder
+   authorises in writing, may use, copy and modify the Software for the
+   development, testing and operation of DocMind AI.
+2. Restrictions. Without prior written permission you may not copy,
+   distribute, sublicense, sell, host as a service for third parties, publish,
+   or disclose the Software or any part of it, and you may not remove this
+   notice.
+3. Contributions. Anyone who contributes code, documentation or other material
+   assigns to the copyright holder all rights in that contribution, or grants
+   an exclusive, perpetual, irrevocable, worldwide licence to it.
+4. Third-party components. The Software depends on open-source components that
+   remain under their own licences (see docs/LICENSING.md). Nothing here
+   changes those licences.
+5. No warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR
+   A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT
+   HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM THE
+   USE OF THE SOFTWARE.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Commercial licences for customers are granted by separate written agreement.

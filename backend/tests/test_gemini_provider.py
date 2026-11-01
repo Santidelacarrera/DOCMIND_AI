@@ -133,11 +133,12 @@ def test_missing_key_fails_before_any_request(stub_gemini, monkeypatch: pytest.M
     assert stub_gemini.calls == []
 
 
-def test_provider_selection_model_name_and_pricing(stub_gemini) -> None:
+def test_provider_selection_model_name_and_pricing(stub_gemini, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings(), "gemini_input_price_per_1m", 0.5)
     assert isinstance(llm(), GeminiProvider)
     assert llm_model() == settings().gemini_model
     expected = round(1_000_000 / 1_000_000 * settings().gemini_input_price_per_1m, 6)
-    assert estimate_cost(1_000_000, 0) == expected
+    assert expected == 0.5 and estimate_cost(1_000_000, 0) == expected
 
 
 def test_staging_requires_a_gemini_key() -> None:
