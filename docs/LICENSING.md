@@ -1,6 +1,6 @@
 # Licencia y estrategia de distribución
 
-**Estado:** recomendación. **No se ha cambiado la licencia.** Cambiarla requiere decidir la titularidad y la intención comercial, que el propio repositorio no deja claras.
+**Estado (2026-10-31): decidido.** El propietario delegó la elección; se adopta la licencia **propietaria, todos los derechos reservados**, con titular Santiago de la Carrera (`LICENSE`). Motivo: el objetivo es vender una plataforma documental empresarial, MIT permitiría a cualquiera revenderla y AGPL complica la licencia comercial. Las licencias para clientes se otorgan por contrato aparte; las aportaciones externas ceden sus derechos (cláusula 3). **Pendiente, no es asesoramiento jurídico:** que un abogado revise el texto y el titular definitivo (persona o empresa) antes de vender. Mantener el repositorio privado. El análisis siguiente es el que motivó la decisión.
 
 ## Lo que dice el repositorio hoy
 

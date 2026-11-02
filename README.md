@@ -8,7 +8,7 @@ A product of **Nexus Security & AI Lab**. Local processing, cost $0 by default.
 
 [![CI](https://github.com/Santidelacarrera/DOCMIND_AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Santidelacarrera/DOCMIND_AI/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Santidelacarrera/DOCMIND_AI/actions/workflows/codeql.yml/badge.svg)](https://github.com/Santidelacarrera/DOCMIND_AI/actions/workflows/codeql.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)](https://nextjs.org/)
@@ -232,7 +232,7 @@ All settings are environment variables (see [.env.example](.env.example)).
 | Group | Variables |
 |---|---|
 | Application | `ENVIRONMENT`, `MAX_UPLOAD_BYTES`, `MAX_PDF_PAGES`, `MAX_PDF_TEXT_CHARS`, `PROCESSING_TIMEOUT_SECONDS`, `STUCK_JOB_SECONDS`, `QUEUED_STUCK_SECONDS`, `MAX_JOB_RECOVERIES`, `FREE_PAGES_PER_MONTH` |
-| Quality / review | `CONFIDENCE_REVIEW_THRESHOLD`, `OCR_REVIEW_THRESHOLD`, `SCHEMA_VIOLATION_POLICY` (`review`\|`reject`), `LLM_INVALID_OUTPUT_RETRIES`, `OPENAI_INPUT_PRICE_PER_1M`, `OPENAI_OUTPUT_PRICE_PER_1M` |
+| Quality / review | `CONFIDENCE_REVIEW_THRESHOLD`, `ALWAYS_REVIEW_FIELDS`, `OCR_REVIEW_THRESHOLD`, `SCHEMA_VIOLATION_POLICY` (`review`\|`reject`), `LLM_INVALID_OUTPUT_RETRIES`, `OPENAI_INPUT_PRICE_PER_1M`, `OPENAI_OUTPUT_PRICE_PER_1M` |
 | Retention | `RETENTION_DELETED_DAYS`, `RETENTION_DOCUMENT_DAYS` (see [docs/DATA_RETENTION.md](docs/DATA_RETENTION.md)) |
 | Data | `DATABASE_URL`, `REDIS_URL`, `POSTGRES_*` |
 | Storage | `STORAGE_PROVIDER` (`local`\|`s3`), `LOCAL_STORAGE_PATH`, `S3_BUCKET`, `S3_ENDPOINT_URL`, `S3_REGION`, `S3_KMS_KEY_ID`, `AWS_*` |
@@ -334,4 +334,4 @@ See [docs/decisions/](docs/decisions/) for ADRs.
 
 ## Contributing and license
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Released under the [MIT License](LICENSE). Maintained by **Nexus Security & AI Lab**.
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Proprietary software, all rights reserved — see [LICENSE](LICENSE) and [docs/LICENSING.md](docs/LICENSING.md). Maintained by **Nexus Security & AI Lab**.
