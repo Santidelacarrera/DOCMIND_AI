@@ -59,6 +59,24 @@ Ver `.env.example` para la lista completa y los valores de desarrollo.
 * **PostgreSQL, verificado:** `pg_dump -Fc docmind_e2e` y `pg_restore --no-owner` en una base nueva. Los conteos de `users`, `documents`, `extraction_fields`, `contextrag_events` y `audit_logs` coincidieron (51, 190, 736, 178, 324).
 * **Almacenamiento, no verificado:** el volcado de PostgreSQL no incluye los archivos. Hay que copiar el bucket con versionado. Después, `python -m app.reconcile --dry-run` debe mostrar `orphans: 0` y `rows_without_object` sin documentos vivos.
 * **Restauración completa:** restaurar la base en un entorno aislado, restaurar los objetos de la misma fecha, ejecutar migraciones, verificar `/ready` y una descarga de un documento propio. No verificada en un entorno real.
+* **Base + archivos, verificado en local el 2026-11-10** (stack de `docker-compose.yml`, almacenamiento `local`, datos de prueba sintéticos). Copia y restauración en una base y un volumen **nuevos**, sin tocar los originales:
+
+  ```bash
+  # copia (en Git Bash, export MSYS_NO_PATHCONV=1 antes)
+  docker compose exec -T db pg_dump -U docmind -Fc docmind > docmind.dump
+  docker run --rm -v <proyecto>_documents:/data:ro -v "$PWD:/backup" alpine:3.21 tar -C /data -czf /backup/documents.tgz .
+  # restauración en destino nuevo
+  docker compose exec -T db psql -U docmind -d postgres -c "create database docmind_restore_check"
+  docker compose exec -T db pg_restore -U docmind --no-owner -d docmind_restore_check < docmind.dump
+  docker volume create <proyecto>_documents_restore
+  docker run --rm -v <proyecto>_documents_restore:/data -v "$PWD:/backup:ro" alpine:3.21 tar -C /data -xzf /backup/documents.tgz
+  # comprobación a nivel de aplicación contra lo restaurado
+  docker run --rm --network <proyecto>_default -v <proyecto>_documents_restore:/data/documents --env-file .env     -e DATABASE_URL=postgresql+psycopg://docmind:<password>@db:5432/docmind_restore_check -e QDRANT_URL=     <proyecto>-api python -m app.reconcile --dry-run
+  ```
+
+  Resultado: conteos iguales en `users` 5, `organizations` 5, `documents` 3, `document_versions` 3, `extraction_fields` 12, `audit_logs` 15; los 3 objetos presentes con SHA-256 idéntico; `reconcile --dry-run` → `objects: 3, orphans: 0, rows_without_object: 0`. Control negativo: con el volumen vacío el mismo verificador informó 3 objetos ausentes.
+* **Qdrant:** los vectores son datos derivados. No se respaldan: tras restaurar, se reconstruyen reprocesando cada documento (`POST /documents/{id}/process`), que vuelve a indexarlo. `scripts/backfill_vector_projects.py` no reindexa: solo marca el proyecto en vectores existentes. **No verificado:** snapshot y restauración de Qdrant.
+* **S3 y KMS:** siguen sin verificar (sin cuenta).
 
 ### Observabilidad
 

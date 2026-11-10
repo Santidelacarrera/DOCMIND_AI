@@ -364,6 +364,18 @@ def test_ask_returns_the_answer_with_document_and_page(client, register, indexed
     assert data["citations"][0]["document_id"] == body["document_id"] and data["citations"][0]["label"] == "contrato.docx, p.2"
 
 
+def test_ask_citation_locates_the_supporting_fragment(client, register, indexed) -> None:
+    """Each citation carries the chunk position and the quoted sentence, which is in that chunk."""
+    acct, body = _ready(register, indexed)
+    data = client.post(f"/api/v1/ask?organization_id={acct.org}", json={"question": "¿Cuál es el plazo de entrega?"}, headers=acct.headers).json()
+    cite = data["citations"][0]
+    assert isinstance(cite["chunk_index"], int) and cite["chunk_index"] >= 0
+    assert cite["excerpt"] and cite["excerpt"] in data["answer"]
+    chunks = [h for h in indexed.store.search(acct.org, indexed.query_vector(tenant_id=acct.org, question="plazo entrega"), limit=8)
+              if h["document_id"] == body["document_id"] and h["chunk_index"] == cite["chunk_index"]]
+    assert chunks and cite["excerpt"] in chunks[0]["text"] and chunks[0]["page"] == cite["page"]
+
+
 def test_ask_abstains_with_no_citations_when_nothing_matches(client, register, indexed) -> None:
     acct, _ = _ready(register, indexed)
     data = client.post(f"/api/v1/ask?organization_id={acct.org}", json={"question": "¿Quién ganó el mundial de 1998?"}, headers=acct.headers).json()

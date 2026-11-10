@@ -4,8 +4,8 @@
 # Network layout
 #   edge     reachable from the host / ingress; api and web publish here and the api and
 #            worker use it for outbound traffic (object storage, LLM provider, ClamAV).
-#   backend  internal-only; the bundled db and redis live here and have no egress.
-# With managed PostgreSQL/Redis the bundled db/redis services are simply unused.
+#   backend  internal-only; the bundled db, redis and qdrant live here and have no egress.
+# With managed PostgreSQL/Redis/Qdrant the bundled db/redis/qdrant services are simply unused.
 services:
   api:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
@@ -62,6 +62,10 @@ services:
     networks: [edge]
   db:
     restart: unless-stopped
+    networks: [backend]
+  qdrant:
+    restart: unless-stopped
+    # Internal only. With a managed Qdrant set QDRANT_URL/QDRANT_API_KEY and leave this unused.
     networks: [backend]
   redis:
     restart: unless-stopped

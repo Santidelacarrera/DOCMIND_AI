@@ -1,0 +1,436 @@
+{
+  "questions": 28,
+  "answerable": 20,
+  "must_abstain": 8,
+  "metrics": {
+    "recall@1": 0.9,
+    "precision@1": 0.9,
+    "recall@3": 0.95,
+    "precision@3": 0.3167,
+    "recall@5": 0.95,
+    "precision@5": 0.19,
+    "mrr": 0.9167,
+    "context_relevance": 0.4217,
+    "fact_accuracy": 0.85,
+    "citation_accuracy": 0.85,
+    "citation_precision": 1.0,
+    "faithfulness": 1.0,
+    "false_abstention_rate": 0.15,
+    "abstention_accuracy": 1.0,
+    "cross_tenant_leaks": 0
+  },
+  "by_category": {
+    "cross_tenant": {
+      "questions": 5,
+      "correct": 5
+    },
+    "factual": {
+      "questions": 16,
+      "correct": 16
+    },
+    "paraphrase": {
+      "questions": 4,
+      "correct": 1
+    },
+    "unanswerable": {
+      "questions": 3,
+      "correct": 3
+    }
+  },
+  "embedder": "hashing-256",
+  "top_k": 5,
+  "corpus": {
+    "documents": 6,
+    "version": 1
+  },
+  "results": [
+    {
+      "tenant": "aurora",
+      "category": "factual",
+      "question": "¿Cuántos días de vacaciones tienen los empleados?",
+      "expected": [
+        "politica_vacaciones.docx, p.2"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "politica_vacaciones.docx, p.2"
+      ],
+      "abstained": false,
+      "answer": "Los empleados tienen derecho a 23 días laborables de vacaciones al año.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "factual",
+      "question": "¿Con cuánta antelación se envían las solicitudes de vacaciones?",
+      "expected": [
+        "politica_vacaciones.docx, p.2"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "politica_vacaciones.docx, p.2"
+      ],
+      "abstained": false,
+      "answer": "Las solicitudes de vacaciones se envían con 15 días de antelación al departamento de personas.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "factual",
+      "question": "¿Cuántos días de vacaciones se pueden trasladar al año siguiente?",
+      "expected": [
+        "politica_vacaciones.docx, p.3"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "politica_vacaciones.docx, p.3"
+      ],
+      "abstained": false,
+      "answer": "Se pueden trasladar hasta 5 días de vacaciones al año siguiente, antes del 31 de marzo.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "factual",
+      "question": "¿Cuál es la duración del contrato de servicios?",
+      "expected": [
+        "contrato_servicios.pdf, p.2"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "contrato_servicios.pdf, p.2"
+      ],
+      "abstained": false,
+      "answer": "La duración del contrato de servicios es de 24 meses a partir del 1 de marzo de 2026.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "factual",
+      "question": "¿Cuál es el precio total del contrato?",
+      "expected": [
+        "contrato_servicios.pdf, p.3"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "contrato_servicios.pdf, p.3"
+      ],
+      "abstained": false,
+      "answer": "El precio total del contrato es de 48.000 euros, pagaderos trimestralmente.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "factual",
+      "question": "¿Con cuántos días de preaviso se puede resolver el contrato?",
+      "expected": [
+        "contrato_servicios.pdf, p.4"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "contrato_servicios.pdf, p.4"
+      ],
+      "abstained": false,
+      "answer": "Cualquiera de las partes puede resolver el contrato con 60 días de preaviso por escrito.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "factual",
+      "question": "¿Por qué legislación se rige el contrato?",
+      "expected": [
+        "contrato_servicios.pdf, p.4"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "contrato_servicios.pdf, p.4"
+      ],
+      "abstained": false,
+      "answer": "El contrato se rige por la legislación española y los tribunales de Madrid.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "factual",
+      "question": "¿Cada cuántos días deben cambiarse las contraseñas?",
+      "expected": [
+        "manual_seguridad.pdf, p.1"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "manual_seguridad.pdf, p.1"
+      ],
+      "abstained": false,
+      "answer": "MANUAL DE SEGURIDAD Las contraseñas deben tener al menos 14 caracteres y cambiarse cada 90 días.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "factual",
+      "question": "¿En cuánto tiempo se notifican los incidentes de seguridad?",
+      "expected": [
+        "manual_seguridad.pdf, p.2"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "manual_seguridad.pdf, p.2"
+      ],
+      "abstained": false,
+      "answer": "Los incidentes de seguridad se notifican al equipo de respuesta en un máximo de 24 horas.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "factual",
+      "question": "¿Durante cuántos días se conservan las copias de seguridad?",
+      "expected": [
+        "manual_seguridad.pdf, p.3"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "manual_seguridad.pdf, p.3"
+      ],
+      "abstained": false,
+      "answer": "Las copias de seguridad de los servidores se realizan cada noche y se conservan durante 30 días.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "factual",
+      "question": "¿Cuántos presupuestos requiere una compra superior a 3.000 euros?",
+      "expected": [
+        "procedimiento_compras.pdf, p.1"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "procedimiento_compras.pdf, p.1"
+      ],
+      "abstained": false,
+      "answer": "PROCEDIMIENTO DE COMPRAS Toda compra superior a 3.000 euros requiere tres presupuestos de proveedores distintos.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "factual",
+      "question": "¿A cuántos días se pagan las facturas de proveedores?",
+      "expected": [
+        "procedimiento_compras.pdf, p.2"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "procedimiento_compras.pdf, p.2"
+      ],
+      "abstained": false,
+      "answer": "Las facturas de proveedores se pagan a 45 días desde la fecha de recepción.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "factual",
+      "question": "¿Quién aprueba las compras superiores a 20.000 euros?",
+      "expected": [
+        "procedimiento_compras.pdf, p.3"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "procedimiento_compras.pdf, p.3"
+      ],
+      "abstained": false,
+      "answer": "El director financiero aprueba las compras superiores a 20.000 euros.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "paraphrase",
+      "question": "¿Qué longitud mínima deben tener las contraseñas?",
+      "expected": [
+        "manual_seguridad.pdf, p.1"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "manual_seguridad.pdf, p.1"
+      ],
+      "abstained": false,
+      "answer": "MANUAL DE SEGURIDAD Las contraseñas deben tener al menos 14 caracteres y cambiarse cada 90 días.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "paraphrase",
+      "question": "¿Cuánto cuesta en total el servicio contratado?",
+      "expected": [
+        "contrato_servicios.pdf, p.3"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [],
+      "abstained": true,
+      "answer": "No encontré información sobre eso en los documentos disponibles.",
+      "notes": [
+        "abstained"
+      ]
+    },
+    {
+      "tenant": "aurora",
+      "category": "paraphrase",
+      "question": "¿Cuánto tiempo dura el acuerdo con el cliente?",
+      "expected": [
+        "contrato_servicios.pdf, p.2"
+      ],
+      "first_relevant_rank": null,
+      "citations": [],
+      "abstained": true,
+      "answer": "No encontré información sobre eso en los documentos disponibles.",
+      "notes": [
+        "retrieval_miss"
+      ]
+    },
+    {
+      "tenant": "aurora",
+      "category": "paraphrase",
+      "question": "¿Con qué frecuencia se hacen los backups de los servidores?",
+      "expected": [
+        "manual_seguridad.pdf, p.3"
+      ],
+      "first_relevant_rank": 3,
+      "citations": [],
+      "abstained": true,
+      "answer": "No encontré información sobre eso en los documentos disponibles.",
+      "notes": [
+        "abstained"
+      ]
+    },
+    {
+      "tenant": "orion",
+      "category": "factual",
+      "question": "¿Cuántos días de vacaciones tienen los empleados?",
+      "expected": [
+        "politica_vacaciones.pdf, p.1"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "politica_vacaciones.pdf, p.1"
+      ],
+      "abstained": false,
+      "answer": "VACATION POLICY Los empleados tienen derecho a 30 días laborables de vacaciones al año.",
+      "notes": []
+    },
+    {
+      "tenant": "orion",
+      "category": "factual",
+      "question": "¿Cuántos días por semana está permitido el teletrabajo?",
+      "expected": [
+        "codigo_conducta.docx, p.2"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "codigo_conducta.docx, p.2"
+      ],
+      "abstained": false,
+      "answer": "El teletrabajo está permitido hasta 3 días por semana con acuerdo del responsable.",
+      "notes": []
+    },
+    {
+      "tenant": "orion",
+      "category": "factual",
+      "question": "¿A partir de qué valor deben declararse los regalos de proveedores?",
+      "expected": [
+        "codigo_conducta.docx, p.1"
+      ],
+      "first_relevant_rank": 1,
+      "citations": [
+        "codigo_conducta.docx, p.1"
+      ],
+      "abstained": false,
+      "answer": "CÓDIGO DE CONDUCTA Los regalos de proveedores con un valor superior a 50 euros deben declararse al comité de ética.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "unanswerable",
+      "question": "¿Cuál es el color favorito del gerente?",
+      "expected": [],
+      "first_relevant_rank": null,
+      "citations": [],
+      "abstained": true,
+      "answer": "No encontré información sobre eso en los documentos disponibles.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "unanswerable",
+      "question": "¿Cuántas plazas de aparcamiento tiene la oficina?",
+      "expected": [],
+      "first_relevant_rank": null,
+      "citations": [],
+      "abstained": true,
+      "answer": "No encontré información sobre eso en los documentos disponibles.",
+      "notes": []
+    },
+    {
+      "tenant": "orion",
+      "category": "unanswerable",
+      "question": "¿Qué seguro médico ofrece la empresa?",
+      "expected": [],
+      "first_relevant_rank": null,
+      "citations": [],
+      "abstained": true,
+      "answer": "No encontré información sobre eso en los documentos disponibles.",
+      "notes": []
+    },
+    {
+      "tenant": "orion",
+      "category": "cross_tenant",
+      "question": "¿Cuál es el precio total del contrato de servicios?",
+      "expected": [],
+      "first_relevant_rank": null,
+      "citations": [],
+      "abstained": true,
+      "answer": "No encontré información sobre eso en los documentos disponibles.",
+      "notes": []
+    },
+    {
+      "tenant": "orion",
+      "category": "cross_tenant",
+      "question": "¿Cada cuántos días deben cambiarse las contraseñas?",
+      "expected": [],
+      "first_relevant_rank": null,
+      "citations": [],
+      "abstained": true,
+      "answer": "No encontré información sobre eso en los documentos disponibles.",
+      "notes": []
+    },
+    {
+      "tenant": "orion",
+      "category": "cross_tenant",
+      "question": "¿Quién aprueba las compras superiores a 20.000 euros?",
+      "expected": [],
+      "first_relevant_rank": null,
+      "citations": [],
+      "abstained": true,
+      "answer": "No encontré información sobre eso en los documentos disponibles.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "cross_tenant",
+      "question": "¿A partir de qué valor deben declararse los regalos de proveedores al comité de ética?",
+      "expected": [],
+      "first_relevant_rank": null,
+      "citations": [],
+      "abstained": true,
+      "answer": "No encontré información sobre eso en los documentos disponibles.",
+      "notes": []
+    },
+    {
+      "tenant": "aurora",
+      "category": "cross_tenant",
+      "question": "¿Cuántos días por semana está permitido el teletrabajo?",
+      "expected": [],
+      "first_relevant_rank": null,
+      "citations": [],
+      "abstained": true,
+      "answer": "No encontré información sobre eso en los documentos disponibles.",
+      "notes": []
+    }
+  ]
+}
