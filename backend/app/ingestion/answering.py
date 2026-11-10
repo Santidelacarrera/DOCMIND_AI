@@ -28,6 +28,12 @@ _STOP = frozenset(
 _WORD = re.compile(r"[\wáéíóúñü]+", re.IGNORECASE)
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
 EXCERPT_CHARS = 300  # bound on the quoted supporting sentence returned with each citation
+# Semantic evidence thresholds, measured per model with app.evaluation.rag (ADR-003). Similarity
+# scales differ between models: bge-small-en scores unrelated Spanish sentences above 0.5, so a
+# threshold is only trusted for the model it was measured on. Others use the lexical rule.
+CALIBRATED_SIMILARITY = {
+    "local:sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2": 0.5,
+}
 
 
 @dataclass(frozen=True)
@@ -107,15 +113,67 @@ def _best_sentences(
     scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
     if not scored or total <= 0 or coverage(scored[0][2]) < min_coverage:
         return []
+    return _pick(scored, limit, 0.75)
+
+
+def _pick(
+    scored: list[tuple[float, int, str, dict[str, Any]]], limit: int, keep: float,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Best-first sentences; a further one only if it scores at least ``keep`` x the best."""
     picked: list[tuple[str, dict[str, Any]]] = []
     for score, _, sentence, hit in scored:
-        if picked and score < 0.75 * scored[0][0]:
+        if picked and score < keep * scored[0][0]:
             break
         if all(sentence != p[0] for p in picked):
             picked.append((sentence, hit))
         if len(picked) == limit:
             break
     return picked
+
+
+def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
+    norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
+    return sum(x * y for x, y in zip(a, b, strict=True)) / norm if norm else 0.0
+
+
+def _best_sentences_semantic(
+    question: str, hits: Sequence[dict[str, Any]], question_vector: Sequence[float],
+    embed: Callable[[list[str]], list[list[float]]], *, limit: int = 2,
+    min_coverage: float = 0.5, min_similarity: float = 0.5,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Like :func:`_best_sentences`, ranked by meaning (cosine with the question vector).
+
+    Used only with a semantic embedder. Sufficient evidence: the best sentence covers at least
+    ``min_coverage`` of the question's terms (the lexical rule) **or** is at least
+    ``min_similarity`` similar in meaning, so a paraphrase with no shared words can be answered,
+    while a sentence about something else still abstains (docs/decisions/ADR-003).
+    """
+    candidates = [
+        (sentence, rank, hit)
+        for rank, hit in enumerate(hits)
+        for sentence in (s.strip() for s in _SENTENCE.split(str(hit.get("text", ""))))
+        if len(sentence) > 15
+    ]
+    if not candidates:
+        return []
+    vectors = embed([sentence for sentence, _, _ in candidates])
+    scored = sorted(
+        ((_cosine(question_vector, v), -rank, sentence, hit) for (sentence, rank, hit), v in zip(candidates, vectors, strict=True)),
+        key=lambda t: (t[0], t[1]), reverse=True,
+    )
+    best = scored[0]
+    if best[0] < min_similarity and _coverage(question, hits, best[2]) < min_coverage:
+        return []
+    return _pick(scored, limit, 0.95)
+
+
+def _coverage(question: str, hits: Sequence[dict[str, Any]], sentence: str) -> float:
+    """Share of the question's rarity-weighted terms that ``sentence`` contains (see _best_sentences)."""
+    wanted = terms(question)
+    per_chunk = [terms(str(h.get("text", ""))) for h in hits]
+    weight = {t: math.log(1 + len(hits) / max(1, sum(t in c for c in per_chunk))) for t in wanted}
+    total = sum(weight.values())
+    return sum(weight[t] for t in wanted & terms(sentence)) / total if total else 0.0
 
 
 def answer(
@@ -129,6 +187,7 @@ def answer(
     project_id: str | None = None,
     project_ids: Sequence[str] | None = None,
     min_coverage: float = 0.5,
+    min_similarity: float | None = None,
 ) -> Answer:
     """Answer ``question`` from this tenant's documents only.
 
@@ -144,13 +203,26 @@ def answer(
 
     ``min_coverage`` is the sufficient-evidence threshold (see :func:`_best_sentences`); the API
     passes ``ASK_MIN_EVIDENCE_COVERAGE``. 0 restores the old "any shared term" behaviour.
+    With a semantic embedder (``embedder.semantic``) that has a threshold -- ``min_similarity``
+    (``ASK_MIN_SEMANTIC_SIMILARITY``) or, when that is ``None``, its entry in
+    :data:`CALIBRATED_SIMILARITY` -- sentences are ranked by meaning and that similarity is a second
+    way to be sufficient evidence. Without a threshold the lexical rule alone applies.
     """
     question = question.strip()
-    hits = retrieve(
+    hits, vector = _retrieve(
         pipeline, tenant_id=tenant_id, question=question, top_k=top_k, min_score=min_score,
         is_live=is_live, project_id=project_id, project_ids=project_ids,
     )
-    picked = _best_sentences(question, hits, min_coverage=min_coverage)
+    threshold = min_similarity if min_similarity is not None else CALIBRATED_SIMILARITY.get(
+        str(getattr(pipeline.embedder, "name", ""))
+    )
+    if vector is not None and threshold is not None and getattr(pipeline.embedder, "semantic", False):
+        picked = _best_sentences_semantic(
+            question, hits, vector, pipeline.embedder.embed,
+            min_coverage=min_coverage, min_similarity=threshold,
+        )
+    else:
+        picked = _best_sentences(question, hits, min_coverage=min_coverage)
     if not picked:
         return Answer(question, ABSTENTION, (), True)
     citations: list[Citation] = []
@@ -188,6 +260,24 @@ def retrieve(
     Exposed so the RAG evaluation (``app.evaluation.rag``) measures the exact production retrieval
     path instead of a copy of it. Same scope rules as :func:`answer`.
     """
+    return _retrieve(
+        pipeline, tenant_id=tenant_id, question=question, top_k=top_k, min_score=min_score,
+        is_live=is_live, project_id=project_id, project_ids=project_ids,
+    )[0]
+
+
+def _retrieve(
+    pipeline: IngestionPipeline,
+    *,
+    tenant_id: str,
+    question: str,
+    top_k: int,
+    min_score: float,
+    is_live: Callable[[str], bool] | None,
+    project_id: str | None,
+    project_ids: Sequence[str] | None,
+) -> tuple[list[dict[str, Any]], list[float] | None]:
+    """Hits plus the (masked) question vector, so ``answer()`` does not embed the question twice."""
     if project_id is not None and project_ids is not None:
         raise ValueError("ONE_SCOPE_ONLY")
     tenant = parse_tenant(tenant_id)
@@ -195,9 +285,9 @@ def retrieve(
     allowed = {parse_tenant(p) for p in project_ids} if project_ids is not None else None
     question = question.strip()
     if not terms(question) or (allowed is not None and not allowed):
-        return []
+        return [], None
     vector = pipeline.query_vector(tenant_id=tenant, question=question)
-    return [
+    hits = [
         h for h in pipeline.store.search(
             tenant, vector, limit=top_k, project_id=project,
             project_ids=sorted(allowed) if allowed is not None else None,
@@ -207,3 +297,4 @@ def retrieve(
         and (allowed is None or h.get("project_id") in allowed)
         and (is_live is None or is_live(str(h.get("document_id"))))
     ]
+    return hits, vector

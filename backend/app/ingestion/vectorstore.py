@@ -22,6 +22,17 @@ TENANT_KEY = "tenant_id"
 PROJECT_KEY = "project_id"  # the case a chunk belongs to; project-scoped queries require it
 
 
+class EmbeddingModelMismatch(ValueError):
+    """The collection holds vectors of another embedding model. Two models of the same dimension
+    (bge-small-en and multilingual MiniLM are both 384) would otherwise be mixed silently, and a
+    query in one vector space against points of another returns plausible-looking nonsense."""
+
+    code = "EMBEDDING_MODEL_MISMATCH"
+
+    def __init__(self) -> None:
+        super().__init__(self.code)
+
+
 @dataclass(frozen=True)
 class Point:
     id: str
@@ -54,7 +65,8 @@ def to_point(chunk: Chunk, vector: Sequence[float], *, embedding_model: str = ""
 
 
 class VectorStore(Protocol):
-    def ensure_collection(self, dimension: int) -> None: ...
+    def ensure_collection(self, dimension: int, model: str = "") -> None: ...
+    def assert_model(self, model: str) -> None: ...
     def upsert(self, tenant_id: str, points: Sequence[Point]) -> None: ...
     def delete_document(self, tenant_id: str, document_id: str) -> None: ...
     def search(
@@ -80,8 +92,23 @@ class QdrantStore:
     def __init__(self, client: Any, collection: str) -> None:
         self._c = client
         self._collection = collection
+        self._model_ok: str | None = None
 
-    def ensure_collection(self, dimension: int) -> None:
+    def assert_model(self, model: str) -> None:
+        """Refuse to mix models: any point produced by another model raises
+        :class:`EmbeddingModelMismatch`. Checked once per store instance and model."""
+        if not model or self._model_ok == model:
+            return
+        if self._c.collection_exists(self._collection):
+            from qdrant_client import models
+
+            other = models.Filter(must_not=[models.FieldCondition(key="embedding_model", match=models.MatchValue(value=model))])
+            points, _ = self._c.scroll(self._collection, scroll_filter=other, limit=1, with_payload=False)
+            if points:
+                raise EmbeddingModelMismatch()
+        self._model_ok = model
+
+    def ensure_collection(self, dimension: int, model: str = "") -> None:
         from qdrant_client import models
 
         if not self._c.collection_exists(self._collection):
@@ -101,6 +128,7 @@ class QdrantStore:
         )
         self._c.create_payload_index(self._collection, "document_id", field_schema=models.PayloadSchemaType.KEYWORD)
         self._c.create_payload_index(self._collection, PROJECT_KEY, field_schema=models.PayloadSchemaType.KEYWORD)
+        self.assert_model(model)
 
     @staticmethod
     def tenant_filter(
@@ -184,4 +212,4 @@ class QdrantStore:
         return self._c.count(self._collection, count_filter=unscoped, exact=True).count
 
 
-__all__ = ["Point", "QdrantStore", "VectorStore", "assert_single_tenant", "check_points", "to_point"]
+__all__ = ["EmbeddingModelMismatch", "Point", "QdrantStore", "VectorStore", "assert_single_tenant", "check_points", "to_point"]

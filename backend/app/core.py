@@ -97,7 +97,8 @@ class Settings(BaseSettings):
     # Embeddings: local (on this host, default) | openai (external, needs the egress switches) |
     # hashing (non-semantic, development only).
     embedding_provider: Literal["local", "openai", "hashing"] = "local"
-    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    # Multilingual (Spanish and English documents); its /ask similarity threshold is calibrated (ADR-003).
+    embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_cache_dir: Path | None = None
     # Local models may never download at runtime unless this is switched off (air-gap by default).
     embedding_local_files_only: bool = True
@@ -113,6 +114,11 @@ class Settings(BaseSettings):
     # /ask abstains unless the quoted sentence covers at least this share of the question's
     # (rarity-weighted) terms. Below it, a sentence that merely shares a word is not evidence.
     ask_min_evidence_coverage: float = Field(default=0.5, ge=0.0, le=1.0)
+    # A value supported by any OCR word read below this confidence (0-1) goes to review.
+    ocr_word_review_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    # With a semantic embedder, a sentence at least this similar in meaning is also evidence (ADR-003).
+    # Empty = use the threshold calibrated for the configured model, or none (lexical rule only).
+    ask_min_semantic_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
 
     # ---- Retention ---------------------------------------------------------------
     # Soft-deleted documents (and every derived record) are hard-deleted after this

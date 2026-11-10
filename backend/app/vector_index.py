@@ -24,7 +24,7 @@ from app.db import SessionLocal
 from app.ingestion.chunking import TenantError
 from app.ingestion.embeddings import build_embedder
 from app.ingestion.pipeline import IngestionPipeline, IngestionRefused
-from app.ingestion.vectorstore import QdrantStore, VectorStore
+from app.ingestion.vectorstore import EmbeddingModelMismatch, QdrantStore, VectorStore
 from app.metrics import VECTOR_DELETIONS_TOTAL, VECTOR_INDEXING_TOTAL
 from app.models import Document, VectorDeletion, utcnow
 from app.storage import StorageAccessError, owned_key, storage
@@ -143,7 +143,7 @@ def index_document(organization_id: str, document_id: str) -> str:
         get_pipeline().ingest(
             tenant_id=str(org), document_id=str(doc_id), content=content, source_name=filename, project_id=project,
         )
-    except (IngestionRefused, TenantError) as exc:
+    except (IngestionRefused, TenantError, EmbeddingModelMismatch) as exc:  # permanent: no retry
         code = getattr(exc, "code", None) or str(exc)
         _mark(doc_id, indexed=False, error=code[:80])
         VECTOR_INDEXING_TOTAL.labels("refused").inc()

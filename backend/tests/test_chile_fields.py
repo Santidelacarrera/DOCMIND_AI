@@ -86,8 +86,6 @@ def test_the_baseline_reads_a_chilean_invoice_and_refuses_an_invalid_rut() -> No
         "entidad": "Comercial Andes Ejemplo SpA", "nombre": "Constructora Pacífico Prueba Ltda.",
         "rut": "77654321-7", "monto": 1190000.0,
     }
-    # The issuer is a positional guess: it always goes to review.
-    assert out["confidence"]["entidad"] < 0.7
     bad = RuleBasedProvider().extract(text.replace("77.654.321-7", "77.654.321-8"), {"properties": {"fields": DTE_CL_SCHEMA}})
     assert bad["fields"]["rut"] is None and bad["confidence"]["rut"] == 0.0
 

@@ -11,7 +11,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import CursorResult, and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from app import contextrag_sync
+from app import contextrag_sync, rls
 from app.core import settings
 from app.db import SessionLocal
 from app.ingestion.docx import DOCX_MIME
@@ -51,7 +51,7 @@ from app.processing import (
     llm,
     llm_model,
 )
-from app.provenance import Evidence, evidence_for, evidence_issues
+from app.provenance import Evidence, evidence_for, evidence_issues, ocr_word_issues
 from app.storage import StorageAccessError, owned_key, storage
 from app.telemetry import configure_worker_tracing
 from app.validation import (
@@ -347,6 +347,7 @@ def _compute(claim: _Claim, log: _StepLog) -> _Computed:
 
     ocr_used = False
     ocr_confidences: list[float | None] = []
+    ocr_low_words: list[set[str]] = []
     if not is_docx and needs_ocr(text, pages):
         _set_status(claim.job_id, JobStatus.ocr_processing)
         log.start("ocr")
@@ -354,6 +355,7 @@ def _compute(claim: _Claim, log: _StepLog) -> _Computed:
             ocr = TesseractProvider()
             ocr_pages = ocr.extract_pages(content)
             ocr_confidences = list(getattr(ocr, "last_confidences", []))
+            ocr_low_words = list(getattr(ocr, "last_low_words", []))
         except SoftTimeLimitExceeded:
             raise
         except Exception:
@@ -401,6 +403,8 @@ def _compute(claim: _Claim, log: _StepLog) -> _Computed:
     # Evidence: only text the pipeline really extracted can support a value (never generated).
     evidence = evidence_for(fields, pages_text)
     issues.extend(evidence_issues(evidence))
+    if ocr_used and ocr_low_words:
+        issues.extend(ocr_word_issues(evidence, ocr_low_words))
     if settings().schema_violation_policy == "reject" and has_schema_violations(issues):
         raise ProcessingError("LLM_SCHEMA_INVALID")
     log.finish()
@@ -575,9 +579,19 @@ def process_document(self, job_id: str) -> None:
     is the last line of defence against duplicated results.
     """
     started_at = time.perf_counter()
-    claim = _claim(job_id)
+    claim = _claim(job_id)  # phase 3 of RLS needs this pre-context read via SECURITY DEFINER (rls.py)
     if claim is None:
         return
+    # Every later transaction of this job is scoped to its organization (app.rls); a worker process
+    # running jobs of several organizations in turn never carries one job's context into the next.
+    org_context = rls.CURRENT_ORG.set(str(claim.organization_id))
+    try:
+        _run_claimed(self, job_id, claim, started_at)
+    finally:
+        rls.CURRENT_ORG.reset(org_context)
+
+
+def _run_claimed(self: Any, job_id: str, claim: "_Claim", started_at: float) -> None:
     log = _StepLog()
     error: ProcessingError | None = None
     try:

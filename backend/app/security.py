@@ -11,6 +11,7 @@ from pwdlib import PasswordHash
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import rls
 from app.core import settings
 from app.db import get_db
 from app.models import ApiKey, OrganizationMember, Role, User, as_aware_utc
@@ -125,7 +126,10 @@ def membership(
             raise HTTPException(403, "FORBIDDEN")
         if not scope or scope not in (user.key.scopes or []):
             raise HTTPException(403, "INSUFFICIENT_SCOPE")
+        rls.set_context(db, org_id)
         return None
+    # Row-Level Security context first: the membership row is itself behind the policy.
+    rls.set_context(db, org_id)
     member = db.scalar(
         select(OrganizationMember).where(
             OrganizationMember.organization_id == org_id, OrganizationMember.user_id == user.id
