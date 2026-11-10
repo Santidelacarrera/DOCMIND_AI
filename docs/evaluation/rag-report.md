@@ -1,6 +1,6 @@
 # RAG evaluation report
 
-Embedder `hashing-256` (lexical hashing unless stated otherwise), top_k=5, 6 fictitious documents in 2 tenants, 28 questions (20 answerable, 8 that must abstain).
+Embedder `hashing-256` (lexical hashing unless stated otherwise), top_k=5, min_coverage=0.5, 6 fictitious documents in 2 tenants, 28 questions (20 answerable, 8 that must abstain).
 
 Reproduce: `cd backend && python -m app.evaluation.rag --output-dir eval_reports`.
 

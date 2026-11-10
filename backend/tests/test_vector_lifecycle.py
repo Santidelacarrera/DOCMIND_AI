@@ -87,10 +87,11 @@ def test_refused_documents_are_recorded_not_indexed(register, vectors) -> None:
     import io
 
     from pypdf import PdfWriter
+    from pypdf.actions import JavaScript
 
     writer = PdfWriter()
     writer.add_blank_page(612, 792)
-    writer.add_js("app.alert(1)")
+    writer.add_open_action(JavaScript("app.alert(1)"))
     buf = io.BytesIO()
     writer.write(buf)
     acct = register()

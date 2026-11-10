@@ -35,3 +35,18 @@ Además, el stack de `docker-compose.yml` no podía responder preguntas: no ten�
 * Abstención correcta: 0,5 → 1,0. Preguntas factuales: 16/16 sin cambio. Falsas abstenciones: 0,05 → 0,15 (paráfrasis). Cero fugas entre tenants.
 * El umbral se vuelve a validar cuando se mida un embedder semántico: la cobertura es léxica y puede rechazar paráfrasis bien recuperadas.
 * La compuerta de CI (`--min-abstention-accuracy 1.0`) impide reintroducir respuestas sin evidencia.
+
+## Revalidación con embedders semánticos (2026-11-10)
+
+Mismas 28 preguntas con `python -m app.evaluation.rag --embedder local --model <m> --min-coverage <c>`:
+
+| Embedder | Umbral | recall@1 | MRR | Respuestas correctas | Abstención correcta |
+|---|---|---:|---:|---:|---:|
+| hashing-256 | 0 | 0,90 | 0,92 | 0,95 | 0,50 |
+| hashing-256 | 0,5 | 0,90 | 0,92 | 0,85 | 1,00 |
+| bge-small-en-v1.5 | 0 | 0,80 | 0,86 | 0,95 | 0,50 |
+| bge-small-en-v1.5 | 0,5 | 0,80 | 0,86 | 0,85 | 1,00 |
+| paraphrase-multilingual-MiniLM-L12-v2 | 0 | 1,00 | 1,00 | 0,95 | 0,50 |
+| paraphrase-multilingual-MiniLM-L12-v2 | 0,5 | 1,00 | 1,00 | 0,85 | 1,00 |
+
+Conclusiones: sin el umbral, la abstención cae a 0,5 con los tres embedders, así que la regla es necesaria e independiente del modelo; con él, ningún embedder pierde preguntas factuales. Las paráfrasis fallan en la selección léxica de la frase, no en la recuperación (el multilingüe las recupera todas en primera posición). Se mantiene 0,5. Siguiente paso: puntuar frases semánticamente (deuda D3). Informe: `docs/evaluation/rag-report-multilingual-minilm.md`.

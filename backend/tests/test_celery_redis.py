@@ -24,8 +24,9 @@ from app.core import settings
 from app.db import SessionLocal
 from app.models import ExtractionRun, JobStatus, ProcessingJob, UsageRecord, utcnow
 from app.storage import storage
+from tests._tools import needs
 
-pytestmark = pytest.mark.skipif(shutil.which("redis-server") is None, reason="redis-server not installed")
+pytestmark = needs("redis-server")
 
 
 @pytest.fixture(scope="module")

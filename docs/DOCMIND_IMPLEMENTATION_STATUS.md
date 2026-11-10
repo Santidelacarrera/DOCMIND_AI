@@ -9,19 +9,19 @@
 | Health / readiness | VALIDADA | `/health`, `/ready` en `staging_smoke.py` | — | — |
 | Registro, login, sesión | VALIDADA | `staging_smoke.py` (registro y Bearer); suite: `test_api.py`, `test_cross_org_negative.py` | — | — |
 | Carga PDF | VALIDADA | Smoke: 202 → COMPLETED | — | — |
-| Carga DOCX | IMPLEMENTADA | `test_word_and_citations.py`, `rag.py` (en proceso) | No subida por API en el stack hoy | P1 |
+| Carga DOCX | VALIDADA | Playwright `word-upload.spec.ts` contra el stack (Word aceptado y procesado; con macros, rechazado) | — | — |
 | Validación de formato, tamaño, magic bytes, contenido activo | IMPLEMENTADA | `test_ingestion.py`, `test_hardening_audit.py` | — | — |
 | Antivirus ClamAV | IMPLEMENTADA | `test_antivirus.py`; servicio no levantado | Requiere daemon | P1 |
-| Detección de escaneados y OCR Tesseract | IMPLEMENTADA | `ocr.py` (cobertura 22 % en Windows sin Tesseract); CI instala Tesseract | Sin prueba no omitible | P1 |
+| Detección de escaneados y OCR Tesseract | VALIDADA | OCR real en Linux (Tesseract 5.5, contenedor): 89 pruebas con `CI=true`, factura chilena escaneada con CER 0,5 %; las pruebas de OCR y Redis ya no se omiten en CI (`tests/_tools.py`) | En Windows sin Tesseract se omiten localmente | P1 cerrado |
 | Chunking por página | VALIDADA | `chunking.py`; la cita del smoke apunta a la página 2 correcta | — | — |
-| Enmascarado PII | IMPLEMENTADA | `test_ingestion.py`, demo | RUT chileno no evaluado | P1 |
-| Embeddings | VALIDADA (hashing) | Stack con `EMBEDDING_PROVIDER=hashing` | Semántico (`local`/`openai`) no medido | P1 |
+| Enmascarado PII | IMPLEMENTADA | `test_ingestion.py`, demo; RUT chileno con dígito verificador desde 2026-11-10 (`test_chile_fields.py`) | Antes, el RUT llegaba sin enmascarar a fragmentos, vectores y citas | P1 cerrado |
+| Embeddings | VALIDADA (hashing en stack; semántico medido) | Stack con `hashing`; `bge-small-en` y `paraphrase-multilingual-MiniLM-L12-v2` medidos con `rag.py` (`rag-report-multilingual-minilm.md`) | El modelo de producción por defecto (`bge-small-en`) es inglés; el multilingüe recupera mejor el corpus en español | P1 |
 | Persistencia vectorial Qdrant | VALIDADA | Qdrant v1.20 en servidor; `/ask` responde desde él | Snapshot no probado | P2 |
 | Relación documento–página–chunk | VALIDADA | Cita del smoke: `politica_smoke.pdf, p.2`, `chunk_index` 1, extracto literal | — | — |
 | Duplicados (SHA-256) | IMPLEMENTADA | `test_api.py`, `test_reliability.py` | — | — |
 | Estados PENDING/PROCESSING/COMPLETED/FAILED, reintentos idempotentes | IMPLEMENTADA | `test_worker.py`, `test_reliability.py`, `test_celery_redis.py` (Redis real, se omite sin `redis-server`) | — | — |
 | Extracción estructurada (LLM mock/OpenAI/Gemini) | VALIDADA (mock) | Smoke: 4 campos | LLM real: informe Gemini de 2026-10-31 (F1 96 % en sintético), no repetido hoy | Bloqueada (datos reales) |
-| Evaluación de extracción (P/R/F1 por campo) | IMPLEMENTADA | `python -m app.evaluation` en CI (`--min-f1 0.89`) | Corpus sin campos chilenos (RUT, folio, CLP) | P1 |
+| Evaluación de extracción (P/R/F1 por campo) | VALIDADA | `python -m app.evaluation` en el contenedor: 28 documentos, micro F1 93,0 %, captura de errores 100 %, 0 errores silenciosos; tipo `dte_cl` (tipo, folio, fecha, entidad, nombre, RUT, monto) y atribución de errores OCR / extracción / normalización / validación | Corpus sintético; las reglas chilenas se escribieron viendo los documentos | P1 |
 | Consulta en lenguaje natural `/ask` | VALIDADA | `staging_smoke.py --ask` contra el stack | — | P0 cerrado |
 | Citas verificables (documento, página, fragmento) | VALIDADA | `chunk_index` + `excerpt`; `test_ask_citation_locates_the_supporting_fragment` | — | P1 cerrado |
 | Abstención sin evidencia | VALIDADA | `abstention_accuracy` 1,0 (antes 0,5); smoke | 15 % de falsas abstenciones (paráfrasis) | P0 cerrado |
@@ -38,7 +38,7 @@
 | Copia y restauración (base + archivos) | VALIDADA (local) | `docs/DEPLOYMENT.md` §Backups | S3/KMS no verificados | P1 |
 | RLS PostgreSQL | PENDIENTE | `docs/RLS_DESIGN.md` | Decidida, sin migración | P1 |
 | Frontend: lint + typecheck | VALIDADA | `npm run lint`, `npm run typecheck` | — | — |
-| Frontend e2e (Playwright) | IMPLEMENTADA | `frontend/tests/e2e/` (7 specs) | No ejecutado hoy | P1 |
+| Frontend e2e (Playwright) | VALIDADA | 8/8 contra el stack Compose, incluida `ask-citations.spec.ts` (cita con documento, página, fragmento y extracto; abstención; enlace al documento) | — | — |
 | Despliegue en staging/producción | BLOQUEADA | — | Sin entorno ni secretos | — |
 | Kubernetes | No aplica | — | Compose es suficiente para el alcance actual | — |
 
@@ -56,4 +56,6 @@
 | Copia/restauración base + archivos | conteos iguales, SHA-256 idénticos, `reconcile` 0 huérfanos |
 | `npm run lint` · `npm run typecheck` | limpios |
 
-Omitidas (35): Docker integration, spaCy, fastembed, Redis real sin `redis-server` y bloqueo de filas solo en PostgreSQL; ninguna de aislamiento. **No ejecutado hoy:** suite sobre PostgreSQL (CI la ejecuta), Playwright, `npm run build`, perfil de observabilidad, ClamAV, OCR real.
+Omitidas (35): Docker integration, spaCy, fastembed, Redis real sin `redis-server` y bloqueo de filas solo en PostgreSQL; ninguna de aislamiento. **Segunda ronda (misma fecha):** Playwright 8/8 contra el stack; `npm run build` limpio; evaluación de extracción con OCR real en el contenedor (Tesseract 5.5) y 89 pruebas con `CI=true` sin omisiones; RAG medido con dos embedders semánticos.
+
+**No ejecutado:** suite sobre PostgreSQL en local (CI la ejecuta), perfil de observabilidad, ClamAV.

@@ -102,13 +102,14 @@ def ingest(pipeline: IngestionPipeline, corpus: dict[str, Any]) -> None:
 
 def _evaluate_question(
     pipeline: IngestionPipeline, q: dict[str, Any], tenants: dict[str, str], top_k: int, own_docs: set[str],
+    min_coverage: float = 0.5,
 ) -> QuestionResult:
     tenant = tenants[q["tenant"]]
     relevant = [(d, int(p)) for d, p in q["relevant"]]
     hits = retrieve(pipeline, tenant_id=tenant, question=q["question"], top_k=top_k)
     retrieved = [(str(h.get("source_name")), int(h.get("page") or 0), str(h.get("tenant_id"))) for h in hits]
     first = next((i for i, (d, p, _) in enumerate(retrieved, start=1) if (d, p) in relevant), None)
-    a = answer(pipeline, tenant_id=tenant, question=q["question"], top_k=top_k)
+    a = answer(pipeline, tenant_id=tenant, question=q["question"], top_k=top_k, min_coverage=min_coverage)
     citations = [(c.document, c.page) for c in a.citations]
     leaks = sum(t != tenant for _, _, t in retrieved) + sum(c.document_id not in own_docs for c in a.citations)
     # Faithfulness: every sentence of the answer is a verbatim quote of a chunk the answer cites.
@@ -161,7 +162,9 @@ def score(results: list[QuestionResult], ks: tuple[int, ...] = KS) -> dict[str, 
     }
 
 
-def run(embedder: Embedder | None = None, *, top_k: int = max(KS), corpus_path: Path = CORPUS) -> dict[str, Any]:
+def run(
+    embedder: Embedder | None = None, *, top_k: int = max(KS), corpus_path: Path = CORPUS, min_coverage: float = 0.5,
+) -> dict[str, Any]:
     corpus = load(corpus_path)
     pipeline = build_pipeline(embedder)
     ingest(pipeline, corpus)
@@ -169,7 +172,7 @@ def run(embedder: Embedder | None = None, *, top_k: int = max(KS), corpus_path: 
     docs_of = {
         key: {document_id(key, d["file"]) for d in corpus["documents"] if d["tenant"] == key} for key in tenants
     }
-    results = [_evaluate_question(pipeline, q, tenants, top_k, docs_of[q["tenant"]]) for q in corpus["questions"]]
+    results = [_evaluate_question(pipeline, q, tenants, top_k, docs_of[q["tenant"]], min_coverage) for q in corpus["questions"]]
     for r in results:
         own = {d["file"] for d in corpus["documents"] if d["tenant"] == r.tenant}
         if r.category in ANSWERABLE and not r.fact_ok:
@@ -178,6 +181,7 @@ def run(embedder: Embedder | None = None, *, top_k: int = max(KS), corpus_path: 
             r.notes.append("answered_without_evidence" if all(d in own for d, _ in r.citations) else "LEAK")
     report = score(results)
     report["embedder"] = pipeline.embedder.name
+    report["min_coverage"] = min_coverage
     report["top_k"] = top_k
     report["corpus"] = {"documents": len(corpus["documents"]), "version": corpus["version"]}
     report["results"] = [
@@ -194,7 +198,7 @@ def to_markdown(report: dict[str, Any]) -> str:
     m = report["metrics"]
     lines = [
         "# RAG evaluation report", "",
-        (f"Embedder `{report['embedder']}` (lexical hashing unless stated otherwise), top_k={report['top_k']}, "
+        (f"Embedder `{report['embedder']}` (lexical hashing unless stated otherwise), top_k={report['top_k']}, min_coverage={report['min_coverage']}, "
         f"{report['corpus']['documents']} fictitious documents in 2 tenants, {report['questions']} questions "
         f"({report['answerable']} answerable, {report['must_abstain']} that must abstain)."), "",
         "Reproduce: `cd backend && python -m app.evaluation.rag --output-dir eval_reports`.", "",
@@ -221,25 +225,27 @@ def to_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _embedder(name: str) -> Embedder:
+def _embedder(name: str, model: str | None = None) -> Embedder:
     if name == "hashing":
         return HashingEmbedder(256)
     from app.core import settings
     from app.ingestion.embeddings import LocalEmbedder
 
     cfg = settings()
-    return LocalEmbedder(cfg.embedding_model, local_files_only=cfg.embedding_local_files_only)
+    return LocalEmbedder(model or cfg.embedding_model, local_files_only=cfg.embedding_local_files_only)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.evaluation.rag", description="RAG retrieval and citation evaluation")
     parser.add_argument("--embedder", choices=["hashing", "local"], default="hashing")
+    parser.add_argument("--model", default=None, help="fastembed model for --embedder local (default: EMBEDDING_MODEL)")
+    parser.add_argument("--min-coverage", type=float, default=0.5, help="sufficient-evidence threshold (ADR-002)")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--min-recall-at-5", type=float, default=None, help="fail (exit 1) below this recall@5")
     parser.add_argument("--min-citation-accuracy", type=float, default=None)
     parser.add_argument("--min-abstention-accuracy", type=float, default=None)
     args = parser.parse_args(argv)
-    report = run(_embedder(args.embedder))
+    report = run(_embedder(args.embedder, args.model), min_coverage=args.min_coverage)
     text = to_markdown(report)
     print(text)
     if args.output_dir is not None:

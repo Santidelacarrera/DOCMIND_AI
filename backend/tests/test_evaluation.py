@@ -5,7 +5,6 @@ extractor and fails if quality drops below ``eval_corpus/baseline_expected.json`
 """
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
@@ -14,6 +13,7 @@ from app import worker
 from app.evaluation import corpus, metrics, runner
 from app.evaluation.baseline import RuleBasedProvider, parse_amount, parse_date
 from app.processing import extraction_envelope
+from tests._tools import needs
 
 EXPECTED = corpus.CORPUS_DIR / "baseline_expected.json"
 
@@ -160,10 +160,7 @@ def report():  # type: ignore[no-untyped-def]
         mp.undo()
 
 
-needs_ocr_stack = pytest.mark.skipif(
-    shutil.which("tesseract") is None or shutil.which("pdftoppm") is None,
-    reason="Tesseract and Poppler are required to evaluate scanned documents",
-)
+needs_ocr_stack = needs("tesseract", "pdftoppm")  # Tesseract + Poppler evaluate the scanned documents
 
 
 @needs_ocr_stack

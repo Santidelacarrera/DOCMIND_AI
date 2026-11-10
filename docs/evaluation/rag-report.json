@@ -38,6 +38,7 @@
     }
   },
   "embedder": "hashing-256",
+  "min_coverage": 0.5,
   "top_k": 5,
   "corpus": {
     "documents": 6,
