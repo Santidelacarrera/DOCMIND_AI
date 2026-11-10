@@ -11,8 +11,11 @@ on -- compare with ``python -m app.evaluation --provider openai``.
 """
 
 import re
+import unicodedata
 from datetime import date
 from typing import Any
+
+from app import rut
 
 MONTHS = {
     m: i
@@ -43,7 +46,28 @@ LABELS: dict[str, list[str]] = {
     "id_number": ["id number", "national id", "id no.", "dni"],
     "email": ["email", "e-mail", "correo"],
     "country": ["country of residence", "country", "país"],
+    # Chilean tax documents (dte_cl schema)
+    "numero_documento": ["folio n°", "folio nº", "folio", "n° documento", "número de documento"],
+    "fecha": ["fecha de emisión", "fecha de emision", "fecha emisión", "fecha"],
+    "nombre": ["señor", "senor", "señores", "cliente", "razón social receptor", "receptor"],
+    "rut": ["rut receptor", "rut cliente", "rut del receptor"],
+    "monto": ["monto total", "total a pagar", "total"],
 }
+# Document types printed in capitals (often without accents on scans) -> canonical name.
+DTE_TYPES = {
+    "factura electronica": "Factura Electrónica",
+    "factura exenta electronica": "Factura Exenta Electrónica",
+    "boleta electronica": "Boleta Electrónica",
+    "nota de credito electronica": "Nota de Crédito Electrónica",
+    "nota de debito electronica": "Nota de Débito Electrónica",
+    "guia de despacho electronica": "Guía de Despacho Electrónica",
+}
+
+
+def _fold(text: str) -> str:
+    """Lower-case, accents removed, spaces collapsed."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return " ".join("".join(c for c in decomposed if not unicodedata.combining(c)).lower().split())
 
 
 def _line_value(text: str, labels: list[str]) -> tuple[str | None, bool]:
@@ -82,10 +106,10 @@ def parse_date(raw: str) -> tuple[str | None, bool]:
     raw = raw.strip()
     if m := re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", raw):
         return raw, _valid(*map(int, m.groups()))
-    if m := re.fullmatch(r"(\d{1,2})[/.](\d{1,2})[/.](\d{4})", raw):
+    if m := re.fullmatch(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})", raw):  # DD/MM/YYYY, DD-MM-YYYY (Chile)
         day, month, year = map(int, m.groups())
         return (f"{year:04d}-{month:02d}-{day:02d}" if _valid(year, month, day) else None), False
-    long_form = re.fullmatch(r"(\d{1,2})\s+([A-Za-zéñ]+)\s+(\d{4})", raw)
+    long_form = re.fullmatch(r"(\d{1,2})\s+(?:de\s+)?([A-Za-zéñ]+)\s+(?:de\s+)?(\d{4})", raw)
     if long_form and (named := MONTHS.get(long_form.group(2).lower())):
         return f"{int(long_form.group(3)):04d}-{named:02d}-{int(long_form.group(1)):02d}", True
     us_form = re.fullmatch(r"([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})", raw)
@@ -240,3 +264,50 @@ class RuleBasedProvider:
 
     def _country(self, text: str) -> tuple[str | None, float]:
         return self._text_field(text, "country")
+
+    # ------------------------------------------------------------------ Chilean tax documents (dte_cl)
+    def _tipo_documento(self, text: str) -> tuple[str | None, float]:
+        for line in text.splitlines():
+            if name := DTE_TYPES.get(_fold(line)):
+                return name, 0.9
+        return None, 0.0
+
+    def _numero_documento(self, text: str) -> tuple[str | None, float]:
+        value, _ = _line_value(text, LABELS["numero_documento"])
+        if value and (m := re.fullmatch(r"(?:n[°º]\s*)?0*(\d+)", value.strip(), re.IGNORECASE)):
+            return m.group(1), 0.95
+        return None, 0.0
+
+    def _fecha(self, text: str) -> tuple[str | None, float]:
+        raw, _ = _line_value(text, LABELS["fecha"])
+        if raw is None:
+            return None, 0.0
+        iso, certain = parse_date(raw)
+        return (iso, 0.95 if certain else 0.6) if iso else (None, 0.0)
+
+    def _entidad(self, text: str) -> tuple[str | None, float]:
+        """The issuer is printed first, with no label: a positional guess. Its confidence stays below
+        the review threshold, because one misread character (an OCR "Eiemplo") changes who issued the
+        document and nothing in the text can confirm it."""
+        first, _ = self._vendor_name(text)
+        return (first, 0.6) if first else (None, 0.0)
+
+    def _nombre(self, text: str) -> tuple[str | None, float]:
+        value, _ = _line_value(text, LABELS["nombre"])
+        return (value.strip(), 0.9) if value else (None, 0.0)
+
+    def _rut(self, text: str) -> tuple[str | None, float]:
+        """The recipient RUT, canonical. A printed RUT whose check digit is wrong is not returned:
+        an identifier that fails its own checksum must reach a human, not an export."""
+        raw, _ = _line_value(text, LABELS["rut"])
+        if raw is None:
+            return None, 0.0
+        canonical = rut.normalize(raw)
+        return (canonical, 0.95) if canonical else (None, 0.0)
+
+    def _monto(self, text: str) -> tuple[float | None, float]:
+        raw, _ = _line_value(text, LABELS["monto"])
+        if raw is None:
+            return None, 0.0
+        amount = parse_amount(raw)
+        return (amount, 0.95) if amount is not None else (None, 0.0)

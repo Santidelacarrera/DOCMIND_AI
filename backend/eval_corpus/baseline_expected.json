@@ -11,12 +11,12 @@
       "f1": 1.0
     },
     "digital": {
-      "tp": 46,
+      "tp": 73,
       "fp": 1,
       "fn": 7,
-      "precision": 0.9787,
-      "recall": 0.8679,
-      "f1": 0.92
+      "precision": 0.9865,
+      "recall": 0.9125,
+      "f1": 0.9481
     },
     "multipage": {
       "tp": 14,

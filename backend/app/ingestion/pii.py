@@ -17,6 +17,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from app import rut
 from app.ingestion.text import normalise
 
 
@@ -96,7 +97,9 @@ RULES: tuple[Rule, ...] = (
     Rule("CREDIT_CARD", re.compile(r"(?<![\w-])(?:\d[ -]?){13,19}(?![\w-])"), luhn_ok, 6),
     Rule("ES_NATIONAL_ID", re.compile(r"\b(?:\d{8}|[XYZxyz]\d{7})[- ]?[A-Za-z]\b"),
          lambda v: es_dni_ok(re.sub(r"[- ]", "", v)), 6),
-    Rule("US_SSN", re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), us_ssn_ok, 6),
+    # Chilean RUT/RUN (12.345.678-5 / 12345678-K): modulo-11 check digit.
+    Rule("CL_RUT", rut.PATTERN, rut.is_valid, 6),
+    Rule("US_SSN",re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), us_ssn_ok, 6),
     Rule("IP_ADDRESS", re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), ipv4_ok, 4),
     Rule("PHONE", re.compile(r"(?<![\w.,-])(?:\+|00)?\(?\d{1,4}\)?(?:[ .-]?\d{2,4}){2,5}(?!\w)(?![.,-]\d)"), phone_ok, 3),
 )

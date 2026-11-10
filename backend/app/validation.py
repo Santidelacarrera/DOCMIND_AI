@@ -15,6 +15,8 @@ Two further checks flag fields for review:
    treated as unverified rather than trusted.
 4. Unexpected fields — a field not declared in the tenant schema's ``properties``
    (typical of a prompt-injected or hallucinated key) is flagged.
+5. Chilean RUT — a property declared with ``"format": "cl-rut"`` must carry a RUT whose
+   modulo-11 check digit is right (JSON Schema ignores unknown formats, so this is explicit).
 
 None of these checks raises: a run with issues is still persisted (so nothing is
 silently dropped), but it is marked ``requires_review=True`` so the UI and API
@@ -30,6 +32,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
+from app import rut
 from app.core import settings
 
 
@@ -47,6 +50,7 @@ def validate_fields(
     issues: list[dict[str, Any]] = []
     issues.extend(_schema_issues(json_schema, fields))
     issues.extend(_unexpected_field_issues(json_schema, fields))
+    issues.extend(_rut_issues(json_schema, fields))
     issues.extend(_confidence_issues(fields, confidence or {}))
     issues.extend(_mandatory_review_issues(fields))
     return issues
@@ -106,6 +110,18 @@ def _unexpected_field_issues(
         }
         for name in fields
         if name not in declared
+    ]
+
+
+def _rut_issues(json_schema: dict[str, Any] | None, fields: dict[str, Any]) -> list[dict[str, Any]]:
+    declared = (json_schema or {}).get("properties")
+    if not isinstance(declared, dict):
+        return []
+    return [
+        {"field": name, "rule": "cl_rut", "message": "RUT check digit is not valid."}
+        for name, spec in declared.items()
+        if isinstance(spec, dict) and spec.get("format") == "cl-rut"
+        and isinstance(fields.get(name), str) and fields[name].strip() and not rut.is_valid(fields[name])
     ]
 
 

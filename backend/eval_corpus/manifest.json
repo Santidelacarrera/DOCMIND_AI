@@ -127,6 +127,58 @@
       "required": [
         "applicant_name"
       ]
+    },
+    "dte_cl": {
+      "type": "object",
+      "properties": {
+        "tipo_documento": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "numero_documento": {
+          "type": "string"
+        },
+        "fecha": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "entidad": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nombre": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rut": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{7,8}-[\\dK]$",
+          "format": "cl-rut"
+        },
+        "monto": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "numero_documento",
+        "monto"
+      ]
     }
   },
   "documents": [
@@ -1426,6 +1478,171 @@
       "expect_reject": [
         "DOCUMENT_INVALID"
       ]
+    },
+    {
+      "id": "cl_factura_01",
+      "file": "pdfs/cl_factura_01.pdf",
+      "kind": "digital",
+      "doc_type": "dte_cl",
+      "tags": [],
+      "note": "",
+      "pages": [
+        [
+          "Comercial Andes Ejemplo SpA",
+          "RUT: 76.123.456-0",
+          "Av. Providencia 1234, Santiago",
+          "",
+          "FACTURA ELECTRÓNICA",
+          "Folio: 4512",
+          "Fecha de emisión: 14-03-2025",
+          "Señor(es): Constructora Pacífico Prueba Ltda.",
+          "RUT receptor: 77.654.321-7",
+          "",
+          "Servicio de mantención mensual        $ 1.000.000",
+          "Neto: $ 1.000.000",
+          "IVA (19%): $ 190.000",
+          "Total: $ 1.190.000"
+        ]
+      ],
+      "truth": {
+        "tipo_documento": "Factura Electrónica",
+        "numero_documento": "4512",
+        "fecha": "2025-03-14",
+        "entidad": "Comercial Andes Ejemplo SpA",
+        "nombre": "Constructora Pacífico Prueba Ltda.",
+        "rut": "77654321-7",
+        "monto": 1190000
+      },
+      "expect_reject": []
+    },
+    {
+      "id": "cl_boleta_02",
+      "file": "pdfs/cl_boleta_02.pdf",
+      "kind": "digital",
+      "doc_type": "dte_cl",
+      "tags": [],
+      "note": "",
+      "pages": [
+        [
+          "Farmacia Ejemplo Limitada",
+          "RUT: 96.555.444-0",
+          "",
+          "BOLETA ELECTRÓNICA",
+          "Folio: 88231",
+          "Fecha: 5 de mayo de 2025",
+          "Cliente: María José Ejemplo Prueba",
+          "RUT cliente: 12345678-5",
+          "",
+          "Medicamentos varios",
+          "Monto total: $ 25.990"
+        ]
+      ],
+      "truth": {
+        "tipo_documento": "Boleta Electrónica",
+        "numero_documento": "88231",
+        "fecha": "2025-05-05",
+        "entidad": "Farmacia Ejemplo Limitada",
+        "nombre": "María José Ejemplo Prueba",
+        "rut": "12345678-5",
+        "monto": 25990
+      },
+      "expect_reject": []
+    },
+    {
+      "id": "cl_nota_credito_03",
+      "file": "pdfs/cl_nota_credito_03.pdf",
+      "kind": "digital",
+      "doc_type": "dte_cl",
+      "tags": [],
+      "note": "",
+      "pages": [
+        [
+          "Servicios Digitales Ejemplo S.A.",
+          "RUT: 78.111.222-4",
+          "",
+          "NOTA DE CRÉDITO ELECTRÓNICA",
+          "Folio: 311",
+          "Fecha de emisión: 2025-06-30",
+          "Señor(es): Juan Pablo Ejemplo Soto",
+          "RUT receptor: 10.000.013-K",
+          "Referencia: Factura folio 298",
+          "Total: $ 450.000"
+        ]
+      ],
+      "truth": {
+        "tipo_documento": "Nota de Crédito Electrónica",
+        "numero_documento": "311",
+        "fecha": "2025-06-30",
+        "entidad": "Servicios Digitales Ejemplo S.A.",
+        "nombre": "Juan Pablo Ejemplo Soto",
+        "rut": "10000013-K",
+        "monto": 450000
+      },
+      "expect_reject": []
+    },
+    {
+      "id": "cl_factura_rut_invalido_04",
+      "file": "pdfs/cl_factura_rut_invalido_04.pdf",
+      "kind": "digital",
+      "doc_type": "dte_cl",
+      "tags": [
+        "invalid_rut"
+      ],
+      "note": "Recipient RUT printed with a wrong check digit (7.333.444-5; the valid one ends in 6): it must not be exported as a valid RUT.",
+      "pages": [
+        [
+          "Transportes Ejemplo Norte SpA",
+          "RUT: 15.222.333-1",
+          "",
+          "FACTURA ELECTRÓNICA",
+          "Folio: 1207",
+          "Fecha de emisión: 02-07-2025",
+          "Señor(es): Minera Ejemplo Sur Ltda.",
+          "RUT receptor: 7.333.444-5",
+          "Total: $ 3.570.000"
+        ]
+      ],
+      "truth": {
+        "tipo_documento": "Factura Electrónica",
+        "numero_documento": "1207",
+        "fecha": "2025-07-02",
+        "entidad": "Transportes Ejemplo Norte SpA",
+        "nombre": "Minera Ejemplo Sur Ltda.",
+        "rut": null,
+        "monto": 3570000
+      },
+      "expect_reject": []
+    },
+    {
+      "id": "cl_factura_scan_05",
+      "file": "pdfs/cl_factura_scan_05.pdf",
+      "kind": "scanned",
+      "doc_type": "dte_cl",
+      "tags": [],
+      "note": "",
+      "pages": [
+        [
+          "Ferreteria Ejemplo Centro SpA",
+          "RUT: 76.123.456-0",
+          "",
+          "FACTURA ELECTRONICA",
+          "Folio: 9034",
+          "Fecha de emision: 21-08-2025",
+          "Senor(es): Inmobiliaria Ejemplo Costa Ltda.",
+          "RUT receptor: 77.654.321-7",
+          "Total: $ 2.380.000"
+        ]
+      ],
+      "truth": {
+        "tipo_documento": "Factura Electrónica",
+        "numero_documento": "9034",
+        "fecha": "2025-08-21",
+        "entidad": "Ferreteria Ejemplo Centro SpA",
+        "nombre": "Inmobiliaria Ejemplo Costa Ltda.",
+        "rut": "77654321-7",
+        "monto": 2380000
+      },
+      "expect_reject": []
     }
   ]
 }

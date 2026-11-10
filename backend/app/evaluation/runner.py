@@ -156,10 +156,17 @@ def _summarize(results: list[dict[str, Any]], manifest: dict[str, Any], provider
     per_doc: list[dict[str, m.Counts]] = []
     per_kind: dict[str, list[dict[str, m.Counts]]] = {}
     observations: list[m.Observation] = []
-    attribution = {"correct": 0, "ocr_or_text_layer_error": 0, "extraction_error": 0}
+    # Each wrong field gets exactly one cause, checked in this order: the value breaks its schema or
+    # checksum (validation), it is the right value in a non-canonical form (normalization), the
+    # extractor gets it right from the clean text (OCR / text layer), otherwise extraction.
+    attribution = {
+        "correct": 0, "validation_error": 0, "normalization_error": 0,
+        "ocr_or_text_layer_error": 0, "extraction_error": 0,
+    }
     doc_rows = []
     for r in completed:
         truth = entries[r["id"]]["truth"]
+        properties = manifest["schemas"].get(entries[r["id"]]["doc_type"], {}).get("properties", {})
         fields = {f["name"]: f for f in r["extraction"]["fields"]}
         predicted = {name: f["original_value"] for name, f in fields.items()}
         scores = m.score_document(truth, predicted)
@@ -176,8 +183,15 @@ def _summarize(results: list[dict[str, Any]], manifest: dict[str, Any], provider
                 )
             )
             oracle_ok = m.values_match(expected, r["oracle_fields"].get(name))
+            value = f["original_value"] if f else None
             if correct:
                 attribution["correct"] += 1
+            elif not m.field_valid(properties.get(name), value):
+                attribution["validation_error"] += 1
+                wrong_fields.append(name)
+            elif m.semantic_match(expected, value):
+                attribution["normalization_error"] += 1
+                wrong_fields.append(name)
             elif oracle_ok:
                 attribution["ocr_or_text_layer_error"] += 1
                 wrong_fields.append(name)
@@ -439,6 +453,8 @@ def to_markdown(report: dict[str, Any]) -> str:
     lines += [
         "", "## Where errors come from", "",
         _p(f"Of {sum(a.values())} annotated fields: {a['correct']} correct, ",
+           f"{a['validation_error']} breaking their schema or checksum (validation), ",
+           f"{a['normalization_error']} right value in a non-canonical form (normalization), ",
            f"{a['ocr_or_text_layer_error']} wrong only because the text was damaged (OCR / text layer), ",
            f"{a['extraction_error']} wrong even on perfect text (extraction)."),
     ]

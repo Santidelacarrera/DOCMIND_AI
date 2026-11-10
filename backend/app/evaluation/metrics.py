@@ -31,6 +31,44 @@ def values_match(expected: Any, predicted: Any) -> bool:
     return normalize(expected) == normalize(predicted)
 
 
+def semantic_match(expected: Any, predicted: Any) -> bool:
+    """Same value in a different spelling: a RUT with dots, an amount as text, a date not in ISO.
+
+    Used to attribute an error to *normalization* (the right value, exported in the wrong form)
+    rather than to extraction. Never used to count a field as correct.
+    """
+    if normalize(expected) is None or normalize(predicted) is None:
+        return False
+    from app import rut
+    from app.evaluation.baseline import parse_amount, parse_date
+
+    if isinstance(expected, str) and isinstance(predicted, str):
+        a, b = rut.normalize(expected), rut.normalize(predicted)
+        if a is not None and a == b:
+            return True
+        iso, _ = parse_date(predicted)
+        if iso is not None and iso == expected.strip():
+            return True
+    if isinstance(expected, (int, float)) and isinstance(predicted, str):
+        amount = parse_amount(predicted)
+        return amount is not None and round(float(expected), 2) == amount
+    return False
+
+
+def field_valid(spec: dict[str, Any] | None, value: Any) -> bool:
+    """``value`` satisfies its schema property (type, pattern, bounds) and, for ``format: cl-rut``,
+    carries a valid check digit. ``None`` is not a validation error (it is a missing value)."""
+    if value is None or not spec:
+        return True
+    from jsonschema import Draft202012Validator
+
+    from app import rut
+
+    if spec.get("format") == "cl-rut" and isinstance(value, str) and not rut.is_valid(value):
+        return False
+    return Draft202012Validator(spec).is_valid(value)
+
+
 # --------------------------------------------------------------------------- field scoring
 @dataclass
 class Counts:
