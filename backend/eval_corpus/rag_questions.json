@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "note": "Fictitious documents and facts only. Ground truth for app.evaluation.rag: each answerable question lists every (document, page) that contains its answer; 'contains' is the fact the answer text must quote. 'unanswerable' questions have no answer in the asking tenant's documents; 'cross_tenant' questions ask for a fact that exists only in the OTHER tenant, so the correct behaviour is to abstain.",
+  "tenants": {
+    "aurora": "Aurora Demo S.L. (ficticia)",
+    "orion": "Orion Demo Ltd (ficticia)"
+  },
+  "documents": [
+    {"tenant": "aurora", "file": "politica_vacaciones.docx", "pages": [
+      ["POLÍTICA DE VACACIONES", "Esta política describe cómo se gestionan las vacaciones del personal de Aurora Demo."],
+      ["Los empleados tienen derecho a 23 días laborables de vacaciones al año.", "Las solicitudes de vacaciones se envían con 15 días de antelación al departamento de personas."],
+      ["Se pueden trasladar hasta 5 días de vacaciones al año siguiente, antes del 31 de marzo."]
+    ]},
+    {"tenant": "aurora", "file": "contrato_servicios.pdf", "pages": [
+      ["CONTRATO DE SERVICIOS", "Contrato entre Aurora Demo S.L. y su cliente ficticio Boreal Pruebas S.A."],
+      ["La duración del contrato de servicios es de 24 meses a partir del 1 de marzo de 2026."],
+      ["El precio total del contrato es de 48.000 euros, pagaderos trimestralmente."],
+      ["Cualquiera de las partes puede resolver el contrato con 60 días de preaviso por escrito.", "El contrato se rige por la legislación española y los tribunales de Madrid."]
+    ]},
+    {"tenant": "aurora", "file": "manual_seguridad.pdf", "pages": [
+      ["MANUAL DE SEGURIDAD", "Las contraseñas deben tener al menos 14 caracteres y cambiarse cada 90 días."],
+      ["Los incidentes de seguridad se notifican al equipo de respuesta en un máximo de 24 horas."],
+      ["Las copias de seguridad de los servidores se realizan cada noche y se conservan durante 30 días."]
+    ]},
+    {"tenant": "aurora", "file": "procedimiento_compras.pdf", "pages": [
+      ["PROCEDIMIENTO DE COMPRAS", "Toda compra superior a 3.000 euros requiere tres presupuestos de proveedores distintos."],
+      ["Las facturas de proveedores se pagan a 45 días desde la fecha de recepción."],
+      ["El director financiero aprueba las compras superiores a 20.000 euros."]
+    ]},
+    {"tenant": "orion", "file": "politica_vacaciones.pdf", "pages": [
+      ["VACATION POLICY", "Los empleados tienen derecho a 30 días laborables de vacaciones al año."]
+    ]},
+    {"tenant": "orion", "file": "codigo_conducta.docx", "pages": [
+      ["CÓDIGO DE CONDUCTA", "Los regalos de proveedores con un valor superior a 50 euros deben declararse al comité de ética."],
+      ["El teletrabajo está permitido hasta 3 días por semana con acuerdo del responsable."]
+    ]}
+  ],
+  "questions": [
+    {"tenant": "aurora", "category": "factual", "question": "¿Cuántos días de vacaciones tienen los empleados?", "relevant": [["politica_vacaciones.docx", 2]], "contains": "23 días"},
+    {"tenant": "aurora", "category": "factual", "question": "¿Con cuánta antelación se envían las solicitudes de vacaciones?", "relevant": [["politica_vacaciones.docx", 2]], "contains": "15 días"},
+    {"tenant": "aurora", "category": "factual", "question": "¿Cuántos días de vacaciones se pueden trasladar al año siguiente?", "relevant": [["politica_vacaciones.docx", 3]], "contains": "5 días"},
+    {"tenant": "aurora", "category": "factual", "question": "¿Cuál es la duración del contrato de servicios?", "relevant": [["contrato_servicios.pdf", 2]], "contains": "24 meses"},
+    {"tenant": "aurora", "category": "factual", "question": "¿Cuál es el precio total del contrato?", "relevant": [["contrato_servicios.pdf", 3]], "contains": "48.000"},
+    {"tenant": "aurora", "category": "factual", "question": "¿Con cuántos días de preaviso se puede resolver el contrato?", "relevant": [["contrato_servicios.pdf", 4]], "contains": "60 días"},
+    {"tenant": "aurora", "category": "factual", "question": "¿Por qué legislación se rige el contrato?", "relevant": [["contrato_servicios.pdf", 4]], "contains": "legislación española"},
+    {"tenant": "aurora", "category": "factual", "question": "¿Cada cuántos días deben cambiarse las contraseñas?", "relevant": [["manual_seguridad.pdf", 1]], "contains": "90 días"},
+    {"tenant": "aurora", "category": "factual", "question": "¿En cuánto tiempo se notifican los incidentes de seguridad?", "relevant": [["manual_seguridad.pdf", 2]], "contains": "24 horas"},
+    {"tenant": "aurora", "category": "factual", "question": "¿Durante cuántos días se conservan las copias de seguridad?", "relevant": [["manual_seguridad.pdf", 3]], "contains": "30 días"},
+    {"tenant": "aurora", "category": "factual", "question": "¿Cuántos presupuestos requiere una compra superior a 3.000 euros?", "relevant": [["procedimiento_compras.pdf", 1]], "contains": "tres presupuestos"},
+    {"tenant": "aurora", "category": "factual", "question": "¿A cuántos días se pagan las facturas de proveedores?", "relevant": [["procedimiento_compras.pdf", 2]], "contains": "45 días"},
+    {"tenant": "aurora", "category": "factual", "question": "¿Quién aprueba las compras superiores a 20.000 euros?", "relevant": [["procedimiento_compras.pdf", 3]], "contains": "director financiero"},
+    {"tenant": "aurora", "category": "paraphrase", "question": "¿Qué longitud mínima deben tener las contraseñas?", "relevant": [["manual_seguridad.pdf", 1]], "contains": "14 caracteres"},
+    {"tenant": "aurora", "category": "paraphrase", "question": "¿Cuánto cuesta en total el servicio contratado?", "relevant": [["contrato_servicios.pdf", 3]], "contains": "48.000"},
+    {"tenant": "aurora", "category": "paraphrase", "question": "¿Cuánto tiempo dura el acuerdo con el cliente?", "relevant": [["contrato_servicios.pdf", 2]], "contains": "24 meses"},
+    {"tenant": "aurora", "category": "paraphrase", "question": "¿Con qué frecuencia se hacen los backups de los servidores?", "relevant": [["manual_seguridad.pdf", 3]], "contains": "cada noche"},
+    {"tenant": "orion", "category": "factual", "question": "¿Cuántos días de vacaciones tienen los empleados?", "relevant": [["politica_vacaciones.pdf", 1]], "contains": "30 días"},
+    {"tenant": "orion", "category": "factual", "question": "¿Cuántos días por semana está permitido el teletrabajo?", "relevant": [["codigo_conducta.docx", 2]], "contains": "3 días"},
+    {"tenant": "orion", "category": "factual", "question": "¿A partir de qué valor deben declararse los regalos de proveedores?", "relevant": [["codigo_conducta.docx", 1]], "contains": "50 euros"},
+    {"tenant": "aurora", "category": "unanswerable", "question": "¿Cuál es el color favorito del gerente?", "relevant": [], "contains": ""},
+    {"tenant": "aurora", "category": "unanswerable", "question": "¿Cuántas plazas de aparcamiento tiene la oficina?", "relevant": [], "contains": ""},
+    {"tenant": "orion", "category": "unanswerable", "question": "¿Qué seguro médico ofrece la empresa?", "relevant": [], "contains": ""},
+    {"tenant": "orion", "category": "cross_tenant", "question": "¿Cuál es el precio total del contrato de servicios?", "relevant": [], "contains": ""},
+    {"tenant": "orion", "category": "cross_tenant", "question": "¿Cada cuántos días deben cambiarse las contraseñas?", "relevant": [], "contains": ""},
+    {"tenant": "orion", "category": "cross_tenant", "question": "¿Quién aprueba las compras superiores a 20.000 euros?", "relevant": [], "contains": ""},
+    {"tenant": "aurora", "category": "cross_tenant", "question": "¿A partir de qué valor deben declararse los regalos de proveedores al comité de ética?", "relevant": [], "contains": ""},
+    {"tenant": "aurora", "category": "cross_tenant", "question": "¿Cuántos días por semana está permitido el teletrabajo?", "relevant": [], "contains": ""}
+  ]
+}

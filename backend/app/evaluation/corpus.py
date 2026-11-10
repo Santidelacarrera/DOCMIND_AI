@@ -28,6 +28,8 @@ DEVELOPMENT_IDS = frozenset(
         "scan_invoice_clean", "scan_invoice_skewed", "scan_invoice_lowres", "scan_contract_3p",
         "inj_invoice_01", "mal_truncated", "mal_not_a_pdf", "mal_empty", "mal_header_only",
         "mal_encrypted", "mal_zero_pages",
+        # Chilean documents: the dte_cl rules were written while looking at them.
+        "cl_factura_01", "cl_boleta_02", "cl_nota_credito_03", "cl_factura_rut_invalido_04", "cl_factura_scan_05",
     }
 )
 
@@ -66,7 +68,22 @@ FORM_SCHEMA: dict[str, Any] = {
     },
     "required": ["applicant_name"],
 }
-SCHEMAS = {"invoice": INVOICE_SCHEMA, "contract": CONTRACT_SCHEMA, "form": FORM_SCHEMA}
+# Chilean tax documents (factura, boleta, nota de crédito). ``nombre``/``rut`` are the recipient,
+# ``entidad`` the issuer. RUTs are annotated canonically (12345678-5) and checked by ``format: cl-rut``.
+DTE_CL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "tipo_documento": {"type": ["string", "null"]},
+        "numero_documento": {"type": "string"},
+        "fecha": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+        "entidad": {"type": ["string", "null"]},
+        "nombre": {"type": ["string", "null"]},
+        "rut": {"type": ["string", "null"], "pattern": "^\\d{7,8}-[\\dK]$", "format": "cl-rut"},
+        "monto": {"type": ["number", "null"], "minimum": 0},
+    },
+    "required": ["numero_documento", "monto"],
+}
+SCHEMAS = {"invoice": INVOICE_SCHEMA, "contract": CONTRACT_SCHEMA, "form": FORM_SCHEMA, "dte_cl": DTE_CL_SCHEMA}
 
 # Document kinds: what each one stresses.
 DIGITAL, SCANNED, MULTIPAGE, MALFORMED, ADVERSARIAL = (
@@ -439,6 +456,105 @@ SPECS: list[Spec] = [
          expect_reject=["PDF_ENCRYPTED"], note="Password-protected PDF."),
     Spec("mal_zero_pages", MALFORMED, "invoice", recipe="zero_pages",
          expect_reject=["DOCUMENT_INVALID"], note="Structurally valid PDF with no pages."),
+    # ---------------------------------------------------------------- Chilean documents (added 2026-11-10)
+    # Fictitious issuers, people and RUTs (valid check digits). Stresses: dotted vs plain RUT, K check
+    # digit, CLP amounts with dot thousands, DD-MM-YYYY and "5 de mayo de 2025" dates, an invalid RUT.
+    Spec(
+        "cl_factura_01", DIGITAL, "dte_cl",
+        pages=[[
+            "Comercial Andes Ejemplo SpA",
+            "RUT: 76.123.456-0",
+            "Av. Providencia 1234, Santiago",
+            "",
+            "FACTURA ELECTRÓNICA",
+            "Folio: 4512",
+            "Fecha de emisión: 14-03-2025",
+            "Señor(es): Constructora Pacífico Prueba Ltda.",
+            "RUT receptor: 77.654.321-7",
+            "",
+            "Servicio de mantención mensual        $ 1.000.000",
+            "Neto: $ 1.000.000",
+            "IVA (19%): $ 190.000",
+            "Total: $ 1.190.000",
+        ]],
+        truth={"tipo_documento": "Factura Electrónica", "numero_documento": "4512", "fecha": "2025-03-14",
+               "entidad": "Comercial Andes Ejemplo SpA", "nombre": "Constructora Pacífico Prueba Ltda.",
+               "rut": "77654321-7", "monto": 1190000},
+    ),
+    Spec(
+        "cl_boleta_02", DIGITAL, "dte_cl",
+        pages=[[
+            "Farmacia Ejemplo Limitada",
+            "RUT: 96.555.444-0",
+            "",
+            "BOLETA ELECTRÓNICA",
+            "Folio: 88231",
+            "Fecha: 5 de mayo de 2025",
+            "Cliente: María José Ejemplo Prueba",
+            "RUT cliente: 12345678-5",
+            "",
+            "Medicamentos varios",
+            "Monto total: $ 25.990",
+        ]],
+        truth={"tipo_documento": "Boleta Electrónica", "numero_documento": "88231", "fecha": "2025-05-05",
+               "entidad": "Farmacia Ejemplo Limitada", "nombre": "María José Ejemplo Prueba",
+               "rut": "12345678-5", "monto": 25990},
+    ),
+    Spec(
+        "cl_nota_credito_03", DIGITAL, "dte_cl",
+        pages=[[
+            "Servicios Digitales Ejemplo S.A.",
+            "RUT: 78.111.222-4",
+            "",
+            "NOTA DE CRÉDITO ELECTRÓNICA",
+            "Folio: 311",
+            "Fecha de emisión: 2025-06-30",
+            "Señor(es): Juan Pablo Ejemplo Soto",
+            "RUT receptor: 10.000.013-K",
+            "Referencia: Factura folio 298",
+            "Total: $ 450.000",
+        ]],
+        truth={"tipo_documento": "Nota de Crédito Electrónica", "numero_documento": "311", "fecha": "2025-06-30",
+               "entidad": "Servicios Digitales Ejemplo S.A.", "nombre": "Juan Pablo Ejemplo Soto",
+               "rut": "10000013-K", "monto": 450000},
+    ),
+    Spec(
+        "cl_factura_rut_invalido_04", DIGITAL, "dte_cl",
+        pages=[[
+            "Transportes Ejemplo Norte SpA",
+            "RUT: 15.222.333-1",
+            "",
+            "FACTURA ELECTRÓNICA",
+            "Folio: 1207",
+            "Fecha de emisión: 02-07-2025",
+            "Señor(es): Minera Ejemplo Sur Ltda.",
+            "RUT receptor: 7.333.444-5",
+            "Total: $ 3.570.000",
+        ]],
+        truth={"tipo_documento": "Factura Electrónica", "numero_documento": "1207", "fecha": "2025-07-02",
+               "entidad": "Transportes Ejemplo Norte SpA", "nombre": "Minera Ejemplo Sur Ltda.",
+               "rut": None, "monto": 3570000},
+        tags=["invalid_rut"],
+        note="Recipient RUT printed with a wrong check digit (7.333.444-5; the valid one ends in 6): "
+             "it must not be exported as a valid RUT.",
+    ),
+    Spec(
+        "cl_factura_scan_05", SCANNED, "dte_cl", render="scanned", scan={"dpi": 200},
+        pages=[[
+            "Ferreteria Ejemplo Centro SpA",
+            "RUT: 76.123.456-0",
+            "",
+            "FACTURA ELECTRONICA",
+            "Folio: 9034",
+            "Fecha de emision: 21-08-2025",
+            "Senor(es): Inmobiliaria Ejemplo Costa Ltda.",
+            "RUT receptor: 77.654.321-7",
+            "Total: $ 2.380.000",
+        ]],
+        truth={"tipo_documento": "Factura Electrónica", "numero_documento": "9034", "fecha": "2025-08-21",
+               "entidad": "Ferreteria Ejemplo Centro SpA", "nombre": "Inmobiliaria Ejemplo Costa Ltda.",
+               "rut": "77654321-7", "monto": 2380000},
+    ),
 ]
 
 

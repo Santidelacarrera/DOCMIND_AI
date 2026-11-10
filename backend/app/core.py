@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -110,6 +110,9 @@ class Settings(BaseSettings):
     ingest_chunk_overlap: int = 150
     # Refuse PDFs carrying JavaScript, launch actions, embedded files or XFA (else strip them).
     ingest_reject_active_content: bool = True
+    # /ask abstains unless the quoted sentence covers at least this share of the question's
+    # (rarity-weighted) terms. Below it, a sentence that merely shares a word is not evidence.
+    ask_min_evidence_coverage: float = Field(default=0.5, ge=0.0, le=1.0)
 
     # ---- Retention ---------------------------------------------------------------
     # Soft-deleted documents (and every derived record) are hard-deleted after this

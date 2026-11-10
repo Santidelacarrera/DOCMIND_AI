@@ -2046,6 +2046,28 @@ class AskInput(BaseModel):
     top_k: int = Field(default=4, ge=1, le=8)
 
 
+def _answer_body(result: Any) -> dict[str, object]:
+    """Response of both ask endpoints. Each citation names document, page and the supporting
+    fragment (``chunk_index`` and the quoted ``excerpt``), so a reader can check the source."""
+    return {
+        "answer": result.text,
+        "abstained": result.abstained,
+        "citations": [
+            {
+                "document_id": c.document_id,
+                "document": c.document,
+                "page": c.page,
+                "page_basis": c.page_basis,
+                "score": c.score,
+                "label": c.label(),
+                "chunk_index": c.chunk_index,
+                "excerpt": c.excerpt,
+            }
+            for c in result.citations
+        ],
+    }
+
+
 @app.post("/api/v1/ask")
 def ask(
     organization_id: str,
@@ -2092,24 +2114,11 @@ def ask(
         top_k=payload.top_k,
         is_live=is_live,
         project_ids=as_strings(accessible_project_ids(db, org_id, user)),
+        min_coverage=settings().ask_min_evidence_coverage,
     )
     audit(db, "document.ask", "organization", str(org_id), user, org_id)
     db.commit()
-    return {
-        "answer": result.text,
-        "abstained": result.abstained,
-        "citations": [
-            {
-                "document_id": c.document_id,
-                "document": c.document,
-                "page": c.page,
-                "page_basis": c.page_basis,
-                "score": c.score,
-                "label": c.label(),
-            }
-            for c in result.citations
-        ],
-    }
+    return _answer_body(result)
 
 
 @app.post("/api/v1/projects/{project_id}/ask")
@@ -2171,6 +2180,7 @@ def project_ask(
         top_k=payload.top_k,
         is_live=is_live,
         project_id=str(project_uuid),
+        min_coverage=settings().ask_min_evidence_coverage,
     )
     # Same transaction as the response: the audit record exists if and only if the answer was given.
     db.add(
@@ -2194,18 +2204,4 @@ def project_ask(
             "abstained": result.abstained,
         },
     )
-    return {
-        "answer": result.text,
-        "abstained": result.abstained,
-        "citations": [
-            {
-                "document_id": c.document_id,
-                "document": c.document,
-                "page": c.page,
-                "page_basis": c.page_basis,
-                "score": c.score,
-                "label": c.label(),
-            }
-            for c in result.citations
-        ],
-    }
+    return _answer_body(result)

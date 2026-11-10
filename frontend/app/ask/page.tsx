@@ -1,5 +1,6 @@
 "use client";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Nav from "../../components/Nav";
 import { api } from "../../lib/api";
@@ -11,6 +12,8 @@ type Citation = {
   page_basis: string;
   score: number;
   label: string;
+  chunk_index: number | null;
+  excerpt: string;
 };
 type Answer = { answer: string; abstained: boolean; citations: Citation[] };
 
@@ -93,7 +96,9 @@ export default function Ask() {
               <ul>
                 {result.citations.map((c) => (
                   <li key={`${c.document_id}-${c.page}`}>
-                    {c.label}
+                    <Link href={`/documents/${c.document_id}`}>{c.label}</Link>
+                    {c.chunk_index !== null && <small> · fragment {c.chunk_index + 1}</small>}
+                    {c.excerpt && <blockquote>{c.excerpt}</blockquote>}
                   </li>
                 ))}
               </ul>

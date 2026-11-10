@@ -18,6 +18,16 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  qdrant:
+    # Vector index for POST /api/v1/ask. Same minor version as qdrant-client (backend/pyproject.toml).
+    image: qdrant/qdrant:v1.20.0
+    volumes: [qdrant_data:/qdrant/storage]
+    healthcheck:
+      # The image ships no curl/wget; bash can open the TCP port.
+      test: ["CMD", "bash", "-c", ":> /dev/tcp/127.0.0.1/6333"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
   storage-init:
     image: alpine:3.21
     command: ["sh", "-c", "mkdir -p /data/documents && chown -R 1000:1000 /data/documents"]
@@ -50,6 +60,7 @@ services:
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
+      qdrant: {condition: service_healthy}
       storage-init: {condition: service_completed_successfully}
   worker:
     build: ./backend
@@ -64,6 +75,7 @@ services:
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
+      qdrant: {condition: service_healthy}
       storage-init: {condition: service_completed_successfully}
   scheduler:
     build: ./backend
@@ -80,6 +92,7 @@ services:
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
+      qdrant: {condition: service_healthy}
       storage-init: {condition: service_completed_successfully}
   web:
     build:
@@ -119,5 +132,6 @@ services:
     ports: ["4318:4318"]
 volumes:
   postgres_data:
+  qdrant_data:
   documents:
   grafana_data:

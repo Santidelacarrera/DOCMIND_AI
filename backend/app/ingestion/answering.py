@@ -27,6 +27,7 @@ _STOP = frozenset(
 )
 _WORD = re.compile(r"[\wáéíóúñü]+", re.IGNORECASE)
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+EXCERPT_CHARS = 300  # bound on the quoted supporting sentence returned with each citation
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,10 @@ class Citation:
     page: int
     page_basis: str  # "explicit" or "estimated" (Word documents without page breaks)
     score: float
+    # Locates the supporting fragment: the chunk's position in the document and the verbatim
+    # (masked) sentence quoted from it. Optional so callers built before they existed still work.
+    chunk_index: int | None = None
+    excerpt: str = ""
 
     def __post_init__(self) -> None:
         if not self.document_id or not self.document or self.page < 1:
@@ -69,16 +74,28 @@ def terms(text: str) -> set[str]:
     return {_stem(w) for w in _WORD.findall(text) if len(w) > 2 and w.lower() not in _STOP}
 
 
-def _best_sentences(question: str, hits: Sequence[dict[str, Any]], limit: int = 2) -> list[tuple[str, dict[str, Any]]]:
+def _best_sentences(
+    question: str, hits: Sequence[dict[str, Any]], limit: int = 2, min_coverage: float = 0.0,
+) -> list[tuple[str, dict[str, Any]]]:
     """The sentence(s) that best match the question.
 
     Terms are weighted by rarity among the retrieved chunks (a word present in every chunk,
     like "vacaciones" in a vacation policy, says little about which sentence answers); a second
     sentence is added only if it is nearly as good as the first.
+
+    **Sufficient evidence.** The best sentence must cover at least ``min_coverage`` of the
+    question's total term weight, or nothing is returned and the caller abstains. A term found
+    in no retrieved chunk keeps the highest weight, so a question about something the documents
+    never mention cannot be "answered" by a sentence that only shares a generic word.
     """
     wanted = terms(question)
     per_chunk = [terms(str(h.get("text", ""))) for h in hits]
     weight = {t: math.log(1 + len(hits) / max(1, sum(t in c for c in per_chunk))) for t in wanted}
+    total = sum(weight.values())
+
+    def coverage(sentence: str) -> float:
+        return sum(weight[t] for t in wanted & terms(sentence)) / total if total else 0.0
+
     scored: list[tuple[float, int, str, dict[str, Any]]] = []
     for rank, hit in enumerate(hits):
         for sentence in (s.strip() for s in _SENTENCE.split(str(hit.get("text", "")))):
@@ -88,6 +105,8 @@ def _best_sentences(question: str, hits: Sequence[dict[str, Any]], limit: int = 
             if overlap:
                 scored.append((overlap + 0.1 * float(hit.get("score", 0.0)), -rank, sentence, hit))
     scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    if not scored or total <= 0 or coverage(scored[0][2]) < min_coverage:
+        return []
     picked: list[tuple[str, dict[str, Any]]] = []
     for score, _, sentence, hit in scored:
         if picked and score < 0.75 * scored[0][0]:
@@ -109,6 +128,7 @@ def answer(
     is_live: Callable[[str], bool] | None = None,
     project_id: str | None = None,
     project_ids: Sequence[str] | None = None,
+    min_coverage: float = 0.5,
 ) -> Answer:
     """Answer ``question`` from this tenant's documents only.
 
@@ -121,6 +141,52 @@ def answer(
     Each hit is checked against the scope again, so a chunk without a project, or with another one,
     is never used. ``is_live(document_id)`` drops hits whose document was deleted but whose vectors are
     still waiting in the deletion outbox: a deleted document is never cited.
+
+    ``min_coverage`` is the sufficient-evidence threshold (see :func:`_best_sentences`); the API
+    passes ``ASK_MIN_EVIDENCE_COVERAGE``. 0 restores the old "any shared term" behaviour.
+    """
+    question = question.strip()
+    hits = retrieve(
+        pipeline, tenant_id=tenant_id, question=question, top_k=top_k, min_score=min_score,
+        is_live=is_live, project_id=project_id, project_ids=project_ids,
+    )
+    picked = _best_sentences(question, hits, min_coverage=min_coverage)
+    if not picked:
+        return Answer(question, ABSTENTION, (), True)
+    citations: list[Citation] = []
+    for sentence, hit in picked:
+        citation = Citation(
+            document_id=str(hit["document_id"]), document=str(hit.get("source_name") or hit["document_id"]),
+            page=int(hit.get("page") or hit.get("page_start") or 0), page_basis=str(hit.get("page_basis", "explicit")),
+            score=round(float(hit.get("score", 0.0)), 4),
+            chunk_index=_chunk_index(hit), excerpt=sentence[:EXCERPT_CHARS],
+        )
+        if all((citation.document_id, citation.page) != (c.document_id, c.page) for c in citations):
+            citations.append(citation)
+    text = " ".join(sentence for sentence, _ in picked)
+    return Answer(question, text, tuple(citations), False)
+
+
+def _chunk_index(hit: dict[str, Any]) -> int | None:
+    value = hit.get("chunk_index")
+    return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def retrieve(
+    pipeline: IngestionPipeline,
+    *,
+    tenant_id: str,
+    question: str,
+    top_k: int = 4,
+    min_score: float = 0.05,
+    is_live: Callable[[str], bool] | None = None,
+    project_id: str | None = None,
+    project_ids: Sequence[str] | None = None,
+) -> list[dict[str, Any]]:
+    """The chunks ``answer()`` reads, best first, after every scope and liveness check.
+
+    Exposed so the RAG evaluation (``app.evaluation.rag``) measures the exact production retrieval
+    path instead of a copy of it. Same scope rules as :func:`answer`.
     """
     if project_id is not None and project_ids is not None:
         raise ValueError("ONE_SCOPE_ONLY")
@@ -129,9 +195,9 @@ def answer(
     allowed = {parse_tenant(p) for p in project_ids} if project_ids is not None else None
     question = question.strip()
     if not terms(question) or (allowed is not None and not allowed):
-        return Answer(question, ABSTENTION, (), True)
+        return []
     vector = pipeline.query_vector(tenant_id=tenant, question=question)
-    hits = [
+    return [
         h for h in pipeline.store.search(
             tenant, vector, limit=top_k, project_id=project,
             project_ids=sorted(allowed) if allowed is not None else None,
@@ -141,17 +207,3 @@ def answer(
         and (allowed is None or h.get("project_id") in allowed)
         and (is_live is None or is_live(str(h.get("document_id"))))
     ]
-    picked = _best_sentences(question, hits)
-    if not picked:
-        return Answer(question, ABSTENTION, (), True)
-    citations: list[Citation] = []
-    for _, hit in picked:
-        citation = Citation(
-            document_id=str(hit["document_id"]), document=str(hit.get("source_name") or hit["document_id"]),
-            page=int(hit.get("page") or hit.get("page_start") or 0), page_basis=str(hit.get("page_basis", "explicit")),
-            score=round(float(hit.get("score", 0.0)), 4),
-        )
-        if all((citation.document_id, citation.page) != (c.document_id, c.page) for c in citations):
-            citations.append(citation)
-    text = " ".join(sentence for sentence, _ in picked)
-    return Answer(question, text, tuple(citations), False)

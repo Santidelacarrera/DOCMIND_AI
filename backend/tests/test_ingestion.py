@@ -2,12 +2,12 @@
 
 import io
 import itertools
-import shutil
 import uuid
 from typing import Any
 
 import pytest
 from pypdf import PdfWriter
+from pypdf.actions import JavaScript
 
 from app.core import settings
 from app.evaluation import corpus
@@ -16,6 +16,7 @@ from app.ingestion import chunking, pdf, pii, text
 from app.ingestion.embeddings import HashingEmbedder
 from app.ingestion.pipeline import IngestionPipeline, IngestionRefused
 from app.ingestion.vectorstore import Point, QdrantStore, check_points
+from tests._tools import needs
 
 qdrant_client = pytest.importorskip("qdrant_client")
 
@@ -117,7 +118,7 @@ def _pdf_with(*, js: bool = False, attachment: bool = False, metadata: bool = Tr
     writer = PdfWriter()
     writer.add_blank_page(612, 792)
     if js:
-        writer.add_js("app.alert('x')")
+        writer.add_open_action(JavaScript("app.alert('x')"))
     if attachment:
         writer.add_attachment("payload.exe", b"MZ....")
     if metadata:
@@ -346,7 +347,7 @@ def test_pseudonym_key_setting_switches_to_keyed_tokens(pipeline, store, monkeyp
     assert "[EMAIL:" in stored and "[EMAIL_1]" not in stored and "maria.fernandez" not in stored
 
 
-@pytest.mark.skipif(shutil.which("tesseract") is None or shutil.which("pdftoppm") is None, reason="needs OCR stack")
+@needs("tesseract", "pdftoppm")
 def test_reference_corpus_documents_ingest_including_a_scan(pipeline, store) -> None:
     form = (corpus.CORPUS_DIR / "pdfs" / "form_digital_01.pdf").read_bytes()
     scan = (corpus.CORPUS_DIR / "pdfs" / "scan_invoice_clean.pdf").read_bytes()

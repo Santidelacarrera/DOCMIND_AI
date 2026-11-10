@@ -1,0 +1,51 @@
+%PDF-1.4
+%âãÏÓ
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 468 >>
+stream
+BT
+/F1 11 Tf
+18 TL
+56 740 Td
+(Comercial Andes Ejemplo SpA) Tj T*
+(RUT: 76.123.456-0) Tj T*
+(Av. Providencia 1234, Santiago) Tj T*
+() Tj T*
+(FACTURA ELECTRÓNICA) Tj T*
+(Folio: 4512) Tj T*
+(Fecha de emisión: 14-03-2025) Tj T*
+(Señor\(es\): Constructora Pacífico Prueba Ltda.) Tj T*
+(RUT receptor: 77.654.321-7) Tj T*
+() Tj T*
+(Servicio de mantención mensual        $ 1.000.000) Tj T*
+(Neto: $ 1.000.000) Tj T*
+(IVA \(19%\): $ 190.000) Tj T*
+(Total: $ 1.190.000) Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000218 00000 n 
+0000000737 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+863
+%%EOF

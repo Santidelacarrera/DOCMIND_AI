@@ -35,7 +35,7 @@ The corpus is synthetic and small. It is a **regression instrument**, not a samp
 |---|---|
 | Field precision / recall / F1 | per field and overall (micro), plus per document kind. A correct value is a TP; a wrong value is **both** an FP and an FN; a missed value an FN; a value where none exists (hallucination) an FP. Comparison is case, whitespace and accent-insensitive; numbers compare to the cent; dates are ISO |
 | OCR error | character error rate (CER) and word error rate (WER) between the OCR output and the annotated page text (whitespace-insensitive Levenshtein) |
-| Error attribution | each wrong field is re-extracted from the **annotated, perfect text**: right there ⇒ the text (OCR / text layer) was at fault; wrong there too ⇒ extraction was at fault. With an LLM provider this separates "OCR problem" from "model problem" |
+| Error attribution | one cause per wrong field, checked in order: **validation** (the value breaks its schema property, or a `format: cl-rut` value has a wrong check digit), **normalization** (the right value in a non-canonical form: a dotted RUT, a non-ISO date, an amount as text), **OCR / text layer** (re-extracted from the annotated, perfect text it is right), otherwise **extraction**. With an LLM provider this separates "OCR problem" from "model problem" from "export format problem" |
 | Confidence calibration | accuracy per confidence bin and expected calibration error (ECE) |
 | Review routing | what the human-review gate buys: share of wrong fields sent to a person (**error capture**), share of all fields sent (**review load**), accuracy of the fields that are *not* sent (**auto-accept accuracy**) and the list of silent errors |
 | Rejection accuracy | malformed inputs rejected with the expected stable code |
@@ -76,6 +76,10 @@ From [evaluation/baseline-report.md](evaluation/baseline-report.md) (Tesseract 5
 * **Error capture of 100 % holds on 13 documents.** It is a regression bar, not a guarantee. The low-resolution scan *was* a silent error until OCR confidence was added to the gate — that is the kind of finding this harness exists to surface.
 * **Time** excludes model latency (the baseline answers instantly). Pipeline time is ≈0.05 s per digital document and ≈1 s per scanned page on the reference machine; add the provider's round trip for LLM runs.
 * **Cost** is *projected* from token counts at the configured prices (`OPENAI_INPUT_PRICE_PER_1M`, `OPENAI_OUTPUT_PRICE_PER_1M`; defaults are placeholders — set current prices). With a real provider the run stores the provider-reported token usage and a per-run `estimated_cost`, visible in `GET …/extraction` under `model`.
+
+### Chilean tax documents (added 2026-11-10)
+
+Five fictitious documents of type `dte_cl` (factura, boleta, nota de crédito; one scanned; one with a RUT whose check digit is wrong) annotate `tipo_documento`, `numero_documento` (folio), `fecha`, `entidad` (issuer), `nombre` and `rut` (recipient) and `monto` (CLP). RUTs are annotated canonically (`12345678-5`); an invalid RUT is annotated as no value, because it must not be exported as valid. Baseline result (Tesseract 5.5): F1 1.0 on every field except `entidad`, where the OCR misread one character of the scanned issuer name. That field is a positional guess with no label, so it is always routed to review; the error is caught, not silent. The rules were written while looking at these documents, so they belong to `DEVELOPMENT_IDS`.
 
 ## Regression gate
 

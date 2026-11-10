@@ -39,6 +39,10 @@ jobs:
       - run: pytest --cov=app --cov-report=term-missing --cov-fail-under=75
       - name: Extraction quality gate (reference corpus, offline baseline)
         run: python -m app.evaluation --min-f1 0.89 --output-dir eval_reports
+      - name: RAG quality gate (retrieval, citations, abstention, tenant leaks)
+        run: >-
+          python -m app.evaluation.rag --output-dir eval_reports
+          --min-recall-at-5 0.95 --min-citation-accuracy 0.85 --min-abstention-accuracy 1.0
       - name: Keep the evaluation report
         uses: actions/upload-artifact@v7
         with:

@@ -81,6 +81,9 @@ docker compose up --build     # applies migrations automatically
 1. Open the web app, **create an account** (password ≥ 12 characters).
 2. In **Documents**, create a project and upload a PDF.
 3. The worker processes it; open the document to review, edit and export the result.
+4. In **Ask**, ask a question about it: the answer quotes the document and names document, page and fragment, or says it found nothing.
+
+The development stack includes Qdrant (`qdrant` service) and uses the offline `hashing` embedder, so questions work with no model download. It is lexical, not semantic, and refused in staging/production: there, use `EMBEDDING_PROVIDER=local` (`pip install '.[embeddings]'` plus model files) or `openai`. End-to-end check of a running stack: `python backend/scripts/staging_smoke.py --base-url http://localhost:8000 --ask`.
 
 > The default `.env.example` uses `LLM_PROVIDER=mock`, which returns a fixed fixture so the whole flow works offline. Set `LLM_PROVIDER=openai` with `OPENAI_API_KEY`, or `LLM_PROVIDER=gemini` with `GEMINI_API_KEY`, for real extraction.
 
@@ -268,6 +271,7 @@ Create migrations with `docker compose exec api alembic revision --autogenerate 
 | Backend unit/API | `pytest --cov=app` | Hermetic by default: SQLite, in-memory Redis double. Covers auth, tenancy, uploads, exports, worker pipeline. Add `TEST_DATABASE_URL=postgresql+psycopg://…` to run it on PostgreSQL |
 | Job queue | `pytest tests/test_celery_redis.py` | A real `redis-server` + Celery worker: completion, duplicate messages, retries, lost-message recovery (skipped without `redis-server`). See [docs/RELIABILITY.md](docs/RELIABILITY.md) |
 | Quality evaluation | `python -m app.evaluation` | Field precision/recall/F1, OCR error rates, confidence calibration, review routing, rejections and a simulated review/export pass over a 19-document reference corpus; also a pytest regression gate. See [docs/EVALUATION.md](docs/EVALUATION.md) |
+| RAG evaluation | `python -m app.evaluation.rag` | Recall@k, precision@k, MRR, citation accuracy, faithfulness, abstention and cross-tenant leaks over 28 questions on a fictitious two-tenant corpus; CI gate. See [docs/evaluation/rag-report.md](docs/evaluation/rag-report.md) |
 | Tenant isolation / injection | `pytest tests/test_tenant_isolation.py tests/test_prompt_injection.py` | Route-table-driven negative tests across API and storage; hostile document content |
 | Docker integration | `DOCMIND_INTEGRATION=1 pytest tests/test_docker_integration.py` | Real Postgres, Redis and worker |
 | Frontend | `npm run lint` · `npm run typecheck` · `npm run build` | |

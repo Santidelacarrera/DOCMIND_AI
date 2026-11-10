@@ -1,21 +1,21 @@
 {
   "meta": {
     "provider": "baseline-rules",
-    "documents": 23,
-    "scored_documents": 17,
-    "tesseract": "5.3.4",
+    "documents": 28,
+    "scored_documents": 22,
+    "tesseract": "5.5.0",
     "note": "Deterministic sections are reproducible for a given corpus, provider and OCR engine; 'timing' is machine-dependent."
   },
   "extraction": {
     "micro": {
-      "tp": 87,
-      "fp": 2,
-      "fn": 14,
-      "precision": 0.9775,
-      "recall": 0.8614,
-      "f1": 0.9158
+      "tp": 120,
+      "fp": 3,
+      "fn": 15,
+      "precision": 0.9756,
+      "recall": 0.8889,
+      "f1": 0.9302
     },
-    "macro_f1": 0.942,
+    "macro_f1": 0.9506,
     "per_field": {
       "applicant_name": {
         "tp": 2,
@@ -81,6 +81,22 @@
         "recall": 1.0,
         "f1": 1.0
       },
+      "entidad": {
+        "tp": 4,
+        "fp": 1,
+        "fn": 1,
+        "precision": 0.8,
+        "recall": 0.8,
+        "f1": 0.8
+      },
+      "fecha": {
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
       "governing_law": {
         "tp": 4,
         "fp": 0,
@@ -113,6 +129,38 @@
         "recall": 0.7,
         "f1": 0.8235
       },
+      "monto": {
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "nombre": {
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "numero_documento": {
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "rut": {
+        "tp": 4,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
       "tax_amount": {
         "tp": 6,
         "fp": 0,
@@ -123,6 +171,14 @@
       },
       "term_months": {
         "tp": 4,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "tipo_documento": {
+        "tp": 5,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
@@ -164,12 +220,12 @@
         "f1": 1.0
       },
       "digital": {
-        "tp": 46,
+        "tp": 73,
         "fp": 1,
         "fn": 7,
-        "precision": 0.9787,
-        "recall": 0.8679,
-        "f1": 0.92
+        "precision": 0.9865,
+        "recall": 0.9125,
+        "f1": 0.9481
       },
       "multipage": {
         "tp": 14,
@@ -180,12 +236,12 @@
         "f1": 0.9655
       },
       "scanned": {
-        "tp": 20,
-        "fp": 1,
-        "fn": 6,
-        "precision": 0.9524,
-        "recall": 0.7692,
-        "f1": 0.8511
+        "tp": 26,
+        "fp": 2,
+        "fn": 7,
+        "precision": 0.9286,
+        "recall": 0.7879,
+        "f1": 0.8525
       }
     },
     "documents": [
@@ -360,17 +416,66 @@
         "fields_expected": 7,
         "wrong_fields": [],
         "requires_review": false
+      },
+      {
+        "id": "cl_factura_01",
+        "kind": "digital",
+        "ocr_used": false,
+        "fields_correct": 7,
+        "fields_expected": 7,
+        "wrong_fields": [],
+        "requires_review": true
+      },
+      {
+        "id": "cl_boleta_02",
+        "kind": "digital",
+        "ocr_used": false,
+        "fields_correct": 7,
+        "fields_expected": 7,
+        "wrong_fields": [],
+        "requires_review": true
+      },
+      {
+        "id": "cl_nota_credito_03",
+        "kind": "digital",
+        "ocr_used": false,
+        "fields_correct": 7,
+        "fields_expected": 7,
+        "wrong_fields": [],
+        "requires_review": true
+      },
+      {
+        "id": "cl_factura_rut_invalido_04",
+        "kind": "digital",
+        "ocr_used": false,
+        "fields_correct": 6,
+        "fields_expected": 6,
+        "wrong_fields": [],
+        "requires_review": true
+      },
+      {
+        "id": "cl_factura_scan_05",
+        "kind": "scanned",
+        "ocr_used": true,
+        "fields_correct": 6,
+        "fields_expected": 7,
+        "wrong_fields": [
+          "entidad"
+        ],
+        "requires_review": true
       }
     ]
   },
   "error_attribution": {
-    "correct": 93,
-    "ocr_or_text_layer_error": 6,
+    "correct": 127,
+    "validation_error": 0,
+    "normalization_error": 0,
+    "ocr_or_text_layer_error": 7,
     "extraction_error": 8
   },
   "text_quality": {
-    "ocr_mean_cer": 0.0632,
-    "ocr_mean_wer": 0.25,
+    "ocr_mean_cer": 0.0516,
+    "ocr_mean_wer": 0.208,
     "documents": [
       {
         "id": "inv_digital_01",
@@ -473,20 +578,50 @@
         "source": "text_layer",
         "cer": 0.0,
         "wer": 0.0
+      },
+      {
+        "id": "cl_factura_01",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "cl_boleta_02",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "cl_nota_credito_03",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "cl_factura_rut_invalido_04",
+        "source": "text_layer",
+        "cer": 0.0,
+        "wer": 0.0
+      },
+      {
+        "id": "cl_factura_scan_05",
+        "source": "ocr",
+        "cer": 0.0051,
+        "wer": 0.04
       }
     ]
   },
   "confidence": {
-    "n": 107,
-    "ece": 0.1243,
+    "n": 142,
+    "ece": 0.1289,
     "bins": [
       {
         "range": [
           0.0,
           0.5
         ],
-        "n": 18,
-        "accuracy": 0.3333,
+        "n": 19,
+        "accuracy": 0.3684,
         "mean_confidence": 0.0
       },
       {
@@ -494,8 +629,8 @@
           0.5,
           0.7
         ],
-        "n": 3,
-        "accuracy": 0.6667,
+        "n": 11,
+        "accuracy": 0.8182,
         "mean_confidence": 0.6
       },
       {
@@ -512,9 +647,9 @@
           0.9,
           1.0
         ],
-        "n": 67,
+        "n": 93,
         "accuracy": 1.0,
-        "mean_confidence": 0.9396
+        "mean_confidence": 0.9371
       }
     ]
   },
@@ -856,6 +991,90 @@
           }
         ]
       },
+      "entidad": {
+        "n": 5,
+        "ece": 0.2,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 5,
+            "accuracy": 0.8,
+            "mean_confidence": 0.6
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          }
+        ]
+      },
+      "fecha": {
+        "n": 5,
+        "ece": 0.26,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 3,
+            "accuracy": 1.0,
+            "mean_confidence": 0.6
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 2,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
       "governing_law": {
         "n": 4,
         "ece": 0.1,
@@ -1024,6 +1243,174 @@
           }
         ]
       },
+      "monto": {
+        "n": 5,
+        "ece": 0.05,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 5,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
+      "nombre": {
+        "n": 5,
+        "ece": 0.1,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 5,
+            "accuracy": 1.0,
+            "mean_confidence": 0.9
+          }
+        ]
+      },
+      "numero_documento": {
+        "n": 5,
+        "ece": 0.05,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 5,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
+      "rut": {
+        "n": 5,
+        "ece": 0.24,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 1,
+            "accuracy": 1.0,
+            "mean_confidence": 0.0
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 4,
+            "accuracy": 1.0,
+            "mean_confidence": 0.95
+          }
+        ]
+      },
       "tax_amount": {
         "n": 11,
         "ece": 0.3,
@@ -1103,6 +1490,48 @@
               1.0
             ],
             "n": 4,
+            "accuracy": 1.0,
+            "mean_confidence": 0.9
+          }
+        ]
+      },
+      "tipo_documento": {
+        "n": 5,
+        "ece": 0.1,
+        "bins": [
+          {
+            "range": [
+              0.0,
+              0.5
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.5,
+              0.7
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.7,
+              0.9
+            ],
+            "n": 0,
+            "accuracy": null,
+            "mean_confidence": null
+          },
+          {
+            "range": [
+              0.9,
+              1.0
+            ],
+            "n": 5,
             "accuracy": 1.0,
             "mean_confidence": 0.9
           }
@@ -1237,16 +1666,16 @@
     },
     "by_group": {
       "development": {
-        "n": 81,
-        "ece": 0.0877,
+        "n": 116,
+        "ece": 0.1043,
         "bins": [
           {
             "range": [
               0.0,
               0.5
             ],
-            "n": 12,
-            "accuracy": 0.0833,
+            "n": 13,
+            "accuracy": 0.1538,
             "mean_confidence": 0.0
           },
           {
@@ -1254,8 +1683,8 @@
               0.5,
               0.7
             ],
-            "n": 2,
-            "accuracy": 1.0,
+            "n": 10,
+            "accuracy": 0.9,
             "mean_confidence": 0.6
           },
           {
@@ -1272,9 +1701,9 @@
               0.9,
               1.0
             ],
-            "n": 52,
+            "n": 78,
             "accuracy": 1.0,
-            "mean_confidence": 0.9394
+            "mean_confidence": 0.9365
           }
         ]
       },
@@ -1322,8 +1751,8 @@
       }
     },
     "values_asserted": {
-      "n": 89,
-      "ece": 0.082,
+      "n": 123,
+      "ece": 0.0919,
       "bins": [
         {
           "range": [
@@ -1339,8 +1768,8 @@
             0.5,
             0.7
           ],
-          "n": 3,
-          "accuracy": 0.6667,
+          "n": 11,
+          "accuracy": 0.8182,
           "mean_confidence": 0.6
         },
         {
@@ -1357,16 +1786,16 @@
             0.9,
             1.0
           ],
-          "n": 67,
+          "n": 93,
           "accuracy": 1.0,
-          "mean_confidence": 0.9396
+          "mean_confidence": 0.9371
         }
       ]
     },
     "values_asserted_by_group": {
       "development": {
-        "n": 69,
-        "ece": 0.0884,
+        "n": 103,
+        "ece": 0.0981,
         "bins": [
           {
             "range": [
@@ -1382,8 +1811,8 @@
               0.5,
               0.7
             ],
-            "n": 2,
-            "accuracy": 1.0,
+            "n": 10,
+            "accuracy": 0.9,
             "mean_confidence": 0.6
           },
           {
@@ -1400,9 +1829,9 @@
               0.9,
               1.0
             ],
-            "n": 52,
+            "n": 78,
             "accuracy": 1.0,
-            "mean_confidence": 0.9394
+            "mean_confidence": 0.9365
           }
         ]
       },
@@ -1450,43 +1879,50 @@
       }
     },
     "abstentions": {
-      "n": 18,
-      "correct": 6
+      "n": 19,
+      "correct": 7
     }
   },
   "review_routing": {
-    "fields": 107,
-    "wrong": 14,
-    "flagged": 27,
-    "raw_accuracy": 0.8692,
+    "fields": 142,
+    "wrong": 15,
+    "flagged": 47,
+    "raw_accuracy": 0.8944,
     "error_capture_rate": 1.0,
-    "review_load": 0.2523,
+    "review_load": 0.331,
     "auto_accept_accuracy": 1.0,
     "silent_errors": []
   },
   "evidence": {
-    "n": 107,
+    "n": 142,
     "by_status": {
       "exact": {
-        "n": 64,
-        "correct": 63,
-        "wrong": 1,
-        "precision": 0.9844,
-        "flagged": 7
+        "n": 85,
+        "correct": 83,
+        "wrong": 2,
+        "precision": 0.9765,
+        "flagged": 19
       },
       "normalized": {
-        "n": 25,
-        "correct": 24,
+        "n": 34,
+        "correct": 33,
         "wrong": 1,
-        "precision": 0.96,
-        "flagged": 2
+        "precision": 0.9706,
+        "flagged": 5
       },
       "not_applicable": {
-        "n": 18,
-        "correct": 6,
+        "n": 19,
+        "correct": 7,
         "wrong": 12,
-        "precision": 0.3333,
-        "flagged": 18
+        "precision": 0.3684,
+        "flagged": 19
+      },
+      "not_found": {
+        "n": 4,
+        "correct": 4,
+        "wrong": 0,
+        "precision": 1.0,
+        "flagged": 4
       }
     }
   },
@@ -1559,31 +1995,31 @@
     }
   ],
   "timing": {
-    "seconds_per_document_mean": 0.3415,
-    "seconds_per_document_p50": 0.0621,
-    "seconds_per_document_p95": 0.9208,
-    "digital_mean": 0.0728,
-    "scanned_ocr_mean": 1.2148
+    "seconds_per_document_mean": 0.4696,
+    "seconds_per_document_p50": 0.1265,
+    "seconds_per_document_p95": 1.4246,
+    "digital_mean": 0.1352,
+    "scanned_ocr_mean": 1.6065
   },
   "cost": {
-    "prompt_tokens": 9685,
-    "completion_tokens": 1460,
-    "per_document_usd_projected": 0.000137,
+    "prompt_tokens": 9968,
+    "completion_tokens": 1918,
+    "per_document_usd_projected": 0.00012,
     "note": "Projected from token counts at the configured per-1M-token prices (OPENAI_INPUT_PRICE_PER_1M / OPENAI_OUTPUT_PRICE_PER_1M); a rule-based provider actually costs nothing. Token counts are character-based estimates unless the provider reports usage."
   },
   "review_workflow": {
-    "documents_in_review_queue": 10,
-    "fields_reviewed": 27,
-    "fields_corrected": 14,
-    "fields_confirmed_unchanged": 13,
-    "approved": 17,
+    "documents_in_review_queue": 15,
+    "fields_reviewed": 47,
+    "fields_corrected": 15,
+    "fields_confirmed_unchanged": 32,
+    "approved": 22,
     "approval_blocked": 0,
-    "accuracy_before_review": 0.8692,
+    "accuracy_before_review": 0.8944,
     "accuracy_after_review": 1.0,
     "reasons": {
-      "confirmed": 13,
+      "confirmed": 32,
       "missing_value": 7,
-      "ocr_misread": 6,
+      "ocr_misread": 7,
       "wrong_value": 1
     },
     "corrections": [
@@ -1661,9 +2097,27 @@
       },
       {
         "document": "contract_digital_01",
+        "field": "counterparty",
+        "model_value": "Sterling & Wells LLP",
+        "corrected_value": "Sterling & Wells LLP",
+        "confidence": 0.85,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "contract_digital_01",
         "field": "term_months",
         "model_value": 24,
         "corrected_value": 24,
+        "confidence": 0.9,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "contract_digital_01",
+        "field": "governing_law",
+        "model_value": "State of New York",
+        "corrected_value": "State of New York",
         "confidence": 0.9,
         "reason": "confirmed",
         "changed": false
@@ -1682,6 +2136,15 @@
         "field": "term_months",
         "model_value": 36,
         "corrected_value": 36,
+        "confidence": 0.9,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "contract_digital_02",
+        "field": "governing_law",
+        "model_value": "England and Wales",
+        "corrected_value": "England and Wales",
         "confidence": 0.9,
         "reason": "confirmed",
         "changed": false
@@ -1751,9 +2214,27 @@
       },
       {
         "document": "scan_contract_3p",
+        "field": "counterparty",
+        "model_value": "Maple Street Clinics LLC",
+        "corrected_value": "Maple Street Clinics LLC",
+        "confidence": 0.85,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "scan_contract_3p",
         "field": "term_months",
         "model_value": 12,
         "corrected_value": 12,
+        "confidence": 0.9,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "scan_contract_3p",
+        "field": "governing_law",
+        "model_value": "State of California",
+        "corrected_value": "State of California",
         "confidence": 0.9,
         "reason": "confirmed",
         "changed": false
@@ -1814,9 +2295,27 @@
       },
       {
         "document": "contract_long_30p",
+        "field": "counterparty",
+        "model_value": "Vandelay Industries Ltd",
+        "corrected_value": "Vandelay Industries Ltd",
+        "confidence": 0.85,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "contract_long_30p",
         "field": "term_months",
         "model_value": 18,
         "corrected_value": 18,
+        "confidence": 0.9,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "contract_long_30p",
+        "field": "governing_law",
+        "model_value": "State of New York",
+        "corrected_value": "State of New York",
         "confidence": 0.9,
         "reason": "confirmed",
         "changed": false
@@ -1829,6 +2328,123 @@
         "confidence": 0.0,
         "reason": "missing_value",
         "changed": true
+      },
+      {
+        "document": "cl_factura_01",
+        "field": "fecha",
+        "model_value": "2025-03-14",
+        "corrected_value": "2025-03-14",
+        "confidence": 0.6,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "cl_factura_01",
+        "field": "entidad",
+        "model_value": "Comercial Andes Ejemplo SpA",
+        "corrected_value": "Comercial Andes Ejemplo SpA",
+        "confidence": 0.6,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "cl_factura_01",
+        "field": "rut",
+        "model_value": "77654321-7",
+        "corrected_value": "77654321-7",
+        "confidence": 0.95,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "cl_boleta_02",
+        "field": "entidad",
+        "model_value": "Farmacia Ejemplo Limitada",
+        "corrected_value": "Farmacia Ejemplo Limitada",
+        "confidence": 0.6,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "cl_nota_credito_03",
+        "field": "entidad",
+        "model_value": "Servicios Digitales Ejemplo S.A.",
+        "corrected_value": "Servicios Digitales Ejemplo S.A.",
+        "confidence": 0.6,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "cl_nota_credito_03",
+        "field": "rut",
+        "model_value": "10000013-K",
+        "corrected_value": "10000013-K",
+        "confidence": 0.95,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "cl_factura_rut_invalido_04",
+        "field": "fecha",
+        "model_value": "2025-07-02",
+        "corrected_value": "2025-07-02",
+        "confidence": 0.6,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "cl_factura_rut_invalido_04",
+        "field": "entidad",
+        "model_value": "Transportes Ejemplo Norte SpA",
+        "corrected_value": "Transportes Ejemplo Norte SpA",
+        "confidence": 0.6,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "cl_factura_rut_invalido_04",
+        "field": "rut",
+        "model_value": null,
+        "corrected_value": null,
+        "confidence": 0.0,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "cl_factura_scan_05",
+        "field": "tipo_documento",
+        "model_value": "Factura Electrónica",
+        "corrected_value": "Factura Electrónica",
+        "confidence": 0.9,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "cl_factura_scan_05",
+        "field": "fecha",
+        "model_value": "2025-08-21",
+        "corrected_value": "2025-08-21",
+        "confidence": 0.6,
+        "reason": "confirmed",
+        "changed": false
+      },
+      {
+        "document": "cl_factura_scan_05",
+        "field": "entidad",
+        "model_value": "Ferreteria Eiemplo Centro SpA",
+        "corrected_value": "Ferreteria Ejemplo Centro SpA",
+        "confidence": 0.6,
+        "reason": "ocr_misread",
+        "changed": true
+      },
+      {
+        "document": "cl_factura_scan_05",
+        "field": "rut",
+        "model_value": "77654321-7",
+        "corrected_value": "77654321-7",
+        "confidence": 0.95,
+        "reason": "confirmed",
+        "changed": false
       }
     ],
     "exported_rows": {
@@ -1848,7 +2464,12 @@
       "inv_ambiguous_date_01": 7,
       "inv_missing_required_01": 7,
       "contract_long_30p": 5,
-      "inj_invoice_01": 7
+      "inj_invoice_01": 7,
+      "cl_factura_01": 7,
+      "cl_boleta_02": 7,
+      "cl_nota_credito_03": 7,
+      "cl_factura_rut_invalido_04": 7,
+      "cl_factura_scan_05": 7
     },
     "reviewer": "simulated (reference annotation used as oracle)"
   }
