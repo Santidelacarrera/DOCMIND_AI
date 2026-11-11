@@ -1,6 +1,8 @@
 # Diseño de Row-Level Security para DOCMIND_AI
 
-**Estado: diseño y prototipo verificado. No implementado en el esquema ni en el código de la aplicación.**
+**Estado (2026-11-10): fases 1 y 2 implementadas** — `docs/rls/roles.sql`, migración `0009_rls_policies` (políticas sin `FORCE` en 20 tablas) y contexto por transacción (`backend/app/rls.py`). Verificado en PostgreSQL 17 como rol sin privilegios (`tests/test_rls_policies.py`, 47 pruebas: aislamiento por tabla, cero filas sin contexto, `UPDATE`/`INSERT` cruzados rechazados, contexto que no sobrevive al `COMMIT`). **La fase 3 (`FORCE` + `docmind_app`) no está activada**: faltan las lecturas previas al contexto con `SECURITY DEFINER` (sección 6) y `organizations`/`users`. Hasta entonces el aislamiento efectivo sigue siendo el de la aplicación.
+
+**Estado original (2026-10-27): diseño y prototipo verificado.**
 Implementarlo cambia cómo se abren las sesiones, qué rol usa la aplicación y qué consultas pueden ejecutarse sin contexto, así que requiere tu decisión antes de tocar nada (ver sección 9).
 
 ## 1. Situación actual

@@ -55,7 +55,8 @@ def policy_statements() -> list[str]:
             f"WITH CHECK (organization_id = {_ORG})"),
         ]
     for table, (fk, parent) in CHILD_TABLES.items():
-        visible = f"EXISTS (SELECT 1 FROM {parent} p WHERE p.id = {table}.{fk})"
+        # Identifiers come from the constants above, never from input: not an injection vector.
+        visible = f"EXISTS (SELECT 1 FROM {parent} p WHERE p.id = {table}.{fk})"  # nosec B608
         out += [
             f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY",
             f"DROP POLICY IF EXISTS {POLICY} ON {table}",

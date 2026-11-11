@@ -11,11 +11,11 @@
     "precision@5": 0.2,
     "mrr": 1.0,
     "context_relevance": 0.525,
-    "fact_accuracy": 0.85,
-    "citation_accuracy": 0.85,
-    "citation_precision": 1.0,
+    "fact_accuracy": 1.0,
+    "citation_accuracy": 1.0,
+    "citation_precision": 0.975,
     "faithfulness": 1.0,
-    "false_abstention_rate": 0.15,
+    "false_abstention_rate": 0.0,
     "abstention_accuracy": 1.0,
     "cross_tenant_leaks": 0
   },
@@ -30,7 +30,7 @@
     },
     "paraphrase": {
       "questions": 4,
-      "correct": 1
+      "correct": 4
     },
     "unanswerable": {
       "questions": 3,
@@ -263,12 +263,12 @@
         "contrato_servicios.pdf, p.3"
       ],
       "first_relevant_rank": 1,
-      "citations": [],
-      "abstained": true,
-      "answer": "No encontré información sobre eso en los documentos disponibles.",
-      "notes": [
-        "abstained"
-      ]
+      "citations": [
+        "contrato_servicios.pdf, p.3"
+      ],
+      "abstained": false,
+      "answer": "El precio total del contrato es de 48.000 euros, pagaderos trimestralmente.",
+      "notes": []
     },
     {
       "tenant": "aurora",
@@ -278,12 +278,13 @@
         "contrato_servicios.pdf, p.2"
       ],
       "first_relevant_rank": 1,
-      "citations": [],
-      "abstained": true,
-      "answer": "No encontré información sobre eso en los documentos disponibles.",
-      "notes": [
-        "abstained"
-      ]
+      "citations": [
+        "contrato_servicios.pdf, p.2",
+        "contrato_servicios.pdf, p.4"
+      ],
+      "abstained": false,
+      "answer": "La duración del contrato de servicios es de 24 meses a partir del 1 de marzo de 2026. Cualquiera de las partes puede resolver el contrato con 60 días de preaviso por escrito.",
+      "notes": []
     },
     {
       "tenant": "aurora",
@@ -293,12 +294,12 @@
         "manual_seguridad.pdf, p.3"
       ],
       "first_relevant_rank": 1,
-      "citations": [],
-      "abstained": true,
-      "answer": "No encontré información sobre eso en los documentos disponibles.",
-      "notes": [
-        "abstained"
-      ]
+      "citations": [
+        "manual_seguridad.pdf, p.3"
+      ],
+      "abstained": false,
+      "answer": "Las copias de seguridad de los servidores se realizan cada noche y se conservan durante 30 días.",
+      "notes": []
     },
     {
       "tenant": "orion",

@@ -33,3 +33,13 @@ Regla: no se abren funcionalidades nuevas mientras haya un P0 abierto en el fluj
 * Cuenta S3/KMS para validar el almacenamiento de producción.
 * Despliegue de staging (`staging_smoke.py --ask` contra staging).
 * Revisión jurídica de la licencia.
+
+## Actualización 2026-11-10 (tarde)
+
+Hecho: RAG semántico calibrado (28/28 con el multilingüe), modelo multilingüe por defecto con guarda anti-mezcla, revisión por confianza OCR por palabra, RLS fases 1–2 probadas en PostgreSQL 17, corpus chileno, Playwright de `/ask`, documentación de entrega (`INSTALLATION`, `ENVIRONMENT`, `TESTING`, `TROUBLESHOOTING`, `KNOWN_LIMITATIONS`, `DEMO_EMPRESARIAL`) y `DECISIONS_2026-11-10.md`.
+
+Siguiente, por prioridad:
+1. RLS fase 3 en staging (`SECURITY DEFINER`, `docmind_system`, `FORCE`).
+2. Dividir `main.py` en routers sin cambiar contratos.
+3. Evaluación con documentos reales anonimizados y LLM de pago (bloqueado por el propietario: cuenta y datos).
+4. Retirar los pasos temporales del CI y medir RTO de reindexado de Qdrant.

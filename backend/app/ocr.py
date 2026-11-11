@@ -67,7 +67,9 @@ def assemble(data: dict[str, list[object]]) -> tuple[str, float | None]:
 
 
 def normalise_word(word: str) -> str:
-    return word.strip(".,:;()[]\"'“”«»").casefold()
+    # Curly and angle quotes as escapes: this file stays ASCII (some tests read sources with the
+    # platform encoding).
+    return word.strip(".,:;()[]\"'\u201c\u201d\u00ab\u00bb").casefold()
 
 
 def low_confidence_words(data: dict[str, list[object]], threshold: float) -> set[str]:
