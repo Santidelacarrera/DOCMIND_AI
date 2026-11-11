@@ -197,5 +197,32 @@ def unscoped_points(organization_id: str, *, store: VectorStore | None = None) -
     return (store or get_store()).count_without_project(organization_id)
 
 
+def reindex_all(*, organization_id: uuid.UUID | None = None) -> dict[str, int]:
+    """Rebuild the vectors of every live document (or one organization's) from its stored file.
+
+    The recovery path for a lost or replaced vector index, and the migration path to another
+    embedding model (on a new collection). Unlike ``POST /documents/{id}/process`` it does not call
+    the LLM and does not touch extractions or reviews. Idempotent: indexing replaces a document's
+    points. Measured on 12 CPUs with the multilingual model: about 5 five-page documents per second
+    per process (docs/DEPLOYMENT.md).
+    """
+    result = {"indexed": 0, "refused": 0, "skipped": 0, "failed": 0}
+    if not enabled():
+        return result
+    with SessionLocal() as db:
+        query = select(Document.organization_id, Document.id).where(Document.deleted_at.is_(None))
+        if organization_id is not None:
+            query = query.where(Document.organization_id == organization_id)
+        targets = db.execute(query.order_by(Document.created_at)).all()
+    for org, doc_id in targets:
+        try:
+            outcome = index_document(str(org), str(doc_id))
+        except IndexTransientError:
+            result["failed"] += 1
+            continue
+        result["refused" if outcome.startswith("refused") else outcome if outcome in result else "skipped"] += 1
+    return result
+
+
 def snapshot(store: VectorStore | None = None) -> Any:  # pragma: no cover - debugging aid
     return (store or get_store())

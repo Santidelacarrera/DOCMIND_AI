@@ -15,6 +15,10 @@ Qué se prueba, cómo ejecutarlo y qué no se omite en CI. Resultados de referen
 | Navegador (`frontend/`) | `npm run test:e2e` con el stack levantado | 8 flujos, incluido `/ask` con cita, extracto y abstención |
 | Stack real | `python backend/scripts/staging_smoke.py --base-url … --ask` | Extremo a extremo contra un despliegue |
 
+## Configuración de arranque
+
+`tests/test_env_example.py` carga el `.env.example` publicado: el quick start de Docker y el job e2e arrancan de él. Un valor que la configuración no acepte haría salir el contenedor de la API al arrancar (pasó en el PR #69).
+
 ## Lo que no se omite en CI
 
 Las pruebas que necesitan `tesseract`, `pdftoppm` o `redis-server` se omiten **en local** si faltan, pero **nunca con `CI=true`** (`tests/_tools.py`): allí la falta de la herramienta hace fallar la ejecución.
