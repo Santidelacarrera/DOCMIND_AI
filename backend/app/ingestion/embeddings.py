@@ -42,6 +42,7 @@ class HashingEmbedder:
     """Bag-of-words hashing. **Not semantic.** Tests and local development only."""
 
     external = False
+    semantic = False  # cosine here is word overlap: /ask must not read it as meaning
 
     def __init__(self, dimension: int = 256) -> None:
         self.dimension = dimension
@@ -62,6 +63,7 @@ class LocalEmbedder:
     """On-host ONNX embeddings (``fastembed``). ``model`` may be injected (tests)."""
 
     external = False
+    semantic = True
 
     def __init__(self, model_name: str, *, cache_dir: str | None = None, local_files_only: bool = True,
                  model: Any = None) -> None:
@@ -87,6 +89,7 @@ class OpenAIEmbedder:
     """OpenAI-compatible hosted embeddings. External: guarded by :class:`EgressPolicy`."""
 
     external = True
+    semantic = True
 
     def __init__(self, *, model: str, api_key: str, base_url: str, dimension: int | None = None,
                  client: Any = None, batch_size: int = 64) -> None:

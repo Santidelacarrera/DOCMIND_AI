@@ -286,11 +286,9 @@ class RuleBasedProvider:
         return (iso, 0.95 if certain else 0.6) if iso else (None, 0.0)
 
     def _entidad(self, text: str) -> tuple[str | None, float]:
-        """The issuer is printed first, with no label: a positional guess. Its confidence stays below
-        the review threshold, because one misread character (an OCR "Eiemplo") changes who issued the
-        document and nothing in the text can confirm it."""
-        first, _ = self._vendor_name(text)
-        return (first, 0.6) if first else (None, 0.0)
+        """The issuer, printed first with no label (same rule as ``vendor_name``). A scan misread such as
+        "Eiemplo" is caught by the word-level OCR confidence check, not by lowering this score."""
+        return self._vendor_name(text)
 
     def _nombre(self, text: str) -> tuple[str | None, float]:
         value, _ = _line_value(text, LABELS["nombre"])

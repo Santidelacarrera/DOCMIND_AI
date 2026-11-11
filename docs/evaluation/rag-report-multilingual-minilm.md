@@ -16,11 +16,11 @@ Reproduce: `cd backend && python -m app.evaluation.rag --output-dir eval_reports
 | `precision@5` | 0.2 |
 | `mrr` | 1.0 |
 | `context_relevance` | 0.525 |
-| `fact_accuracy` | 0.85 |
-| `citation_accuracy` | 0.85 |
-| `citation_precision` | 1.0 |
+| `fact_accuracy` | 1.0 |
+| `citation_accuracy` | 1.0 |
+| `citation_precision` | 0.975 |
 | `faithfulness` | 1.0 |
-| `false_abstention_rate` | 0.15 |
+| `false_abstention_rate` | 0.0 |
 | `abstention_accuracy` | 1.0 |
 | `cross_tenant_leaks` | 0 |
 
@@ -30,14 +30,12 @@ Reproduce: `cd backend && python -m app.evaluation.rag --output-dir eval_reports
 |---|---:|---:|
 | cross_tenant | 5 | 5 |
 | factual | 16 | 16 |
-| paraphrase | 1 | 4 |
+| paraphrase | 4 | 4 |
 | unanswerable | 3 | 3 |
 
 ## Failures
 
-* **aurora / paraphrase** — ¿Cuánto cuesta en total el servicio contratado? -> abstained; expected contrato_servicios.pdf, p.3, cited —
-* **aurora / paraphrase** — ¿Cuánto tiempo dura el acuerdo con el cliente? -> abstained; expected contrato_servicios.pdf, p.2, cited —
-* **aurora / paraphrase** — ¿Con qué frecuencia se hacen los backups de los servidores? -> abstained; expected manual_seguridad.pdf, p.3, cited —
+None.
 
 ## Reading these numbers
 

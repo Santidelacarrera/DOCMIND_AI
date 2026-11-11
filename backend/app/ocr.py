@@ -11,12 +11,14 @@ class TesseractProvider:
     """Tesseract via pytesseract.
 
     After :meth:`extract_pages`, ``last_confidences`` holds the mean word confidence of each
-    page in [0, 1] (``None`` for a page with no recognisable words). It is exposed as an
-    attribute so ``extract_pages`` keeps the simple ``list[str]`` contract.
+    page in [0, 1] (``None`` for a page with no recognisable words) and ``last_low_words`` the
+    normalised words of each page read below ``OCR_WORD_REVIEW_THRESHOLD``. Both are attributes
+    so ``extract_pages`` keeps the simple ``list[str]`` contract.
     """
 
     def __init__(self) -> None:
         self.last_confidences: list[float | None] = []
+        self.last_low_words: list[set[str]] = []
 
     def extract_pages(self, content: bytes) -> list[str]:
         import pytesseract
@@ -28,6 +30,7 @@ class TesseractProvider:
         )
         texts: list[str] = []
         self.last_confidences = []
+        self.last_low_words = []
         for image in images:
             data = pytesseract.image_to_data(
                 image, output_type=pytesseract.Output.DICT, timeout=settings().ocr_timeout_seconds
@@ -35,6 +38,7 @@ class TesseractProvider:
             text, confidence = assemble(data)
             texts.append(text)
             self.last_confidences.append(confidence)
+            self.last_low_words.append(low_confidence_words(data, settings().ocr_word_review_threshold))
         return texts
 
 
@@ -60,6 +64,23 @@ def assemble(data: dict[str, list[object]]) -> tuple[str, float | None]:
         previous = (block, par)
     mean = sum(confidences) / len(confidences) if confidences else None
     return "\n".join(out), mean
+
+
+def normalise_word(word: str) -> str:
+    # Curly and angle quotes as escapes: this file stays ASCII (some tests read sources with the
+    # platform encoding).
+    return word.strip(".,:;()[]\"'\u201c\u201d\u00ab\u00bb").casefold()
+
+
+def low_confidence_words(data: dict[str, list[object]], threshold: float) -> set[str]:
+    """Normalised words Tesseract read below ``threshold`` (0-1), ignoring bare punctuation."""
+    low: set[str] = set()
+    for i, raw in enumerate(data["text"]):
+        word = normalise_word(str(raw).strip())
+        conf = float(data["conf"][i])  # type: ignore[arg-type]
+        if word and 0 <= conf < threshold * 100 and any(c.isalnum() for c in word):
+            low.add(word)
+    return low
 
 
 def needs_ocr(text: str, pages: int) -> bool:

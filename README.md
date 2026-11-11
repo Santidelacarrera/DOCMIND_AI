@@ -87,6 +87,8 @@ The development stack includes Qdrant (`qdrant` service) and uses the offline `h
 
 > The default `.env.example` uses `LLM_PROVIDER=mock`, which returns a fixed fixture so the whole flow works offline. Set `LLM_PROVIDER=openai` with `OPENAI_API_KEY`, or `LLM_PROVIDER=gemini` with `GEMINI_API_KEY`, for real extraction.
 
+**Documentation:** [installation](docs/INSTALLATION.md) · [environment](docs/ENVIRONMENT.md) · [testing](docs/TESTING.md) · [troubleshooting](docs/TROUBLESHOOTING.md) · [known limitations](docs/KNOWN_LIMITATIONS.md) · [enterprise demo script](docs/DEMO_EMPRESARIAL.md) · [decisions](docs/DECISIONS_2026-11-10.md) · [status](docs/DOCMIND_IMPLEMENTATION_STATUS.md)
+
 ## Local quickstart (no Docker, no accounts, $0)
 
 Requirements: Python 3.12+ (3.13 works), `tesseract-ocr` and `poppler-utils` for scanned PDFs (optional for everything else).

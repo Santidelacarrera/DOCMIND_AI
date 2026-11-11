@@ -95,6 +95,7 @@ class Evidence:
     snippet: str | None = None
     ambiguous_date: bool = False
     weak: bool = False  # a short integer or a year: present in almost any document
+    matched: str | None = None  # the exact page text that supports the value (not persisted)
 
 
 def _nfkc(text: str) -> str:
@@ -181,7 +182,7 @@ def _find_exact(needle: str, pages: list[str]) -> Evidence | None:
         text = _nfkc(page)
         match = pattern.search(text)
         if match:
-            return Evidence(EXACT, number, _snippet(text, match.start(), match.end()))
+            return Evidence(EXACT, number, _snippet(text, match.start(), match.end()), matched=match.group())
     return None
 
 
@@ -194,7 +195,7 @@ def _find_number(target: float, pages: list[str]) -> Evidence | None:
             except ValueError:
                 continue
             if found is not None and abs(found - target) < 0.005:
-                return Evidence(NORMALIZED, number, _snippet(text, match.start(), match.end()))
+                return Evidence(NORMALIZED, number, _snippet(text, match.start(), match.end()), matched=match.group())
     return None
 
 
@@ -214,6 +215,7 @@ def _find_date(target: date, pages: list[str]) -> Evidence | None:
                     number,
                     _snippet(page, match.start(), match.end()),
                     ambiguous_date=len(readings) > 1,
+                    matched=match.group(),
                 )
         for pattern, order in ((_TEXT_DATE, (1, 2, 3)), (_MONTH_FIRST, (2, 1, 3))):
             for match in pattern.finditer(page):
@@ -222,7 +224,7 @@ def _find_date(target: date, pages: list[str]) -> Evidence | None:
                 try:
                     if month_number and date(int(year_text), month_number, int(day_text)) == target:
                         return Evidence(
-                            NORMALIZED, number, _snippet(page, match.start(), match.end())
+                            NORMALIZED, number, _snippet(page, match.start(), match.end()), matched=match.group()
                         )
                 except ValueError:
                     continue
@@ -236,7 +238,7 @@ def _find_currency(code: str, pages: list[str]) -> Evidence | None:
     for number, page in enumerate(pages, start=1):
         at = page.find(symbol)
         if at != -1:
-            return Evidence(NORMALIZED, number, _snippet(page, at, at + 1))
+            return Evidence(NORMALIZED, number, _snippet(page, at, at + 1), matched=page[at : at + 1])
     return None
 
 
@@ -304,6 +306,32 @@ def evidence_issues(evidence: dict[str, Evidence]) -> list[dict[str, Any]]:
                     "field": name,
                     "rule": "weak_evidence",
                     "message": "The value is a short number or a year and occurs in the text in other places too; confirm the location.",
+                }
+            )
+    return issues
+
+
+def ocr_word_issues(evidence: dict[str, Evidence], low_words: list[set[str]]) -> list[dict[str, Any]]:
+    """Review a value whose supporting words the OCR engine itself read with low confidence.
+
+    The page-level OCR mean can be high while one word is misread: a scanned issuer printed as
+    "Ejemplo" came out as "Eiemplo" with word confidence 0.08 on a page whose mean was 0.9, and the
+    value was then found, misread, in the misread text. ``low_words[page - 1]`` holds the
+    normalised words below ``OCR_WORD_REVIEW_THRESHOLD`` (see ``app.ocr``).
+    """
+    from app.ocr import normalise_word
+
+    issues: list[dict[str, Any]] = []
+    for name, found in evidence.items():
+        if not found.matched or not found.page or found.page > len(low_words):
+            continue
+        doubtful = {normalise_word(w) for w in found.matched.split()} & low_words[found.page - 1]
+        if doubtful:
+            issues.append(
+                {
+                    "field": name,
+                    "rule": "ocr_low_confidence",
+                    "message": "The OCR engine was unsure of part of this value in the scan; check it against the original.",
                 }
             )
     return issues

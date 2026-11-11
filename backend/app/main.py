@@ -2046,6 +2046,18 @@ class AskInput(BaseModel):
     top_k: int = Field(default=4, ge=1, le=8)
 
 
+def _answer(pipeline: Any, **kwargs: Any) -> Any:
+    """``answering.answer`` for the ask endpoints: a collection indexed with another embedding
+    model is a configuration error the operator must fix (503), never a 500 or a wrong answer."""
+    from app.ingestion.answering import answer
+    from app.ingestion.vectorstore import EmbeddingModelMismatch
+
+    try:
+        return answer(pipeline, **kwargs)
+    except EmbeddingModelMismatch:
+        raise HTTPException(503, "EMBEDDING_MODEL_MISMATCH") from None
+
+
 def _answer_body(result: Any) -> dict[str, object]:
     """Response of both ask endpoints. Each citation names document, page and the supporting
     fragment (``chunk_index`` and the quoted ``excerpt``), so a reader can check the source."""
@@ -2081,7 +2093,6 @@ def ask(
     Extractive and local (no language model, no network call). The tenant is the authenticated
     membership, never a request field; deleted documents are never cited.
     """
-    from app.ingestion.answering import answer
 
     enforce(request, "ask", settings().rate_limit_api)
     org_id = globals()["organization_id"](organization_id)
@@ -2107,7 +2118,7 @@ def ask(
 
     # Phase 3B: only the projects the caller may read. Vectors without a project (legacy, not yet
     # backfilled) match no list, so they are excluded instead of being answered without an owner.
-    result = answer(
+    result = _answer(
         vector_index.get_pipeline(),
         tenant_id=str(org_id),
         question=payload.question,
@@ -2115,6 +2126,7 @@ def ask(
         is_live=is_live,
         project_ids=as_strings(accessible_project_ids(db, org_id, user)),
         min_coverage=settings().ask_min_evidence_coverage,
+        min_similarity=settings().ask_min_semantic_similarity,
     )
     audit(db, "document.ask", "organization", str(org_id), user, org_id)
     db.commit()
@@ -2137,7 +2149,6 @@ def project_ask(
     project that does not exist get the same 404, so the response reveals nothing about identifiers.
     Retrieval is filtered by project inside the vector query. Question and document text are not logged.
     """
-    from app.ingestion.answering import answer
 
     enforce(request, "project_ask", settings().rate_limit_api)
     org_id = globals()["organization_id"](organization_id)
@@ -2173,7 +2184,7 @@ def project_ask(
         )
 
     request_id = request_context.get()
-    result = answer(
+    result = _answer(
         vector_index.get_pipeline(),
         tenant_id=str(org_id),
         question=payload.question,
@@ -2181,6 +2192,7 @@ def project_ask(
         is_live=is_live,
         project_id=str(project_uuid),
         min_coverage=settings().ask_min_evidence_coverage,
+        min_similarity=settings().ask_min_semantic_similarity,
     )
     # Same transaction as the response: the audit record exists if and only if the answer was given.
     db.add(

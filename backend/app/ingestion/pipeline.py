@@ -69,6 +69,7 @@ class IngestionPipeline:
         """Embed a search query. It is masked exactly like documents: a question such as
         "contracts of maria@x.com" must not send that address to an external embedder."""
         tenant = chunking.parse_tenant(tenant_id)
+        self.store.assert_model(self.embedder.name)  # never query one vector space against another
         masked = self._masker(tenant).mask(question).text
         return self.embedder.embed([masked])[0]
 
@@ -149,7 +150,7 @@ class IngestionPipeline:
         # 7-8. embed masked text only, write with the tenant key
         vectors = self.embedder.embed([c.text for c in chunks])
         points = [vectorstore.to_point(c, v, embedding_model=self.embedder.name) for c, v in zip(chunks, vectors, strict=True)]
-        self.store.ensure_collection(self.embedder.dimension)
+        self.store.ensure_collection(self.embedder.dimension, model=self.embedder.name)
         self.store.delete_document(tenant, document)  # re-ingestion replaces, never duplicates
         self.store.upsert(tenant, points)
         logger.info("document ingested", extra={"tenant_id": tenant, "document_id": document,

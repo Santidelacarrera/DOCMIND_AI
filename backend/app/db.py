@@ -19,6 +19,20 @@ class Base(DeclarativeBase):
     pass
 
 
+def _install_rls() -> None:
+    from app import rls
+
+    rls.install(SessionLocal)
+
+
+_install_rls()
+
+
 def get_db() -> Iterator[Session]:
-    with SessionLocal() as session:
-        yield session
+    from app import rls
+
+    try:
+        with SessionLocal() as session:
+            yield session
+    finally:
+        rls.clear_context()  # the organization context never outlives its request
