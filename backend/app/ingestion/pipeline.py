@@ -68,10 +68,14 @@ class IngestionPipeline:
     def query_vector(self, *, tenant_id: str, question: str) -> list[float]:
         """Embed a search query. It is masked exactly like documents: a question such as
         "contracts of maria@x.com" must not send that address to an external embedder."""
-        tenant = chunking.parse_tenant(tenant_id)
         self.store.assert_model(self.embedder.name)  # never query one vector space against another
-        masked = self._masker(tenant).mask(question).text
-        return self.embedder.embed([masked])[0]
+        return self.embedder.embed([self.mask_query(tenant_id=tenant_id, question=question)])[0]
+
+    def mask_query(self, *, tenant_id: str, question: str) -> str:
+        """The question masked as documents are: no PII reaches an embedder or the lexical index. With
+        ``PII_MASKING_KEY`` placeholders are keyed per tenant, so a masked value in the question equals
+        its placeholder in the indexed chunks; without it they are numbered and only the rest matches."""
+        return self._masker(chunking.parse_tenant(tenant_id)).mask(question).text
 
     # ------------------------------------------------------------------ stages
     def _extract(self, clean: bytes, report: IngestionReport) -> list[str]:

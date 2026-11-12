@@ -32,8 +32,17 @@ _INJECTION = re.compile(
     r"|(reveal|print|show|leak)\W+(your\W+|the\W+)?(system\W+)?(prompt|instructions|secrets?|api\W*keys?)"
     r"|\bnew\s+instructions?\s*:"
     r"|<\s*/?\s*(system|assistant|tool)\s*>"
-    r"|\bact\s+as\s+(an?\s+)?(admin|root|system)\b",
-    re.IGNORECASE,
+    r"|\bact\s+as\s+(an?\s+)?(admin|root|system)\b"
+    # Spanish and concealment patterns from ContextRAG_Engine (verification/injection.py). Its role-marker
+    # ("Sistema:") and exfiltration ("envía ... historial") patterns are left out: in business documents
+    # they match headings and ordinary sentences, and a flagged chunk is excluded from every answer.
+    r"|\b(ignora|olvida|descarta|omite|anula)\w*\b.{0,40}\b(instrucciones|indicaciones|reglas|directrices)\s+"
+    r"(anteriores|previas|del\s+sistema|de\s+arriba)"
+    r"|\b(revela|muestra|imprime|repite|divulga)\w*\b.{0,50}\b(system\s+prompt|mensaje\s+de\s+sistema|"
+    r"instrucciones\s+del\s+sistema|prompt\s+del\s+sistema)"
+    r"|\b(do\s+not|don't|never)\s+(tell|inform|mention|reveal)\b.{0,30}\b(the\s+)?user\b"
+    r"|\bno\s+(le\s+)?(digas|informes|menciones|reveles)\b.{0,30}\b(al\s+)?usuario\b",
+    re.IGNORECASE | re.DOTALL,
 )
 
 

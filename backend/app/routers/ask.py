@@ -74,6 +74,9 @@ def _answer_body(result: Any) -> dict[str, object]:
             }
             for c in result.citations
         ],
+        # Sources that may disagree with a cited one (dates, figures, negation). Heuristic, not
+        # semantic: shown so a reader checks both, never used to pick a side.
+        "conflicts": [c.to_dict() for c in result.conflicts],
     }
 
 

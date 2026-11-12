@@ -130,6 +130,16 @@ class Settings(BaseSettings):
     # Empty = use the threshold calibrated for the configured model, or none (lexical rule only).
     ask_min_semantic_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
 
+    # Retrieval for /ask (ADR-005). "dense": vector search only. "hybrid": dense and lexical (BM25)
+    # rankings fused with reciprocal rank fusion. Both read the same tenant-filtered chunks. Dense stays
+    # the default: on the evaluation corpus hybrid helps the hashing embedder and does not help the
+    # default multilingual model (docs/evaluation/hybrid-retrieval-2026-11-12.md).
+    retrieval_mode: Literal["dense", "hybrid"] = "dense"
+    retrieval_candidates: int = Field(default=20, ge=1, le=200)  # per ranking, before fusion
+    retrieval_rrf_k: int = Field(default=60, ge=1, le=1000)
+    retrieval_lexical_cache_seconds: float = Field(default=60.0, ge=0.0, le=3600.0)
+    retrieval_lexical_max_chunks: int = Field(default=50_000, ge=1)
+
     @field_validator("ask_min_semantic_similarity", mode="before")
     @classmethod
     def _empty_means_unset(cls, value: object) -> object:

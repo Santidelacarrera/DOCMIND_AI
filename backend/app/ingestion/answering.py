@@ -13,6 +13,7 @@ third state in which text is returned without a source.
 
 import math
 import re
+import time
 import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -20,6 +21,10 @@ from typing import Any
 
 from app.ingestion.chunking import parse_tenant
 from app.ingestion.pipeline import IngestionPipeline
+from app.metrics import RETRIEVAL_DURATION_SECONDS
+from app.rag import conflicts as conflict_detection
+from app.rag import lexical
+from app.rag.fusion import reciprocal_rank_fusion
 
 ABSTENTION = "No encontré información sobre eso en los documentos disponibles."
 _STOP = frozenset(
@@ -63,6 +68,9 @@ class Answer:
     text: str
     citations: tuple[Citation, ...] = field(default_factory=tuple)
     abstained: bool = False
+    # Possible disagreements (dates, figures, negation) between a cited source and another retrieved
+    # one (app.rag.conflicts). Not semantic; for a person to review. Empty when none were found.
+    conflicts: tuple[conflict_detection.Conflict, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if self.abstained == bool(self.citations):
@@ -76,8 +84,13 @@ def _stem(word: str) -> str:
     return word[:6]
 
 
+def tokens(text: str) -> list[str]:
+    """Content-term stems in order, repeats kept: what BM25 counts (``terms`` is the set of them)."""
+    return [_stem(w) for w in _WORD.findall(text) if len(w) > 2 and w.lower() not in _STOP]
+
+
 def terms(text: str) -> set[str]:
-    return {_stem(w) for w in _WORD.findall(text) if len(w) > 2 and w.lower() not in _STOP}
+    return set(tokens(text))
 
 
 def _best_sentences(
@@ -188,6 +201,8 @@ def answer(
     project_ids: Sequence[str] | None = None,
     min_coverage: float = 0.5,
     min_similarity: float | None = None,
+    mode: str | None = None,
+    detect_conflicts: bool = True,
 ) -> Answer:
     """Answer ``question`` from this tenant's documents only.
 
@@ -207,11 +222,15 @@ def answer(
     (``ASK_MIN_SEMANTIC_SIMILARITY``) or, when that is ``None``, its entry in
     :data:`CALIBRATED_SIMILARITY` -- sentences are ranked by meaning and that similarity is a second
     way to be sufficient evidence. Without a threshold the lexical rule alone applies.
+
+    ``mode`` is the retrieval mode (``"dense"`` or ``"hybrid"``, see :func:`retrieve`); ``None`` uses
+    ``RETRIEVAL_MODE``. With ``detect_conflicts`` the answer lists possible disagreements between a
+    cited page and another retrieved one (:mod:`app.rag.conflicts`); the quoted text is unchanged.
     """
     question = question.strip()
     hits, vector = _retrieve(
         pipeline, tenant_id=tenant_id, question=question, top_k=top_k, min_score=min_score,
-        is_live=is_live, project_id=project_id, project_ids=project_ids,
+        is_live=is_live, project_id=project_id, project_ids=project_ids, mode=mode,
     )
     threshold = min_similarity if min_similarity is not None else CALIBRATED_SIMILARITY.get(
         str(getattr(pipeline.embedder, "name", ""))
@@ -236,7 +255,14 @@ def answer(
         if all((citation.document_id, citation.page) != (c.document_id, c.page) for c in citations):
             citations.append(citation)
     text = " ".join(sentence for sentence, _ in picked)
-    return Answer(question, text, tuple(citations), False)
+    found: tuple[conflict_detection.Conflict, ...] = ()
+    if detect_conflicts:
+        cited = {(c.document_id, c.page) for c in citations}
+        found = tuple(
+            c for c in conflict_detection.detect(question, hits)
+            if (c.a.document_id, c.a.page) in cited or (c.b.document_id, c.b.page) in cited
+        )
+    return Answer(question, text, tuple(citations), False, found)
 
 
 def _chunk_index(hit: dict[str, Any]) -> int | None:
@@ -254,15 +280,21 @@ def retrieve(
     is_live: Callable[[str], bool] | None = None,
     project_id: str | None = None,
     project_ids: Sequence[str] | None = None,
+    mode: str | None = None,
 ) -> list[dict[str, Any]]:
     """The chunks ``answer()`` reads, best first, after every scope and liveness check.
 
     Exposed so the RAG evaluation (``app.evaluation.rag``) measures the exact production retrieval
     path instead of a copy of it. Same scope rules as :func:`answer`.
+
+    ``mode="dense"``: the ``top_k`` nearest chunks. ``mode="hybrid"`` (ADR-005): up to
+    ``RETRIEVAL_CANDIDATES`` chunks from vector search and as many from BM25 over the tenant's chunks
+    (:mod:`app.rag.lexical`), fused with reciprocal rank fusion; a chunk found only lexically gets
+    its stored vector's cosine as ``score`` so ``min_score`` applies to every hit alike.
     """
     return _retrieve(
         pipeline, tenant_id=tenant_id, question=question, top_k=top_k, min_score=min_score,
-        is_live=is_live, project_id=project_id, project_ids=project_ids,
+        is_live=is_live, project_id=project_id, project_ids=project_ids, mode=mode,
     )[0]
 
 
@@ -276,25 +308,71 @@ def _retrieve(
     is_live: Callable[[str], bool] | None,
     project_id: str | None,
     project_ids: Sequence[str] | None,
+    mode: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[float] | None]:
     """Hits plus the (masked) question vector, so ``answer()`` does not embed the question twice."""
+    from app.core import settings
+
     if project_id is not None and project_ids is not None:
         raise ValueError("ONE_SCOPE_ONLY")
+    cfg = settings()
+    mode = mode or cfg.retrieval_mode
+    if mode not in ("dense", "hybrid"):
+        raise ValueError("UNKNOWN_RETRIEVAL_MODE")
     tenant = parse_tenant(tenant_id)
     project = parse_tenant(project_id) if project_id is not None else None
     allowed = {parse_tenant(p) for p in project_ids} if project_ids is not None else None
+    scope = sorted(allowed) if allowed is not None else None
     question = question.strip()
     if not terms(question) or (allowed is not None and not allowed):
         return [], None
+    started = time.perf_counter()
     vector = pipeline.query_vector(tenant_id=tenant, question=question)
-    hits = [
-        h for h in pipeline.store.search(
-            tenant, vector, limit=top_k, project_id=project,
-            project_ids=sorted(allowed) if allowed is not None else None,
+    limit = top_k if mode == "dense" else max(top_k, cfg.retrieval_candidates)
+    candidates = pipeline.store.search(tenant, vector, limit=limit, project_id=project, project_ids=scope)
+    if mode == "hybrid":
+        lexical_hits = lexical.search(
+            pipeline.store, tenant, tokens(pipeline.mask_query(tenant_id=tenant, question=question)), tokens,
+            limit=cfg.retrieval_candidates, ttl=cfg.retrieval_lexical_cache_seconds,
+            max_chunks=cfg.retrieval_lexical_max_chunks, project_id=project, project_ids=scope,
         )
+        candidates = _fuse(pipeline, tenant, vector, candidates, lexical_hits, cfg.retrieval_rrf_k)
+    hits = [
+        h for h in candidates
         if h.get("score", 0.0) >= min_score and h.get("tenant_id") == tenant
         and (project is None or h.get("project_id") == project)
         and (allowed is None or h.get("project_id") in allowed)
         and (is_live is None or is_live(str(h.get("document_id"))))
-    ]
+    ][:top_k]
+    RETRIEVAL_DURATION_SECONDS.labels(mode).observe(time.perf_counter() - started)
     return hits, vector
+
+
+def _fuse(
+    pipeline: IngestionPipeline, tenant: str, vector: Sequence[float],
+    dense: list[dict[str, Any]], sparse: list[dict[str, Any]], rrf_k: int,
+) -> list[dict[str, Any]]:
+    """Dense and lexical hits as one ranking (RRF). A chunk is identified by document and chunk index."""
+
+    def key(hit: dict[str, Any]) -> tuple[str, object]:
+        return str(hit.get("document_id")), hit.get("chunk_index")
+
+    by_key: dict[tuple[str, object], dict[str, Any]] = {key(h): dict(h) for h in dense}
+    lexical_only = [h for h in sparse if key(h) not in by_key]
+    stored = pipeline.store.vectors(tenant, [str(h["_point_id"]) for h in lexical_only if h.get("_point_id")])
+    for hit in lexical_only:
+        point_vector = stored.get(str(hit.get("_point_id")))
+        if point_vector is not None:  # a point removed since the corpus was cached is skipped
+            by_key[key(hit)] = {**hit, "score": _cosine(vector, point_vector)}
+    for hit in sparse:
+        if key(hit) in by_key:
+            by_key[key(hit)].setdefault("bm25", hit.get("bm25"))
+    fused = reciprocal_rank_fusion(
+        [[key(h) for h in dense], [key(h) for h in sparse if key(h) in by_key]], k=rrf_k,
+    )
+    out = []
+    for chunk_key, rrf in fused:
+        hit = {name: value for name, value in by_key[chunk_key].items() if name != "_point_id"}
+        hit["rrf"] = round(rrf, 6)
+        out.append(hit)
+    return out

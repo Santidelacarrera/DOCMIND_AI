@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.ingestion.chunking import SCHEMA_VERSION, Chunk, assert_single_tenant, parse_tenant
+from app.rag import lexical
 
 TENANT_KEY = "tenant_id"
 PROJECT_KEY = "project_id"  # the case a chunk belongs to; project-scoped queries require it
@@ -76,6 +77,8 @@ class VectorStore(Protocol):
     ) -> list[dict[str, Any]]: ...
     def set_document_project(self, tenant_id: str, document_id: str, project_id: str) -> None: ...
     def count_without_project(self, tenant_id: str) -> int: ...
+    def scroll_chunks(self, tenant_id: str, *, limit: int) -> list[dict[str, Any]] | None: ...
+    def vectors(self, tenant_id: str, point_ids: Sequence[str]) -> dict[str, list[float]]: ...
 
 
 def check_points(tenant_id: str, points: Sequence[Point]) -> str:
@@ -156,12 +159,13 @@ class QdrantStore:
     def upsert(self, tenant_id: str, points: Sequence[Point]) -> None:
         from qdrant_client import models
 
-        check_points(tenant_id, points)
+        tenant = check_points(tenant_id, points)
         self._c.upsert(
             self._collection,
             points=[models.PointStruct(id=p.id, vector=p.vector, payload=p.payload) for p in points],
             wait=True,
         )
+        lexical.invalidate(tenant)  # this process's lexical corpus for the tenant is out of date
 
     def delete_document(self, tenant_id: str, document_id: str) -> None:
         from qdrant_client import models
@@ -171,6 +175,7 @@ class QdrantStore:
             points_selector=models.FilterSelector(filter=self.tenant_filter(tenant_id, document_id=document_id)),
             wait=True,
         )
+        lexical.invalidate(parse_tenant(tenant_id))
 
     def search(
         self, tenant_id: str, vector: Sequence[float], limit: int = 5, *,
@@ -199,6 +204,7 @@ class QdrantStore:
             points=models.FilterSelector(filter=self.tenant_filter(tenant_id, document_id=document_id)),
             wait=True,
         )
+        lexical.invalidate(parse_tenant(tenant_id))
 
     def count_without_project(self, tenant_id: str) -> int:
         """Points of this tenant that carry no project (legacy or unverifiable): they are never returned
@@ -210,6 +216,40 @@ class QdrantStore:
             must=[*tenant_only.must, models.IsEmptyCondition(is_empty=models.PayloadField(key=PROJECT_KEY))]
         )
         return self._c.count(self._collection, count_filter=unscoped, exact=True).count
+
+    def scroll_chunks(self, tenant_id: str, *, limit: int) -> list[dict[str, Any]] | None:
+        """Every non-suspicious chunk payload of this tenant (``_point_id`` added), for lexical search.
+
+        ``None`` when the tenant has more than ``limit`` chunks: the caller skips lexical search rather
+        than hold an unbounded corpus in memory. The tenant condition is part of the Qdrant filter.
+        """
+        if not self._c.collection_exists(self._collection):
+            return []
+        query = self.tenant_filter(tenant_id, include_suspicious=False)
+        out: list[dict[str, Any]] = []
+        offset = None
+        while True:
+            points, offset = self._c.scroll(
+                self._collection, scroll_filter=query, limit=min(1000, limit + 1), offset=offset,
+                with_payload=True, with_vectors=False,
+            )
+            out.extend({**(p.payload or {}), "_point_id": str(p.id)} for p in points)
+            if len(out) > limit:
+                return None
+            if offset is None:
+                return out
+
+    def vectors(self, tenant_id: str, point_ids: Sequence[str]) -> dict[str, list[float]]:
+        """Stored vectors of these points, only those that belong to ``tenant_id``."""
+        if not point_ids:
+            return {}
+        tenant = parse_tenant(tenant_id)
+        points = self._c.retrieve(self._collection, ids=list(point_ids), with_payload=[TENANT_KEY], with_vectors=True)
+        return {
+            str(p.id): list(p.vector)  # type: ignore[arg-type]  # one unnamed vector per point
+            for p in points
+            if (p.payload or {}).get(TENANT_KEY) == tenant and p.vector is not None
+        }
 
 
 __all__ = ["EmbeddingModelMismatch", "Point", "QdrantStore", "VectorStore", "assert_single_tenant", "check_points", "to_point"]

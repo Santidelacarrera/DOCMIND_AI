@@ -1,5 +1,7 @@
 # Integración con ContextRAG_Engine
 
+> **Cambio de dirección (2026-11-12, [ADR-005](decisions/ADR-005-contextrag-unification.md)):** las capacidades de ContextRAG se incorporan dentro de DOCMIND (`backend/app/rag/`) en vez de consumirse como servicio aparte. Lo descrito aquí (outbox hacia un ContextRAG externo) sigue funcionando, desactivado, hasta que la unificación termine. Progreso: [UNIFICATION_PROGRESS.md](UNIFICATION_PROGRESS.md).
+
 DOCMIND_AI extrae y protege el documento; [ContextRAG_Engine](https://github.com/Santidelacarrera/ContextRAG_Engine) recupera y responde. La sincronización es **unidireccional**: DOCMIND envía; ContextRAG nunca escribe en DOCMIND. Ninguna prueba de DOCMIND necesita ContextRAG para pasar.
 
 Código: `backend/app/contextrag_sync.py` (outbox y entrega), `backend/app/integrations/contextrag.py` (contrato y cliente HTTP).
