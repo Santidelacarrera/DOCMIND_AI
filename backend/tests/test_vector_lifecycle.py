@@ -238,3 +238,27 @@ def test_the_outbox_and_the_deleted_object_are_gone_together_with_storage(client
 def test_tasks_are_scheduled(register, vectors) -> None:
     assert "process-vector-deletions" in worker.celery_app.conf.beat_schedule
     assert worker.process_vector_deletions.run() == {"deleted": 0, "failed": 0}  # type: ignore[attr-defined]
+
+
+# ------------------------------------------------------------------------- full reindex (recovery)
+def test_reindex_all_rebuilds_a_lost_collection_without_touching_extractions(client, register, vectors, monkeypatch) -> None:
+    a, body_a = upload_and_index(register, vectors)
+    b, body_b = upload_and_index(register, vectors, ["Second organization: turbine overhaul quote."])
+    _, gone = upload_and_index(register, vectors, ["Deleted before the outage."], acct=a)
+    client.delete(f"/api/v1/documents/{gone['document_id']}?organization_id={a.org}", headers=a.headers)
+    before = client.get(f"/api/v1/documents/{body_a['document_id']}/extraction?organization_id={a.org}", headers=a.headers).json()
+    llm_calls: list[object] = []
+    monkeypatch.setattr(worker, "llm", lambda: llm_calls.append(1))  # any LLM use would be recorded (and break)
+    vectors.client.delete_collection("lifecycle")  # the index is lost
+    assert vectors.count() == 0
+    assert vector_index.reindex_all() == {"indexed": 2, "refused": 0, "skipped": 0, "failed": 0}
+    assert {h["document_id"] for h in vectors.search(a.org)} == {body_a["document_id"]}
+    assert {h["document_id"] for h in vectors.search(b.org, "turbine overhaul quote")} == {body_b["document_id"]}
+    after = client.get(f"/api/v1/documents/{body_a['document_id']}/extraction?organization_id={a.org}", headers=a.headers).json()
+    assert llm_calls == [] and after == before
+
+
+def test_reindex_all_can_be_limited_to_one_organization(register, vectors) -> None:
+    a, _ = upload_and_index(register, vectors)
+    upload_and_index(register, vectors, ["Another tenant entirely."])
+    assert vector_index.reindex_all(organization_id=uuid.UUID(a.org))["indexed"] == 1

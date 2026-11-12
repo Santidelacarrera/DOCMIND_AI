@@ -2,6 +2,21 @@
 
 **Estado (2026-11-10): fases 1 y 2 implementadas** — `docs/rls/roles.sql`, migración `0009_rls_policies` (políticas sin `FORCE` en 20 tablas) y contexto por transacción (`backend/app/rls.py`). Verificado en PostgreSQL 17 como rol sin privilegios (`tests/test_rls_policies.py`, 47 pruebas: aislamiento por tabla, cero filas sin contexto, `UPDATE`/`INSERT` cruzados rechazados, contexto que no sobrevive al `COMMIT`). **La fase 3 (`FORCE` + `docmind_app`) no está activada**: faltan las lecturas previas al contexto con `SECURITY DEFINER` (sección 6) y `organizations`/`users`. Hasta entonces el aislamiento efectivo sigue siendo el de la aplicación.
 
+### Inventario para la fase 3 (tomado del código el 2026-11-10)
+
+Lo que deja de funcionar con `FORCE` y la aplicación conectada como `docmind_app`, y cómo resolverlo. La fase 3 se activa solo con **todo** esto hecho y probado en staging (la activación parcial está prohibida).
+
+| # | Lectura o tarea | Dónde | Por qué falla con `FORCE` | Solución prevista |
+|---|---|---|---|---|
+| 1 | Clave API por hash | `security.lookup_api_key` | `api_keys` filtrada y aún no hay organización | `SECURITY DEFINER docmind_api_key_org(hash)` → organización; luego `set_context` y lectura normal |
+| 2 | Organizaciones del usuario | `routers/auth.organizations` | `organization_members` de varias organizaciones a la vez | Contexto `app.user_id` y política adicional `user_id = app.user_id` en `organization_members` y `organizations` |
+| 3 | Registro (crea organización y miembro) | `routers/auth.register`, `create_organization` | Insertar el miembro exige contexto de la organización recién creada | `set_context(nueva_org)` antes del `INSERT` |
+| 4 | Aceptar invitación por token | `routers/members.accept_invitation` | `invitations` de otra organización | `SECURITY DEFINER docmind_invitation_org(token_hash)` |
+| 5 | Reclamo del trabajo | `worker._claim` | `processing_jobs` sin contexto | `SECURITY DEFINER docmind_job_org(job_id)`; el resto del trabajo ya fija contexto (`rls.CURRENT_ORG`) |
+| 6 | Tareas de beat que recorren todas las organizaciones | `recover_stuck_jobs`, `purge_expired_data`, `process_vector_deletions`, `reconcile_storage`, `deliver_contextrag_events`, `reconcile_contextrag` | Leen filas de todas las organizaciones | Motor aparte con `docmind_system` (`BYPASSRLS`, credenciales propias), usado solo por estas tareas |
+| 7 | `organizations` y `users` | — | Hoy sin política | Políticas: organización visible si es la del contexto o el usuario es miembro; `users` sin política (identidad global) pero sin columnas de tenant |
+| 8 | Verificación | — | — | La suite completa ejecutada como `docmind_app` con `FORCE` en PostgreSQL 17, y prueba de arranque que exija `rolsuper = false` y `rolbypassrls = false` |
+
 **Estado original (2026-10-27): diseño y prototipo verificado.**
 Implementarlo cambia cómo se abren las sesiones, qué rol usa la aplicación y qué consultas pueden ejecutarse sin contexto, así que requiere tu decisión antes de tocar nada (ver sección 9).
 

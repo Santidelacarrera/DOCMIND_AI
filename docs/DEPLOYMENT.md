@@ -75,7 +75,7 @@ Ver `.env.example` para la lista completa y los valores de desarrollo.
   ```
 
   Resultado: conteos iguales en `users` 5, `organizations` 5, `documents` 3, `document_versions` 3, `extraction_fields` 12, `audit_logs` 15; los 3 objetos presentes con SHA-256 idéntico; `reconcile --dry-run` → `objects: 3, orphans: 0, rows_without_object: 0`. Control negativo: con el volumen vacío el mismo verificador informó 3 objetos ausentes.
-* **Qdrant:** los vectores son datos derivados. No se respaldan: tras restaurar, se reconstruyen reprocesando cada documento (`POST /documents/{id}/process`), que vuelve a indexarlo. `scripts/backfill_vector_projects.py` no reindexa: solo marca el proyecto en vectores existentes. **No verificado:** snapshot y restauración de Qdrant.
+* **Qdrant:** los vectores son datos derivados y no se respaldan. Tras restaurar (o para cambiar de modelo de embeddings sobre una colección nueva) se reconstruyen con `python scripts/reindex_vectors.py [--organization-id <uuid>]`: lee los archivos guardados, no llama al LLM y no toca extracciones ni revisiones. **Medido** (2026-11-10, 12 CPU, un proceso, Qdrant en memoria, documentos de 5 páginas): 5,3 documentos/s con el modelo multilingüe, 55/s con `hashing`; unas **31 minutos para 10 000 documentos** por proceso, sin contar la red hasta Qdrant ni la lectura desde S3. No uses `POST /documents/{id}/process` para esto: repite la extracción con el LLM. `scripts/backfill_vector_projects.py` no reindexa: solo marca el proyecto en vectores existentes. **No verificado:** snapshot y restauración de Qdrant.
 * **S3 y KMS:** siguen sin verificar (sin cuenta).
 
 ### Observabilidad
