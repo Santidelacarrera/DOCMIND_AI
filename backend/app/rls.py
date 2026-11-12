@@ -166,10 +166,13 @@ def set_user(db: Session, user_id: object) -> None:
 def organization_of(db: Session, lookup: str, key: object) -> str | None:
     """Organization behind a key read before any context exists (``LOOKUPS``).
 
-    PostgreSQL only; elsewhere there are no policies, so it returns None and the caller reads
-    the row directly as before.
+    Only with ``RLS_ENFORCED``: otherwise the application is the table owner, policies do not apply
+    to it, the functions may not exist yet (schema older than migration 0010), and the caller
+    reads the row directly as before. Returns None in that case.
     """
-    if lookup not in LOOKUPS or not _is_postgres(db):
+    from app.core import settings
+
+    if lookup not in LOOKUPS or not settings().rls_enforced or not _is_postgres(db):
         return None
     found = db.scalar(text(f"SELECT {lookup}(:key)"), {"key": key})  # nosec B608 - name from LOOKUPS
     return str(found) if found else None

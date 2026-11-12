@@ -89,8 +89,17 @@ def _rebuild_schema() -> None:
         with schema_engine.begin() as conn:
             conn.execute(_text("DROP SCHEMA public CASCADE"))
             conn.execute(_text("CREATE SCHEMA public"))
+            conn.execute(_text("GRANT USAGE ON SCHEMA public TO PUBLIC"))  # PostgreSQL's default
             conn.execute(_text("GRANT USAGE ON SCHEMA public TO docmind_app, docmind_system"))
     else:
+        if schema_engine.dialect.name == "postgresql":
+            # A database last used with TEST_RLS_ENFORCED keeps the cross-table policy on
+            # organizations, which would block drop_all.
+            with schema_engine.begin() as conn:
+                conn.exec_driver_sql(
+                    "DO $$ BEGIN IF to_regclass('public.organizations') IS NOT NULL THEN "
+                    f"DROP POLICY IF EXISTS {rls.ORG_POLICY} ON organizations; END IF; END $$"
+                )
         Base.metadata.drop_all(schema_engine)
     Base.metadata.create_all(schema_engine)
     if RLS_ENFORCED:
