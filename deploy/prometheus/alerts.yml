@@ -77,6 +77,13 @@ groups:
         annotations:
           summary: "Vector indexing keeps failing; /ask will miss new documents"
           runbook: "backend/scripts/reindex_vectors.py once Qdrant is healthy."
+      - alert: DocMindRerankDegraded
+        expr: increase(docmind_rerank_total{outcome=~"failed|unavailable"}[30m]) > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Cross-encoder reranking is failing; answers use the first-stage order"
+          runbook: "Answers still work, ranked without the reranker. Check RERANK_MODEL files in EMBEDDING_CACHE_DIR, CPU load and RERANK_TIMEOUT_SECONDS."
       - alert: DocMindWebhookFailures
         expr: increase(docmind_webhook_deliveries_total{success="False"}[1h]) > 20
         labels: {severity: info}

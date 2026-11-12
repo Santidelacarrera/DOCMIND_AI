@@ -96,3 +96,30 @@ def test_the_api_reads_the_threshold_from_settings() -> None:
     assert Settings(_env_file=None).ask_min_evidence_coverage == 0.5
     with pytest.raises(ValueError):
         Settings(_env_file=None, ask_min_evidence_coverage=1.5)
+
+
+def test_a_corpus_of_real_files_can_be_evaluated(tmp_path) -> None:
+    """docs/REAL_DOCUMENT_EVALUATION.md: documents given by path, questions as in the bundled corpora."""
+    import json
+
+    from app.evaluation import rag
+    from app.evaluation.pdfgen import digital_pdf
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "poliza.pdf").write_bytes(
+        digital_pdf([["CONDICIONES", "La póliza cubre daños por agua hasta 3.000 euros por siniestro."]]))
+    corpus = {
+        "tenants": {"real": "Cliente piloto (anonimizado)", "otro": "Otra organización"},
+        "documents": [{"tenant": "real", "file": "poliza.pdf", "path": "docs/poliza.pdf"}],
+        "questions": [
+            {"tenant": "real", "category": "factual", "question": "¿Hasta qué importe cubre la póliza los daños por agua?",
+             "relevant": [["poliza.pdf", 1]], "contains": "3.000 euros"},
+            {"tenant": "otro", "category": "cross_tenant", "question": "¿Hasta qué importe cubre la póliza los daños por agua?",
+             "relevant": [], "contains": ""},
+        ],
+    }
+    path = tmp_path / "corpus.json"
+    path.write_text(json.dumps(corpus, ensure_ascii=False), encoding="utf-8")
+    report = rag.run(corpus_path=path)
+    assert report["metrics"]["fact_accuracy"] == 1.0 and report["metrics"]["cross_tenant_leaks"] == 0
+    assert rag.main(["--corpus", str(path), "--min-abstention-accuracy", "1.0"]) == 0

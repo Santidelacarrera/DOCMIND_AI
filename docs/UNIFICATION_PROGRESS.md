@@ -2,8 +2,8 @@
 
 Registro principal de la unificación. Decisión de arquitectura: [ADR-005](decisions/ADR-005-contextrag-unification.md).
 
-**Fase actual:** G (documentación y cierre). Entregas 1–4 implementadas. La entrega 1 está fusionada en `main` (PR #74); las entregas 2–4 están en la rama `claude/contextrag-unification-2`.
-**Último punto verificado:** 2026-11-12. Suite backend completa en SQLite. Pruebas nuevas en PostgreSQL 17, con RLS aplicada y sin ella. Migración 0011 probada en ambos sentidos. Evaluación RAG en dos corpus, dos embedders y dos modos de respuesta. Detalle en «Criterios de aceptación».
+**Fase actual:** G (documentación y cierre). Entregas 1–5 implementadas. La 1 está fusionada (PR #74) y las 2–4 también (PR #75, 9/9 comprobaciones en verde); la 5 está en la rama `claude/contextrag-unification-3`.
+**Último punto verificado:** 2026-11-12. Suite backend completa en SQLite. Pruebas nuevas en PostgreSQL 17, con RLS aplicada y sin ella. Migración 0011 probada en ambos sentidos. Evaluación RAG en dos corpus, dos embedders, dos modos de respuesta y con o sin reranker. Stack Docker Compose completo: prueba de humo 28/28 y Playwright 11/11. Detalle en «Criterios de aceptación».
 
 ## Fase A — Auditoría
 
@@ -19,7 +19,7 @@ Registro principal de la unificación. Decisión de arquitectura: [ADR-005](deci
 | Recuperación | Qdrant, una colección, clave de tenant `is_tenant`, filtro de proyecto dentro de la consulta, guardia de modelo de embeddings | `test_semantic_answering`, `test_rag_evaluation` |
 | Respuestas | Extractivas: citan frases literales con documento, página y fragmento; abstención si la evidencia no basta (ADR-002/003) | `test_case_query`, evaluación RAG |
 | Ciclo de vida | Outbox de borrado de vectores, reconciliación, retención, reindexado | `test_ops_modules`, `test_retention` |
-| Operación | Celery + Redis, Prometheus (11 alertas), OpenTelemetry opcional, copias pg_dump, S3/KMS, ClamAV, webhooks | promtool, moto, CI `docker` |
+| Operación | Celery + Redis, Prometheus (11 alertas al inicio; 12 tras la entrega 5), OpenTelemetry opcional, copias pg_dump, S3/KMS, ClamAV, webhooks | promtool, moto, CI `docker` |
 | Frontend | Next.js: login, organizaciones, documentos, expedientes, `/ask` con citas | `frontend`, `e2e` (Playwright) |
 
 ### ContextRAG_Engine (referencia, `C:\Proyectos\ContextRAG_Engine`, rama `chore/production-readiness`, commit `3ce473c`, sin cambios locales; no se modificó)
@@ -54,7 +54,7 @@ Sus pruebas (60 ficheros en `tests/`) **no se ejecutaron en esta sesión**: el c
 | Respuesta extractiva con abstención | Exclusiva de DOCMIND | **Se mantiene**; no puede inventar texto |
 | Respuesta generativa con verificación por afirmación | Exclusiva de ContextRAG | **Portado** (entrega 2), opcional: `ASK_MODE=generative` |
 | Términos nombrados ausentes → abstención | Exclusiva de ContextRAG | **Portado** (entrega 2), en los dos modos de respuesta |
-| Reranker | Exclusiva de ContextRAG | **No portado.** El léxico es redundante con la selección de frases de DOCMIND. El cross-encoder necesita `torch` y un modelo de ~1 GB, y en los dos corpus el primer resultado ya es correcto en el 100 % con MiniLM o con `hybrid`: no hay margen medible que lo justifique |
+| Reranker | Exclusiva de ContextRAG | **Portado en la entrega 5** tras reevaluarlo: cross-encoder ONNX (fastembed, sin `torch`), opcional. El descarte anterior («el corpus ya está saturado») no era un motivo suficiente |
 | Memoria conversacional | Exclusiva de ContextRAG; incompatible (SQLite, otra autorización) | **Rediseñada** (entrega 3) en PostgreSQL con RLS y AES-GCM por organización |
 | Presupuesto de contexto | Exclusiva de ContextRAG | **Portado en parte** (entrega 2): deduplicación y límite de caracteres. El orden «edges» no se porta: el propio ContextRAG lo declara una hipótesis sin medir |
 | DeBERTa NLI | Exclusiva de ContextRAG | **No portado**: necesita `torch`. El verificador acepta cualquier objeto con `entailment(pairs)` para conectarlo más adelante |
@@ -148,62 +148,99 @@ Sus pruebas (60 ficheros en `tests/`) **no se ejecutaron en esta sesión**: el c
 | Evaluación ampliada: 2 embedders × 2 recuperaciones × 2 modos | `docs/evaluation/rag-extended-2026-11-12.md`: 0 fugas y 0 usos del documento con inyección en todos los casos |
 | `ruff`, `mypy`, `tsc`, `eslint` | sin errores |
 
+## Entrega 5 — reranking, validación de extremo a extremo, preparación para el propietario (2026-11-12, rama `claude/contextrag-unification-3`)
+
+* **Reranking reevaluado y portado** (`app/rag/rerank.py`). Antes se había descartado con un motivo insuficiente: que el corpus ya estaba saturado. Ahora:
+  * cross-encoder ONNX con fastembed, sin `torch`;
+  * tiempo máximo, y si falla se conserva el orden de la primera etapa;
+  * recibe la pregunta enmascarada y nunca amplía el alcance;
+  * medido con `bge-reranker-v2-m3-int8`.
+
+  Decisión: opcional (`RERANK_MODEL`), apagado por defecto. Resultados, ventajas, limitaciones y motivo en `docs/evaluation/rerank-2026-11-12.md`.
+* **Alerta** `DocMindRerankDegraded` (12 reglas; `promtool check` y `test rules`: SUCCESS).
+* **Evaluación con documentos reales preparada**: el corpus admite ficheros reales (`path`) y `--corpus <ruta>`; `backend/eval_private/` está ignorado por git. Prueba: `test_a_corpus_of_real_files_can_be_evaluated`.
+* **Instrucciones para el propietario**: `docs/OWNER_SETUP.md` (Vertex, `CONVERSATION_ENCRYPTION_KEY`, evaluación con documentos reales, lo que requiere su autorización). No contiene credenciales.
+* **Prueba de humo de extremo a extremo ampliada**: `scripts/staging_smoke.py --lifecycle` (versión nueva y conversaciones).
+* **e2e de navegador nuevos**: `frontend/tests/e2e/conversations.spec.ts`:
+  * conversación con cita, turnos guardados y borrado;
+  * versión nueva desde la página del documento, primero sin cambios y después con cambios.
+
+  En CI, el job e2e genera una clave aleatoria por ejecución, que nunca sale del runner.
+
+### Validación de extremo a extremo (ejecutada el 2026-11-12, stack Docker Compose completo en local)
+
+| Comprobación | Resultado |
+|---|---|
+| `docker compose up --build --wait` (db, redis, qdrant, api, worker, scheduler, web), con una clave de prueba aleatoria en un *override* temporal | todos los servicios sanos; `alembic upgrade head` llegó a `0011_conversations`; 2 políticas RLS en las tablas de conversaciones |
+| `python scripts/staging_smoke.py --base-url http://localhost:8000 --lifecycle` | **28/28 ok**: health, ready, registro de dos organizaciones, subida, procesamiento, extracción, exportación, aislamiento, respuesta citada (documento, página, fragmento), abstención, aislamiento de `/ask`, versión nueva (la respuesta pasa de 23 a 26 días y el texto antiguo no se cita), conversación (creada, con cita, turnos guardados, otra organización 403, borrada) |
+| Cifrado en reposo en PostgreSQL real | 2 turnos guardados; ninguno contiene en claro el texto de la pregunta (`position(... in payload) = 0`) |
+| `npx playwright test` contra ese stack | **11/11 passed** (los 9 previos y los 2 nuevos) |
+| Stack retirado con `down -v` (solo volúmenes de esta prueba, proyecto `docmind-e2e`) | — |
+| Suite backend completa (SQLite) con la entrega 5 | **707 passed, 91 skipped, 0 failed** |
+| PostgreSQL 17 con `TEST_RLS_ENFORCED=1`: reranking, evaluación (documentos reales), conversaciones, ciclo de vida, `test_rls_phase3`, `test_tenant_isolation` | **44 passed, 2 skipped** |
+| PostgreSQL 17 sin RLS aplicada: reranking, conversaciones, `test_rls_policies` | **64 passed** |
+
 ## Pendiente
 
-Todo lo que se puede hacer sin el propietario está hecho, salvo lo descartado con su motivo en la matriz (reranker, DeBERTa, Ragas, orden «edges»). Lo que falta depende de él:
+Todo lo que se puede hacer sin el propietario está hecho. Lo que falta necesita su intervención (ver «Bloqueos»). Lo único descartado tras reevaluarlo, con su motivo:
 
-1. Validar `ASK_MODE=generative` con un LLM real (Vertex). Las pruebas usan un modelo simulado y el generador sin conexión.
-2. Medir `hybrid`, la generación y los conflictos con documentos reales anonimizados.
-3. Retirar el outbox hacia ContextRAG externo (`contextrag_sync.py`, migración destructiva de `contextrag_events`). Hace falta su aprobación.
-4. Definir `CONVERSATION_ENCRYPTION_KEY` en staging y producción (un secreto: no lo genero yo).
+* **DeBERTa NLI:** necesita `torch` (unos 2 GB de dependencias) y un modelo de 1,7 GB. El verificador acepta cualquier modelo con `entailment(pairs)`, así que conectarlo más adelante no cambia el diseño. Se valorará cuando el modo generativo esté validado con un LLM real y se vea cuántas paráfrasis correctas rechaza el verificador léxico (`dropped_claims`).
+* **Ragas:** necesita un LLM juez de pago. Las métricas de DOCMIND son deterministas y suficientes para las puertas de CI. Se puede añadir como evaluación opcional cuando haya credenciales.
+* **Orden «edges» del contexto:** el propio ContextRAG lo declara una hipótesis sin medir.
 
-## Bloqueos que dependen de Santiago
+## Bloqueos que dependen de Santiago (cómo resolverlos: `docs/OWNER_SETUP.md`)
 
-* Documentos reales anonimizados (30–50) para medir `hybrid`, la generación y los conflictos.
-* Credenciales LLM (Vertex AI) para validar la respuesta generativa.
-* Aprobación para retirar la integración externa con ContextRAG.
-* `CONVERSATION_ENCRYPTION_KEY` y el resto de secretos de staging.
+| Bloqueo | Qué desbloquea | Cómo resolverlo |
+|---|---|---|
+| Credenciales de Vertex AI | Validar `ASK_MODE=generative` con un modelo real | `OWNER_SETUP.md` §1: proyecto, API, cuenta de servicio con `roles/aiplatform.user`, variables `VERTEX_*` |
+| `CONVERSATION_ENCRYPTION_KEY` en staging y producción | Conversaciones en esos entornos | §2: generarla en una máquina de confianza, guardarla en el gestor de secretos y copiarla aparte |
+| 30–50 documentos reales anonimizados y sus preguntas | Medir calidad real; decidir `RETRIEVAL_MODE`, `RERANK_MODEL` y `ASK_MODE` | §3: en `backend/eval_private/`, formato del corpus, comandos |
+| Autorización para retirar el outbox hacia ContextRAG externo | Quitar código y la tabla `contextrag_events` (migración destructiva) | Decisión explícita. **No se ha tocado.** |
+| Staging y activación de RLS | Validar el despliegue real | `docs/RLS_DESIGN.md` «Activación» y `docs/STAGING.md` |
 
-## Criterios de aceptación (sección 23 del encargo)
+## Criterios de aceptación (sección 23 del encargo) — revisión estricta del 2026-11-12
 
-| # | Criterio | Estado | Evidencia |
-|---|---|---|---|
-| 1 | Una sola plataforma | IMPLEMENTADO Y VALIDADO | ContextRAG portado a `app/rag`; ningún servicio aparte es necesario |
-| 2 | Una sola interfaz | IMPLEMENTADO Y VALIDADO | Next.js: `/ask`, `/conversations`, documentos (e2e en CI) |
-| 3 | Arquitectura modular | IMPLEMENTADO Y VALIDADO | `docs/architecture.md`, ADR-001 y ADR-005 |
-| 4 | Pipeline documental unificado | IMPLEMENTADO Y VALIDADO | Un solo pipeline (`ingestion/`, `worker.py`) |
-| 5 | Extracción documental | IMPLEMENTADO Y VALIDADO | Corpus de extracción, puerta F1 ≥ 0,89 en CI |
-| 6 | OCR | IMPLEMENTADO Y VALIDADO | Tesseract en CI (documentos escaneados del corpus de extracción) |
-| 7 | Modelo documental canónico | IMPLEMENTADO Y VALIDADO | Un fragmento = documento + página + `chunk_index` + tenant + proyecto; sin segundo chunker |
-| 8 | Indexación consistente | IMPLEMENTADO Y VALIDADO | Reindexar borra lo anterior (`test_document_lifecycle_e2e`) |
-| 9 | Búsqueda semántica | IMPLEMENTADO Y VALIDADO | MiniLM multilingüe, evaluación |
-| 10 | Búsqueda híbrida | IMPLEMENTADO Y VALIDADO (opcional) | `RETRIEVAL_MODE=hybrid`, puerta en CI |
-| 11 | BM25 | IMPLEMENTADO Y VALIDADO | `app/rag/bm25.py`, `test_hybrid_retrieval` |
-| 12 | Qdrant | IMPLEMENTADO Y VALIDADO | Cliente en memoria en CI; servidor real en `test_live_services` (opcional) |
-| 13 | Re-ranking | PARCIAL | Fusión RRF y selección léxica de frases. Cross-encoder no portado, con su motivo |
-| 14 | Verificación de evidencia | IMPLEMENTADO Y VALIDADO | Verificación por frase (`app/rag/verification.py`) y regla de evidencia suficiente |
-| 15 | Consultas individuales | IMPLEMENTADO Y VALIDADO | `/projects/{id}/ask` |
-| 16 | Consultas sobre colecciones | IMPLEMENTADO Y VALIDADO | `/ask`, sobre todos los expedientes legibles |
-| 17 | Respuestas con citas | IMPLEMENTADO Y VALIDADO | `citation_accuracy` 1,0 con MiniLM |
-| 18 | Abstención | IMPLEMENTADO Y VALIDADO | `abstention_accuracy` 1,0 en los dos corpus |
-| 19 | Memoria conversacional segura | IMPLEMENTADO Y VALIDADO | `test_conversations` en SQLite y PostgreSQL con RLS |
-| 20 | Aislamiento multi-tenant | IMPLEMENTADO Y VALIDADO | RLS fase 3, 0 fugas en la evaluación, pruebas entre organizaciones |
-| 21 | Actualización documental consistente | IMPLEMENTADO Y VALIDADO | `/documents/{id}/versions` |
-| 22 | Eliminación verificable | IMPLEMENTADO Y VALIDADO | Outbox con verificación; vectores comprobados a 0 en la prueba de ciclo de vida |
-| 23 | Evaluación RAG | IMPLEMENTADO Y VALIDADO | Dos corpus y tres puertas en CI. Ragas no portado |
-| 24 | Observabilidad | IMPLEMENTADO Y VALIDADO | Métricas de recuperación y 11 alertas validadas con promtool |
-| 25 | Pruebas automatizadas | IMPLEMENTADO Y VALIDADO | Suite completa y CI con 9 comprobaciones |
-| 26 | Infraestructura reproducible | IMPLEMENTADO Y VALIDADO | Docker Compose para desarrollo y producción, copias de seguridad |
-| 27 | Documentación | IMPLEMENTADO Y VALIDADO | README, arquitectura, API, entorno, ADR-005 e informes |
-| — | Generación con un LLM real | BLOQUEADO | Faltan credenciales de Vertex |
-| — | Calidad con documentos reales | BLOQUEADO | Faltan documentos reales anonimizados |
+Estados: **VALIDADO** = implementado y con evidencia ejecutada y reproducible. **VALIDADO EN LOCAL / CI** = la evidencia es de pruebas automatizadas o del stack local, no de un entorno real. **PARCIAL** = falta una parte. **BLOQUEADO** = depende del propietario.
+
+| # | Criterio | Estado | Evidencia verificable | Qué falta |
+|---|---|---|---|---|
+| 1 | Una sola plataforma DOCMIND | VALIDADO EN LOCAL / CI | Capacidades de ContextRAG en `backend/app/rag/`. Ninguna prueba ni flujo necesita ContextRAG. Stack Compose sin ContextRAG: humo 28/28 | El outbox antiguo hacia ContextRAG sigue en el código, **desactivado**, hasta tu autorización (criterio 6 de tu mensaje) |
+| 2 | Una sola interfaz | VALIDADO EN LOCAL / CI | Next.js: `/ask`, `/conversations`, documentos y versiones. Playwright 11/11 en local y job `e2e` en CI | — |
+| 3 | Arquitectura modular | VALIDADO | `docs/architecture.md` (tabla de módulos), ADR-001 y ADR-005. Un backend, un modelo documental | — |
+| 4 | Pipeline documental unificado | VALIDADO EN LOCAL / CI | Un solo pipeline (`ingestion/`, `worker.py`); `test_document_lifecycle_e2e`; humo con el stack completo | — |
+| 5 | Extracción documental | VALIDADO EN LOCAL / CI (sin LLM real) | Puerta F1 ≥ 0,89 en CI con el proveedor simulado; extracción en el humo | Extracción con Vertex real: BLOQUEADO (credenciales) |
+| 6 | OCR | VALIDADO EN CI | Tesseract y Poppler en el job `backend`: documentos escaneados del corpus de extracción | Escaneos reales: BLOQUEADO (documentos) |
+| 7 | Modelo documental canónico | VALIDADO | Un fragmento = tenant + proyecto + documento + página + `chunk_index`. BM25, reranking, conflictos y generación usan esos mismos fragmentos (`test_hybrid_retrieval` comprueba la página citada) | — |
+| 8 | Indexación consistente | VALIDADO EN LOCAL / CI | El reindexado borra los vectores anteriores (`test_document_lifecycle_e2e`: «1800» desaparece); humo: 23 → 26 días | — |
+| 9 | Búsqueda semántica | VALIDADO EN LOCAL | MiniLM multilingüe: recall@1 = 1,0 en los dos corpus (`docs/evaluation/*.md`). CI usa el embedder `hashing` | Con documentos reales: BLOQUEADO |
+| 10 | Búsqueda híbrida | VALIDADO (opcional) | `RETRIEVAL_MODE=hybrid`; `test_hybrid_retrieval` (9); puerta del corpus ampliado en CI con `hybrid` | Decidir el valor por defecto con documentos reales |
+| 11 | BM25 | VALIDADO | `app/rag/bm25.py`; pruebas unitarias e integración por tenant y alcance | — |
+| 12 | Qdrant | VALIDADO EN LOCAL / CI | Cliente en memoria en CI; **servidor Qdrant real** (contenedor 1.20) en el humo del stack completo | — |
+| 13 | Re-ranking | VALIDADO (opcional, apagado por defecto) | `app/rag/rerank.py`; `tests/test_rerank.py` (6); medición en `docs/evaluation/rerank-2026-11-12.md` | Activarlo depende de la medición con documentos reales y de la latencia aceptable |
+| 14 | Verificación de evidencia | VALIDADO EN LOCAL / CI (sin LLM real) | Regla de evidencia suficiente (extractivo); verificación por frase y términos nombrados (generativo); `test_generative_answers` (13) y puerta generativa en CI | Generación con LLM real: BLOQUEADO |
+| 15 | Consultas individuales | VALIDADO | `/projects/{id}/ask` con su suite de autorización (`test_case_query`, `test_project_authorization`) | — |
+| 16 | Consultas sobre colecciones | VALIDADO | `/ask` sobre todos los expedientes legibles (`accessible_project_ids`) | — |
+| 17 | Respuestas con citas | VALIDADO EN LOCAL / CI | `citation_accuracy` 1,0 con MiniLM; humo: documento, página, fragmento y extracto | Con documentos reales: BLOQUEADO |
+| 18 | Abstención | VALIDADO EN LOCAL / CI | `abstention_accuracy` 1,0 en los dos corpus (puertas de CI); humo: abstención y otra organización vacía | — |
+| 19 | Memoria conversacional segura | VALIDADO EN LOCAL / CI | `test_conversations` (7) en SQLite y PostgreSQL con RLS aplicada; humo; cifrado comprobado en PostgreSQL real; e2e de navegador | Clave real en staging/producción: BLOQUEADO (§2) |
+| 20 | Aislamiento multi-tenant | VALIDADO EN LOCAL / CI | Suite completa como `docmind_app` (job `backend-postgres-rls`); recorrido de todas las rutas (`test_tenant_isolation`); 0 fugas en todas las evaluaciones; humo 403/404 | Activar RLS en staging: BLOQUEADO |
+| 21 | Actualización documental consistente | VALIDADO EN LOCAL / CI | `/documents/{id}/versions` en API, humo y e2e de navegador | — |
+| 22 | Eliminación verificable | VALIDADO EN LOCAL / CI | Outbox con verificación; vectores contados a 0 en `test_document_lifecycle_e2e`; conversaciones borradas (404 y 0 filas) | — |
+| 23 | Evaluación RAG | VALIDADO (con un límite) | Dos corpus, recuperación densa o híbrida, respuesta extractiva o generativa, con o sin reranker; tres puertas en CI | Ragas (juez LLM) no portado; documentos reales: BLOQUEADO |
+| 24 | Observabilidad | VALIDADO EN CI | Métricas de recuperación, reranking y coste; 12 alertas con `promtool check` y `test rules` | Alertmanager conectado: tuyo (`PRODUCTION_CHECKLIST.md`) |
+| 25 | Pruebas automatizadas | VALIDADO | Suite backend completa, PostgreSQL con y sin RLS, e2e y CodeQL en CI | — |
+| 26 | Infraestructura reproducible | VALIDADO EN LOCAL | `docker compose up --build --wait` del stack completo y humo 28/28 en esta sesión; Compose de producción y copias de seguridad (ADR-004) | Despliegue en staging: BLOQUEADO |
+| 27 | Documentación completa | VALIDADO | README (diagrama de preguntas), `architecture.md`, `API.md`, `ENVIRONMENT.md`, ADR-005, `OWNER_SETUP.md` e informes de evaluación | — |
+
+**Resumen honesto:** los 27 criterios están implementados. Ninguno queda parcial tras la reevaluación del reranking. Ocho de ellos (5, 6, 9, 14, 17, 19, 20 y 26) tienen una parte que solo se puede validar con tus credenciales, tus documentos o un entorno de staging. Hasta entonces, su validación es local o de CI, no de producción.
 
 ## Cómo continuar
 
 ```bash
 cd backend
-pytest tests/test_generative_answers.py tests/test_conversations.py tests/test_document_lifecycle_e2e.py -q
+pytest -q                                   # suite completa
 python -m app.evaluation.rag --corpus extended --retrieval hybrid --answer-mode generative
+python scripts/staging_smoke.py --base-url http://localhost:8000 --lifecycle   # con el stack levantado
 ```
 
-Siguiente paso: con credenciales de Vertex, `ASK_MODE=generative LLM_PROVIDER=vertex` sobre el corpus ampliado y sobre documentos reales. Hay que comparar `dropped_claims` y la tasa de abstención frente al modo extractivo.
+Siguiente paso: los bloqueos de la tabla anterior, en este orden: documentos reales (decide los valores por defecto), Vertex (modo generativo) y staging con RLS.

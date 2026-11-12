@@ -10,6 +10,11 @@ With ``--ask`` it also checks question answering end to end (needs ``QDRANT_URL`
 uploads a fictitious policy, waits until it is indexed, and requires a cited answer (document,
 page, chunk and quoted excerpt), an abstention for a question the document cannot answer, and an
 abstention for the second tenant, which must never see the first tenant's text.
+
+With ``--lifecycle`` (implies ``--ask``; ADR-005) it also uploads a new version of that policy and requires
+the answer to change to the new text, then checks conversations: a private conversation answers with
+a citation, the other tenant cannot open it, and deleting it erases it. Needs
+``CONVERSATION_ENCRYPTION_KEY`` on the server (otherwise the conversation step fails with 503).
 """
 
 import argparse
@@ -89,11 +94,58 @@ def check_ask(client: httpx.Client, headers: dict[str, str], org: str, project: 
     step("ask: other tenant cannot query tenant A", foreign.status_code in (403, 404), str(foreign.status_code))
 
 
+def ask_until(client: httpx.Client, headers: dict[str, str], org: str, question: str, needle: str,
+              timeout: int) -> dict[str, object]:
+    deadline, body = time.time() + timeout, {"answer": ""}
+    while time.time() < deadline:
+        response = client.post(f"/api/v1/ask?organization_id={org}", headers=headers, json={"question": question})
+        body = response.json()
+        if needle in str(body.get("answer", "")):
+            break
+        time.sleep(3)
+    return body
+
+
+def check_lifecycle(client: httpx.Client, headers: dict[str, str], org: str, project: str,
+                    other_headers: dict[str, str], timeout: int) -> None:
+    from app.evaluation.pdfgen import digital_pdf
+
+    question = "Cuantos dias de vacaciones tienen los empleados?"
+    listed = client.get(f"/api/v1/documents?organization_id={org}", headers=headers).json()
+    policy = next(d["id"] for d in listed if d["filename"] == "politica_smoke.pdf")
+    new_pages = [POLICY_PAGES[0], ["Los empleados tienen derecho a 26 dias laborables de vacaciones al ano."]]
+    version = client.post(
+        f"/api/v1/documents/{policy}/versions?organization_id={org}",
+        files={"file": ("politica_smoke_v2.pdf", digital_pdf(new_pages), "application/pdf")}, headers=headers,
+    )
+    step("version: new version accepted", version.status_code == 202, str(version.status_code))
+    step("version: reprocessed", wait_completed(client, headers, org, policy, timeout) == "COMPLETED")
+    body = ask_until(client, headers, org, question, "26 dias", timeout)
+    step("version: answer uses the new text", "26 dias" in str(body.get("answer")), str(body.get("answer"))[:80])
+    step("version: old text no longer cited", "23 dias" not in str(body.get("answer")))
+
+    created = client.post(f"/api/v1/conversations?organization_id={org}", headers=headers, json={"project_id": project})
+    step("conversation: created", created.status_code == 201, f"{created.status_code} {created.text[:80]}")
+    conversation = created.json()["id"]
+    turn = client.post(f"/api/v1/conversations/{conversation}/ask?organization_id={org}", headers=headers,
+                       json={"question": question}).json()
+    step("conversation: cited answer", "26 dias" in str(turn.get("answer")) and bool(turn.get("citations")))
+    opened = client.get(f"/api/v1/conversations/{conversation}?organization_id={org}", headers=headers).json()
+    step("conversation: turns stored", [t["role"] for t in opened.get("turns", [])] == ["user", "assistant"])
+    foreign = client.get(f"/api/v1/conversations/{conversation}?organization_id={org}", headers=other_headers)
+    step("conversation: other tenant cannot open it", foreign.status_code in (403, 404), str(foreign.status_code))
+    deleted = client.delete(f"/api/v1/conversations/{conversation}?organization_id={org}", headers=headers)
+    gone = client.get(f"/api/v1/conversations/{conversation}?organization_id={org}", headers=headers)
+    step("conversation: deleted", deleted.status_code == 204 and gone.status_code == 404)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--timeout", type=int, default=180, help="seconds to wait for processing")
     parser.add_argument("--ask", action="store_true", help="also check cited answers, abstention and isolation")
+    parser.add_argument("--lifecycle", action="store_true",
+                        help="also check a new document version and conversations (implies --ask)")
     args = parser.parse_args()
     manifest = json.loads((CORPUS / "manifest.json").read_text(encoding="utf-8"))
     entry = next(d for d in manifest["documents"] if d["doc_type"] == "invoice")
@@ -124,8 +176,10 @@ def main() -> None:
         step("second tenant cannot read tenant A", cross.status_code in (403, 404), str(cross.status_code))
         cross_org = client.get(f"/api/v1/documents/{document}/status?organization_id={other_org}", headers=other_headers)
         step("document not visible inside tenant B", cross_org.status_code in (403, 404), str(cross_org.status_code))
-        if args.ask:
+        if args.ask or args.lifecycle:
             check_ask(client, headers, org, project, other_headers, other_org, args.timeout)
+        if args.lifecycle:
+            check_lifecycle(client, headers, org, project, other_headers, args.timeout)
     print("smoke test passed")
 
 

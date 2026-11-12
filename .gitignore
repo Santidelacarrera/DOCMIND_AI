@@ -22,3 +22,7 @@ documento_*.txt
 *.tsbuildinfo
 eval_reports/
 celerybeat-schedule*
+
+# Real documents for local evaluation (docs/REAL_DOCUMENT_EVALUATION.md): never committed
+backend/eval_private/
+eval_private/

@@ -139,6 +139,11 @@ class Settings(BaseSettings):
     retrieval_rrf_k: int = Field(default=60, ge=1, le=1000)
     retrieval_lexical_cache_seconds: float = Field(default=60.0, ge=0.0, le=3600.0)
     retrieval_lexical_max_chunks: int = Field(default=50_000, ge=1)
+    # Cross-encoder reranking (app.rag.rerank, fastembed ONNX). Empty = off. A fastembed rerank model,
+    # e.g. "BAAI/bge-reranker-v2-m3-int8" (multilingual). Measure before enabling (docs/evaluation).
+    rerank_model: str | None = None
+    rerank_candidates: int = Field(default=20, ge=2, le=100)
+    rerank_timeout_seconds: float = Field(default=5.0, gt=0.0, le=60.0)
     # Answers for /ask (ADR-005). "extractive": quoted sentences, no model. "generative": the LLM_PROVIDER
     # words the answer from the retrieved (masked) passages and every sentence is verified against the
     # passage it cites; unverified sentences are removed. Each question is then one LLM call (cost).
