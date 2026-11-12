@@ -115,10 +115,6 @@ class World:
         if (method, template) == ("POST", "/api/v1/projects/{project_id}/ask"):
             # Well-formed body, so the refusal must come from the membership check, not validation.
             return self.client.post(url, json={"question": "outsider attempt to read"}, headers=headers)
-        if (method, template) == ("POST", "/api/v1/contextrag/events/{event_id}/cancel"):
-            # The outsider's body is well-formed, so the refusal must come from the membership check.
-            body = {"confirm": self.ids["event_id"], "reason": "outsider attempt to cancel"}
-            return self.client.post(url, json=body, headers=headers)
         body = BODIES.get((method, template))
         if body is not None:
             return self.client.request(

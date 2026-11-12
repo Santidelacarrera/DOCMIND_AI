@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import api_support, contextrag_sync
+from app import api_support
 from app.api_support import Name, audit
 from app.core import settings
 from app.db import get_db
@@ -141,85 +141,6 @@ def usage(
         "free_pages_limit": settings().free_pages_per_month,
     }
 
-
-@router.get("/api/v1/contextrag/events")
-def contextrag_events(
-    organization_id: str,
-    user: User | ApiPrincipal = Depends(current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, object]:
-    """Synchronisation state with ContextRAG for administrators: counts and recent problems.
-    Holds status and error codes only, never document content. API keys cannot read it."""
-    org_id = api_support.organization_id(organization_id)
-    membership(org_id, user, db, Role.admin)
-    return contextrag_sync.status_summary(db, org_id)
-
-
-@router.get("/api/v1/contextrag/events/list")
-def contextrag_events_list(
-    organization_id: str,
-    status: str | None = Query(
-        default=None, pattern="^(pending|processing|done|failed|cancelled)$"
-    ),
-    limit: int = Query(default=50, ge=1, le=200),
-    user: User | ApiPrincipal = Depends(current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, object]:
-    """Inspect outbox events of the organization (administrators only). Identifiers and status, no content."""
-    org_id = api_support.organization_id(organization_id)
-    membership(org_id, user, db, Role.admin)
-    return {"events": contextrag_sync.list_events(db, org_id, status, limit)}
-
-
-class CancelEventInput(BaseModel):
-    confirm: str = Field(
-        min_length=36, max_length=36, description="Must equal the event id in the path"
-    )
-    reason: str = Field(min_length=10, max_length=300)
-
-
-@router.post("/api/v1/contextrag/events/{event_id}/cancel")
-def contextrag_event_cancel(
-    event_id: uuid.UUID,
-    organization_id: str,
-    payload: CancelEventInput,
-    user: User | ApiPrincipal = Depends(current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, object]:
-    """Cancel one failed or pending upsert. Deletions cannot be cancelled. Requires the event id in the body,
-    a reason, administrator rights, and leaves an audit record."""
-    org_id = api_support.organization_id(organization_id)
-    membership(org_id, user, db, Role.admin)
-    try:
-        outcome = contextrag_sync.cancel_upsert(
-            db, org_id, event_id, confirm=payload.confirm, reason=payload.reason
-        )
-    except contextrag_sync.OutboxAdminError as exc:
-        db.rollback()
-        raise HTTPException(exc.status, exc.code) from None
-    # Same transaction as the cancellation: either both happen or neither does.
-    db.add(
-        AuditLog(
-            organization_id=org_id,
-            actor_id=user.id if isinstance(user, User) else None,
-            action="contextrag.event.cancel",
-            target_type="contextrag_event",
-            target_id=str(event_id),
-            metadata_={
-                "reason": outcome["reason"],
-                "previous_status": outcome["previous"]["status"],
-                "attempts": outcome["previous"]["attempts"],
-                "last_error": outcome["previous"]["last_error"],
-                "document_id": outcome["document_id"],
-            },
-        )
-    )
-    db.commit()
-    return {
-        "event_id": outcome["event_id"],
-        "status": "cancelled",
-        "previous_status": outcome["previous"]["status"],
-    }
 
 
 @router.get("/api/v1/audit-logs")

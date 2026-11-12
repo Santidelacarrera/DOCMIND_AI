@@ -3,7 +3,7 @@
 **Estado (2026-11-12):**
 * Fases 1 y 2 **autorizadas** por el propietario (misión «Validación real, staging y producción», sección 11).
 * **Fase 1 ejecutada**: `CONTEXTRAG_OUTBOX_ENABLED=false` por defecto (rama `claude/real-validation-prep`).
-* Fase 2: en su propia PR, después de la fase 1.
+* **Fase 2 ejecutada** (rama `claude/contextrag-sync-phase2`): código, rutas, tareas, configuración y sus pruebas retirados; la tabla se conserva.
 * **Fase 3 (borrar la tabla): no autorizada, no se ejecutará sin una autorización explícita.**
 
 ## Por qué existe y por qué sobra
@@ -50,10 +50,15 @@ Antes de ADR-005, DOCMIND enviaba el texto enmascarado de los documentos a un se
   * Reversibilidad comprobada: con el ajuste en `true` y ContextRAG en `PYTHONPATH` (sin instalarlo ni escribir en su repositorio), 57 pruebas de la sincronización pasan; 1 omitida (solo PostgreSQL); 1 fallida porque necesita `fork`, que no existe en Windows, y que en CI se omite.
   * `CONTEXTRAG_SYNC_ENABLED=true` exige ahora `CONTEXTRAG_OUTBOX_ENABLED=true`.
 
-### Fase 2 — retirar el código (la tabla se conserva)
+### Fase 2 — retirar el código (la tabla se conserva) — EJECUTADA
 * Quitar `contextrag_sync.py`, `integrations/contextrag.py`, las 3 rutas de administración, las tareas de beat, las 7 variables y sus pruebas y documentación. `ContextRagEvent` se conserva para que la base de datos no cambie.
 * **Cambio de contrato:** las 3 rutas de administración pasan a 404. Comprobar antes que ningún cliente las usa (registros de acceso).
 * **Reversión:** revertir el commit (no se ha tocado la base de datos).
+* **Resultado:**
+  * Eliminados `app/contextrag_sync.py`, `app/integrations/contextrag.py`, las 3 rutas de administración, las tareas `deliver_contextrag_events` y `reconcile_contextrag`, las 8 variables `CONTEXTRAG_*` (con `extra="ignore"`, un `.env` antiguo sigue cargando), `scripts/contextrag_live_check.py` y las pruebas del código retirado (`test_contextrag_sync`, `test_contextrag_integration`, `test_outbox_admin`, `test_outbox_process_kill` y la prueba de registros de la entrega en `test_observability_surface`).
+  * Se conservan `ContextRagEvent`, la migración 0007 y la política RLS de la tabla.
+  * Nuevas pruebas: `test_retired_contextrag_tasks_are_gone`, y la prueba de procesamiento y borrado sin eventos.
+  * `docs/AUTHORIZATION_MATRIX.md` regenerada.
 
 ### Fase 3 — borrar la tabla (**destructiva**)
 * **Copia previa:** `pg_dump -Fc -t contextrag_events` verificado con `pg_restore --list`, guardado con las copias de la base de datos.

@@ -157,26 +157,9 @@ Respuesta de las rutas de pregunta:
 * `conflicts`: posibles discrepancias de fechas, cifras o negación con una fuente citada. Es heurístico y nunca decide qué fuente tiene razón.
 * 503 `VECTOR_INDEX_UNAVAILABLE` (Qdrant caído) y 503 `LLM_UNAVAILABLE` (modelo caído en modo generativo) se pueden reintentar.
 
-## Sincronización con ContextRAG (administradores)
+## Sincronización con ContextRAG (retirada)
 
-`GET /api/v1/contextrag/events?organization_id=…` devuelve recuentos por estado (`pending`, `processing`, `done`, `failed`, `cancelled`), si la sincronización está activa y los problemas recientes con su código de error. No incluye contenido. Requiere rol ADMIN o superior; las claves API reciben 403.
-
-`GET /api/v1/contextrag/events/list?organization_id=…&status=failed&limit=50` lista los eventos de la organización (identificador, tipo, estado, intentos, código de error). `status` acepta `pending`, `processing`, `done`, `failed` o `cancelled`; `limit` va de 1 a 200. Sin contenido de documentos. Solo ADMIN.
-
-`POST /api/v1/contextrag/events/{event_id}/cancel?organization_id=…` cuerpo JSON:
-
-```json
-{ "confirm": "<mismo identificador que la ruta>", "reason": "motivo de la cancelación" }
-```
-
-* `confirm` debe ser exactamente el identificador de la ruta (36 caracteres); si no, 400 `CONFIRMATION_MISMATCH` y no ocurre nada.
-* `reason` tiene entre 10 y 300 caracteres; si no, 422 (validación) o `REASON_REQUIRED`.
-* Solo se cancelan upserts en `failed` o `pending`. Un borrado (`retire`) devuelve 409 `RETIREMENT_CANNOT_BE_CANCELLED`; un evento en `processing`, `done` o ya `cancelled` devuelve 409 `EVENT_NOT_CANCELLABLE`.
-* Un identificador de otra organización devuelve 404 `EVENT_NOT_FOUND`, igual que uno inexistente.
-* Éxito: el evento pasa a `cancelled` con `last_error = CANCELLED_BY_ADMIN`, y se escribe un registro de auditoría `contextrag.event.cancel` (motivo, estado anterior, número de intentos) en la misma transacción.
-* Rol ADMIN; las claves API reciben 403.
-
-Procedimiento recomendado: listar con `status=failed`, revisar `last_error` y `attempts`, corregir la causa si es de configuración, y cancelar solo los eventos que no deban publicarse. Cancelar no retira nada de ContextRAG.
+Las rutas `/api/v1/contextrag/events…` se retiraron en la fase 2 de `docs/CONTEXTRAG_SYNC_RETIREMENT_PLAN.md` (2026-11-12) y ahora responden 404. La tabla `contextrag_events` se conserva hasta la fase 3, que requiere autorización.
 
 ## Interfaz: estado de verificación
 

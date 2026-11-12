@@ -41,7 +41,7 @@ Las concesiones (`PUT`, `GET`, `DELETE /api/v1/projects/{id}/members`) son solo 
 * **Routers:** no hay routers montados fuera de `app/main.py`.
 * **Auditoría (`GET /api/v1/audit-logs`):** solo owner/admin. Contiene identificadores de documento y acciones, no contenido. No se filtra por proyecto: un admin ya administra toda la organización.
 * **Uso (`GET /api/v1/usage`):** totales de la organización, sin contenido de documentos.
-* **Sincronización ContextRAG (`GET /api/v1/contextrag/events…`):** solo admin, sin contenido. Sigue desactivada por defecto.
+* **Sincronización ContextRAG:** retirada el 2026-11-12 (fase 2 de `CONTEXTRAG_SYNC_RETIREMENT_PLAN.md`); sus rutas ya no existen.
 * **Webhooks:** la entrega envía solo `document_id` y el evento a una URL que configura un admin. No hay control por proyecto en la entrega; es un riesgo residual, sin contenido.
 
 ## Decisiones y límites

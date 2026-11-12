@@ -37,8 +37,8 @@ sleep "$SECONDS_TO_RUN"
 kill "$BEAT_PID" "$WORKER_PID" 2>/dev/null || true
 wait 2>/dev/null || true
 
-SHORT_TASKS=(deliver-contextrag-events recover-stuck-jobs process-vector-deletions)
-LONG_TASKS=(purge-expired-data reconcile-contextrag reconcile-storage)
+SHORT_TASKS=(recover-stuck-jobs process-vector-deletions)
+LONG_TASKS=(purge-expired-data reconcile-storage)
 failed=0
 
 for name in "${SHORT_TASKS[@]}"; do

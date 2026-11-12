@@ -27,7 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import api_support, contextrag_sync, vector_index
+from app import api_support, vector_index
 from app.antivirus import antivirus
 from app.api_support import (
     MAX_FIELD_VALUE_BYTES,
@@ -569,7 +569,6 @@ def delete_document(
     item.deleted_at = datetime.now(UTC)
     scrub_derived_text(db, item.id)
     vector_index.queue_deletion(db, org_id, item.id)  # same transaction: cannot be lost
-    contextrag_sync.enqueue_retire(db, org_id, item.id)  # same transaction
     audit(db, "document.delete", "document", str(item.id), user, org_id)
     db.commit()
     _kick_vector_deletions()

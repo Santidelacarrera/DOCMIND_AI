@@ -11,7 +11,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import CursorResult, and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from app import contextrag_sync, rls
+from app import rls
 from app.core import settings
 from app.db import SessionLocal, SystemSessionLocal
 from app.ingestion.docx import DOCX_MIME
@@ -107,11 +107,7 @@ celery_app.conf.beat_schedule = {
     "process-vector-deletions": {"task": "app.worker.process_vector_deletions", "schedule": 60.0},
     "reconcile-storage": {"task": "app.worker.reconcile_storage", "schedule": 86400.0},
 }
-if settings().contextrag_outbox_enabled:  # retirement phase 1: not scheduled unless the outbox is re-enabled
-    celery_app.conf.beat_schedule.update({
-        "deliver-contextrag-events": {"task": "app.worker.deliver_contextrag_events", "schedule": 30.0},
-        "reconcile-contextrag": {"task": "app.worker.reconcile_contextrag", "schedule": 3600.0},
-    })
+
 
 MAX_RETRIES = 3
 # Retry delay for transient failures: base * 2**attempt seconds, capped at one minute.
@@ -513,7 +509,6 @@ def _commit_success(claim: _Claim, computed: _Computed, log: _StepLog) -> bool:
         db.add(UsageRecord(organization_id=job.organization_id, metric="documents_processed", quantity=1, document_id=document.id))
         db.add(UsageRecord(organization_id=job.organization_id, metric="pages_processed", quantity=pages, document_id=document.id))
         # Same transaction: the outbox row exists if and only if the new content is committed.
-        contextrag_sync.enqueue_upsert(db, job.organization_id, document.id)
         _persist_steps(db, job.id, log, None)
         return True
 
@@ -731,18 +726,6 @@ def purge_expired_data() -> dict[str, int]:
     from app.retention import purge_expired
 
     return purge_expired()
-
-
-@celery_app.task
-def deliver_contextrag_events() -> dict[str, int]:
-    """Deliver due ContextRAG outbox events (no-op unless CONTEXTRAG_SYNC_ENABLED)."""
-    return contextrag_sync.process_due()
-
-
-@celery_app.task
-def reconcile_contextrag() -> dict[str, int]:
-    """Enqueue events for inconsistencies: current content not yet sent, deletions not yet retired."""
-    return contextrag_sync.reconcile()
 
 
 @celery_app.task

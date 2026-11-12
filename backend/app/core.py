@@ -175,24 +175,6 @@ class Settings(BaseSettings):
     storage_reconcile_grace_hours: int = 24
     storage_reconcile_delete: bool = False
     storage_reconcile_max_delete_fraction: float = 0.5
-    # ContextRAG sync (docs/CONTEXTRAG_INTEGRATION.md). Events are always recorded in the outbox;
-    # nothing is delivered unless CONTEXTRAG_SYNC_ENABLED=true and the URL/keys are configured.
-    # Retirement phase 1 (docs/CONTEXTRAG_SYNC_RETIREMENT_PLAN.md): the outbox is no longer written and its
-    # beat tasks are not scheduled. true restores the previous behaviour; reconcile() then re-creates the
-    # events that were not recorded meanwhile. Sync requires it.
-    contextrag_outbox_enabled: bool = False
-    contextrag_sync_enabled: bool = False
-    contextrag_url: str | None = None
-    contextrag_keys_file: str | None = (
-        None  # JSON {"<org uuid>": "<contextrag admin key>"}, outside the repo
-    )
-    contextrag_allowed_hosts: str = ""  # comma-separated; required for any non-localhost URL
-    # "masked" (default): PII-masked page text, labelled as masked in the metadata. Masking can hurt
-    # retrieval (names and numbers become placeholders); see docs/CONTEXTRAG_INTEGRATION.md.
-    # "raw": original text. Needs CONTEXTRAG_ALLOW_RAW_TEXT=true and is refused in staging/production.
-    contextrag_content_mode: Literal["masked", "raw"] = "masked"
-    contextrag_allow_raw_text: bool = False
-    contextrag_max_attempts: int = 25
     free_pages_per_month: int = 20
     rate_limit_login: int = 10
     rate_limit_register: int = 5
@@ -220,10 +202,6 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_runtime_configuration(self) -> "Settings":
         production = self.is_production
-        if self.contextrag_sync_enabled and not self.contextrag_outbox_enabled:
-            raise ValueError("CONTEXTRAG_SYNC_ENABLED requires CONTEXTRAG_OUTBOX_ENABLED=true")
-        if self.contextrag_content_mode == "raw" and not self.contextrag_allow_raw_text:
-            raise ValueError("CONTENT_MODE raw needs CONTEXTRAG_ALLOW_RAW_TEXT=true")
         if self.rls_enforced and not self.database_system_url:
             raise ValueError("RLS_ENFORCED=true needs DATABASE_SYSTEM_URL (docmind_system) for maintenance tasks")
         if production:
@@ -289,14 +267,6 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "FRONTEND_BASE_URL must be an explicit HTTPS origin in staging/production"
                 )
-            if self.contextrag_content_mode == "raw" or self.contextrag_allow_raw_text:
-                raise ValueError("Unmasked text cannot be sent to ContextRAG in staging/production")
-            if self.contextrag_sync_enabled and not self.contextrag_url:
-                raise ValueError("CONTEXTRAG_SYNC_ENABLED needs CONTEXTRAG_URL")
-            if self.contextrag_sync_enabled and not (self.contextrag_url or "").startswith(
-                "https://"
-            ):
-                raise ValueError("CONTEXTRAG_URL must be https:// in staging/production")
             if self.storage_provider == "s3":
                 s3_required = {"S3_BUCKET": self.s3_bucket, "S3_REGION": self.s3_region}
                 missing_s3 = [name for name, value in s3_required.items() if not value]
