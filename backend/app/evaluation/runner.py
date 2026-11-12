@@ -58,6 +58,7 @@ def run_evaluation(
     from sqlalchemy import select
 
     from app import worker
+
     # Operator tool: it inspects the runs it created across organizations (docmind_system under RLS).
     from app.db import SystemSessionLocal as SessionLocal
     from app.models import DocumentPage, ExtractionRun
