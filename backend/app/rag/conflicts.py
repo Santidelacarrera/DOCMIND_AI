@@ -15,6 +15,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from app.rag.text import ends_with_break
+
 MONTHS = {m: i for i, names in enumerate(
     ["enero january jan", "febrero february feb", "marzo march mar", "abril april apr", "mayo may", "junio june jun",
      "julio july jul", "agosto august aug", "septiembre setiembre september sep", "octubre october oct",
@@ -125,7 +127,7 @@ def named_phrases(text: str) -> list[str]:
 
     for index, m in enumerate(_WORD.finditer(text)):
         word = m.group()
-        initial = index == 0 or bool(re.search(r"[.!?:;\n]\s*$", text[previous_end:m.start()]))
+        initial = index == 0 or ends_with_break(text[previous_end:m.start()], ".!?:;")
         previous_end = m.end()
         lower = word.lower()
         identifier = any(c.isdigit() for c in word) and any(c.isalpha() for c in word)

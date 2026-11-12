@@ -52,6 +52,16 @@ def _ends_with_abbreviation(segment: str) -> bool:
     return m is not None and is_abbreviation(m.group(1))
 
 
+def ends_with_break(gap: str, marks: str) -> bool:
+    """True when ``gap`` (the text between two words) ends a sentence: a newline in its trailing
+    whitespace, or one of ``marks`` just before it. Linear string checks, not a trailing-whitespace
+    regex, which backtracks quadratically on long runs of whitespace (CodeQL py/polynomial-redos)."""
+    body = gap.rstrip()
+    if "\n" in gap[len(body):]:
+        return True
+    return bool(body) and body[-1] in marks
+
+
 def tokenize(text: str) -> list[str]:
     return [t.lower() for t in _TOKEN.findall(text)]
 

@@ -141,15 +141,33 @@ class ExtractiveGenerator:
         question = prompt.rsplit("Question:", 1)[-1]
         wanted = set(content_tokens(question))
         best: tuple[int, str, int] | None = None
-        for m in re.finditer(r'<passage index="(\d+)"[^>]*>\n(.*?)\n</passage>', prompt, re.DOTALL):
-            for sentence, _, _ in split_sentences(m.group(2)):
+        for index, body in _passages(prompt):
+            for sentence, _, _ in split_sentences(body):
                 overlap = len(wanted & set(content_tokens(sentence)))
                 if overlap and (best is None or overlap > best[0]):
-                    best = (overlap, sentence, int(m.group(1)))
+                    best = (overlap, sentence, index)
         if best is None or best[0] * 3 < len(wanted):
             return NO_ANSWER
         sentence = best[1].rstrip(".!? ")
         return f"{sentence} [{best[2]}]."
+
+
+def _passages(prompt: str) -> list[tuple[int, str]]:
+    """``(index, body)`` of each fenced passage, by plain string search: linear, where a lazy DOTALL
+    regex over the prompt is polynomial on crafted input (CodeQL py/polynomial-redos)."""
+    out: list[tuple[int, str]] = []
+    marker, close = '<passage index="', "\n</passage>"
+    position = prompt.find(marker)
+    while position != -1:
+        start = position + len(marker)
+        quote = prompt.find('"', start)
+        header_end = prompt.find(">\n", quote) if quote != -1 else -1
+        end = prompt.find(close, header_end) if header_end != -1 else -1
+        if end == -1 or not prompt[start:quote].isdigit():
+            break
+        out.append((int(prompt[start:quote]), prompt[header_end + 2:end]))
+        position = prompt.find(marker, end + len(close))
+    return out
 
 
 class ChatGenerator:

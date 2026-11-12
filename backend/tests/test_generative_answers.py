@@ -166,3 +166,17 @@ def test_api_generative_mode_and_model_outage(register: Any, client: Any, monkey
                            headers=account.headers)
     assert response.status_code == 503 and response.json()["detail"] == "LLM_UNAVAILABLE"
     assert seen["answer_mode"] == "generative"
+
+
+def test_text_helpers_stay_linear_on_hostile_input() -> None:
+    """CodeQL py/polynomial-redos: these used regexes that backtrack on long whitespace or fence runs."""
+    import time
+
+    from app.rag.text import ends_with_break
+
+    assert ends_with_break("word.  ", ".") and ends_with_break("x \n ", ".") and not ends_with_break("x  ", ".")
+    hostile = '<passage index="9">\n' + '<passage index="9">\na' * 20_000
+    started = time.perf_counter()
+    missing_terms("¿Qué dice" + "\n" * 50_000 + "Halxanx?", ["texto"])
+    generation.ExtractiveGenerator().complete("s", hostile + "\n\nQuestion: a")
+    assert time.perf_counter() - started < 2.0

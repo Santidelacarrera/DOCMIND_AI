@@ -19,10 +19,9 @@ attribute or a wrong relation is not caught here. It reduces one specific failur
 import re
 from collections.abc import Iterable
 
-from app.rag.text import STOPWORDS, tokenize
+from app.rag.text import STOPWORDS, ends_with_break, tokenize
 
 _WORD = re.compile(r"[^\W_][\w\-.]*", re.UNICODE)
-_SENTENCE_BREAK = re.compile(r"[.!?¿¡:;\n]\s*$")
 _ENDS_SENTENCE = re.compile(r"[.!?:;]$")
 
 
@@ -43,7 +42,7 @@ def _classify(question: str) -> list[tuple[str, bool]]:
         word = raw.strip(".-")
         before = question[prev_end:m.start()]
         # the previous word may carry its own full stop ("problem."), which the pattern keeps as part of the word
-        sentence_initial = i == 0 or bool(_SENTENCE_BREAK.search(before)) or bool(_ENDS_SENTENCE.search(prev_raw))
+        sentence_initial = i == 0 or ends_with_break(before, ".!?¿¡:;") or bool(_ENDS_SENTENCE.search(prev_raw))
         prev_end, prev_raw = m.end(), raw
         if not word:
             continue
