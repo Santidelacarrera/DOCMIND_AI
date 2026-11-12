@@ -43,3 +43,11 @@ Siguiente, por prioridad:
 2. Dividir `main.py` en routers sin cambiar contratos.
 3. Evaluación con documentos reales anonimizados y LLM de pago (bloqueado por el propietario: cuenta y datos).
 4. Retirar los pasos temporales del CI y medir RTO de reindexado de Qdrant.
+
+## Actualización 2026-11-11
+
+Hecho: CI sin los pasos temporales (sin `pull-requests: write`), `main.py` dividido en 7 routers con contrato idéntico (55 rutas, OpenAPI byte a byte), `scripts/reindex_vectors.py` con RTO medido (~31 min por 10 000 documentos y proceso), y el arranque desde `.env.example` protegido por una prueba (el e2e del PR #69 había fallado por un valor vacío).
+
+Siguiente, por prioridad:
+1. RLS fase 3 según el inventario de `RLS_DESIGN.md` (8 puntos), probada como `docmind_app` con `FORCE`, y activada solo tras staging.
+2. Evaluación con documentos reales y LLM de pago (bloqueado: cuenta y datos del propietario).
