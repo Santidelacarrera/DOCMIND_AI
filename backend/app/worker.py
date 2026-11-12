@@ -106,9 +106,12 @@ celery_app.conf.beat_schedule = {
     "purge-expired-data": {"task": "app.worker.purge_expired_data", "schedule": 3600.0},
     "process-vector-deletions": {"task": "app.worker.process_vector_deletions", "schedule": 60.0},
     "reconcile-storage": {"task": "app.worker.reconcile_storage", "schedule": 86400.0},
-    "deliver-contextrag-events": {"task": "app.worker.deliver_contextrag_events", "schedule": 30.0},
-    "reconcile-contextrag": {"task": "app.worker.reconcile_contextrag", "schedule": 3600.0},
 }
+if settings().contextrag_outbox_enabled:  # retirement phase 1: not scheduled unless the outbox is re-enabled
+    celery_app.conf.beat_schedule.update({
+        "deliver-contextrag-events": {"task": "app.worker.deliver_contextrag_events", "schedule": 30.0},
+        "reconcile-contextrag": {"task": "app.worker.reconcile_contextrag", "schedule": 3600.0},
+    })
 
 MAX_RETRIES = 3
 # Retry delay for transient failures: base * 2**attempt seconds, capped at one minute.

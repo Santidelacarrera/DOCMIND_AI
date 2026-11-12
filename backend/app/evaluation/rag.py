@@ -30,7 +30,9 @@ regression baseline, not a statement about semantic retrieval. Run with ``--embe
 
 import argparse
 import json
+import math
 import sys
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,6 +74,7 @@ class QuestionResult:
     conflicts: int = 0
     expect_conflict: bool = False
     cited_forbidden: int = 0
+    latency_ms: float = 0.0  # retrieval + answer, as the API would run them
 
 
 def load(path: Path = CORPUS) -> dict[str, Any]:
@@ -122,15 +125,18 @@ def _evaluate_question(
     mode: str | None = None,
     answer_mode: str = "extractive",
     reranker: Any = None,
+    generator: Any = None,
 ) -> QuestionResult:
     tenant = tenants[q["tenant"]]
+    started = time.perf_counter()
     relevant = [(d, int(p)) for d, p in q["relevant"]]
     hits = retrieve(pipeline, tenant_id=tenant, question=q["question"], top_k=top_k, mode=mode, reranker=reranker)
     retrieved = [(str(h.get("source_name")), int(h.get("page") or 0), str(h.get("tenant_id"))) for h in hits]
     first = next((i for i, (d, p, _) in enumerate(retrieved, start=1) if (d, p) in relevant), None)
     a = answer(pipeline, tenant_id=tenant, question=q["question"], top_k=top_k, min_coverage=min_coverage,
                min_similarity=min_similarity, mode=mode, answer_mode=answer_mode, reranker=reranker,
-               generator=_offline_generator() if answer_mode == "generative" else None)
+               generator=(generator or _offline_generator()) if answer_mode == "generative" else None)
+    latency_ms = (time.perf_counter() - started) * 1000
     citations = [(c.document, c.page) for c in a.citations]
     leaks = sum(t != tenant for _, _, t in retrieved) + sum(c.document_id not in own_docs for c in a.citations)
     # Faithfulness: every sentence of the answer is a verbatim quote of a chunk the answer cites.
@@ -147,6 +153,7 @@ def _evaluate_question(
         abstained=a.abstained, citations=citations, fact_ok=fact_ok, faithful=faithful, leaks=leaks,
         conflicts=len(a.conflicts), expect_conflict=bool(q.get("expect_conflict")),
         cited_forbidden=sum(d in forbidden for d, _ in citations) + sum(d in forbidden for d, _, _ in retrieved),
+        latency_ms=latency_ms,
     )
 
 
@@ -154,6 +161,18 @@ def _offline_generator() -> Any:
     from app.rag.generation import ExtractiveGenerator
 
     return ExtractiveGenerator()
+
+
+def _ndcg(r: QuestionResult, k: int) -> float:
+    """Binary-relevance NDCG@k: a retrieved (document, page) is relevant if it is in the ground truth."""
+    gains = [1.0 / math.log2(i + 1) for i, (d, p, _) in enumerate(r.retrieved[:k], start=1) if (d, p) in r.relevant]
+    ideal = sum(1.0 / math.log2(i + 1) for i in range(1, min(len(set(r.relevant)), k) + 1))
+    return sum(gains) / ideal if ideal else 0.0
+
+
+def _percentile(values: list[float], q: float) -> float:
+    ordered = sorted(values)
+    return round(ordered[min(len(ordered) - 1, max(0, math.ceil(q * len(ordered)) - 1))], 1) if ordered else 0.0
 
 
 def _mean(values: list[float]) -> float:
@@ -169,6 +188,8 @@ def score(results: list[QuestionResult], ks: tuple[int, ...] = KS) -> dict[str, 
         metrics[f"precision@{k}"] = _mean([
             sum((d, p) in r.relevant for d, p, _ in r.retrieved[:k]) / k for r in answerable
         ])
+    for k in ks:
+        metrics[f"ndcg@{k}"] = _mean([_ndcg(r, k) for r in answerable])
     metrics["mrr"] = _mean([1.0 / r.first_relevant_rank if r.first_relevant_rank else 0.0 for r in answerable])
     metrics["context_relevance"] = _mean([
         sum(d in {rd for rd, _ in r.relevant} for d, _, _ in r.retrieved) / len(r.retrieved)
@@ -204,7 +225,7 @@ def score(results: list[QuestionResult], ks: tuple[int, ...] = KS) -> dict[str, 
 def run(
     embedder: Embedder | None = None, *, top_k: int = max(KS), corpus_path: Path = CORPUS, min_coverage: float = 0.5,
     min_similarity: float | None = None, mode: str | None = None, answer_mode: str = "extractive",
-    reranker: Any = None,
+    reranker: Any = None, generator: Any = None,
 ) -> dict[str, Any]:
     from app.core import settings
 
@@ -216,7 +237,7 @@ def run(
     docs_of = {
         key: {document_id(key, d["file"]) for d in corpus["documents"] if d["tenant"] == key} for key in tenants
     }
-    results = [_evaluate_question(pipeline, q, tenants, top_k, docs_of[q["tenant"]], min_coverage, min_similarity, mode, answer_mode, reranker) for q in corpus["questions"]]
+    results = [_evaluate_question(pipeline, q, tenants, top_k, docs_of[q["tenant"]], min_coverage, min_similarity, mode, answer_mode, reranker, generator) for q in corpus["questions"]]
     for r in results:
         own = {d["file"] for d in corpus["documents"] if d["tenant"] == r.tenant}
         if r.category in ANSWERABLE and not r.fact_ok:
@@ -233,6 +254,18 @@ def run(
     report["retrieval"] = mode
     report["answer_mode"] = answer_mode
     report["reranker"] = getattr(reranker, "name", None)
+    report["generator"] = getattr(generator, "name", "offline-extractive") if answer_mode == "generative" else None
+    latencies = [r.latency_ms for r in results]
+    report["latency_ms"] = {"p50": _percentile(latencies, 0.5), "p95": _percentile(latencies, 0.95),
+                            "max": round(max(latencies), 1) if latencies else 0.0}
+    if getattr(generator, "calls", 0):
+        from app.processing import estimate_cost
+
+        report["llm_usage"] = {
+            "calls": generator.calls, "prompt_tokens": generator.prompt_tokens,
+            "completion_tokens": generator.completion_tokens,
+            "estimated_cost": estimate_cost(generator.prompt_tokens, generator.completion_tokens),
+        }
     report["top_k"] = top_k
     report["corpus"] = {"documents": len(corpus["documents"]), "version": corpus.get("version", 1)}
     report["results"] = [
@@ -250,8 +283,18 @@ def to_markdown(report: dict[str, Any]) -> str:
     lines = [
         "# RAG evaluation report", "",
         (f"Embedder `{report['embedder']}` (lexical hashing unless stated otherwise), retrieval={report.get('retrieval', 'dense')}, top_k={report['top_k']}, min_coverage={report['min_coverage']}, "
-        f"{report['corpus']['documents']} fictitious documents in 2 tenants, {report['questions']} questions "
-        f"({report['answerable']} answerable, {report['must_abstain']} that must abstain)."), "",
+        f"{report['corpus']['documents']} documents, {report['questions']} questions "
+        f"({report['answerable']} answerable, {report['must_abstain']} that must abstain). "
+        f"Answers: {report.get('answer_mode', 'extractive')}"
+        f"{' with ' + str(report['generator']) if report.get('generator') else ''}; "
+        f"reranker: {report.get('reranker') or 'none'}."), "",
+        (f"Latency per question (retrieval + answer): p50 {report['latency_ms']['p50']} ms, "
+         f"p95 {report['latency_ms']['p95']} ms, max {report['latency_ms']['max']} ms."
+         if report.get("latency_ms") else ""),
+        (f"LLM usage: {report['llm_usage']['calls']} calls, {report['llm_usage']['prompt_tokens']} prompt and "
+         f"{report['llm_usage']['completion_tokens']} completion tokens, estimated cost "
+         f"{report['llm_usage']['estimated_cost']} (GEMINI_*/OPENAI_*_PRICE_PER_1M)."
+         if report.get("llm_usage") else ""), "",
         "Reproduce: `cd backend && python -m app.evaluation.rag --output-dir eval_reports`.", "",
         "## Metrics", "", "| Metric | Value |", "|---|---:|",
     ]
@@ -286,6 +329,14 @@ def _embedder(name: str, model: str | None = None) -> Embedder:
     return LocalEmbedder(model or cfg.embedding_model, local_files_only=cfg.embedding_local_files_only)
 
 
+def _generator(name: str) -> Any:
+    if name == "offline":
+        return None
+    from app.rag.generation import ChatGenerator
+
+    return ChatGenerator(name)
+
+
 def _reranker(model: str | None) -> Any:
     if not model:
         return None
@@ -311,6 +362,9 @@ def main(argv: list[str] | None = None) -> int:
                              "(ADR-005); or the path of a corpus JSON (real documents: docs/REAL_DOCUMENT_EVALUATION.md)")
     parser.add_argument("--answer-mode", choices=["extractive", "generative"], default="extractive",
                         help="generative uses the offline extractive generator: it measures verification, not a model")
+    parser.add_argument("--generator", choices=["offline", "vertex", "gemini", "openai"], default="offline",
+                        help="with --answer-mode generative: offline extractive stand-in (default, free) or a real "
+                             "model through LLM_PROVIDER credentials (paid; docs/OWNER_SETUP.md section 1)")
     parser.add_argument("--rerank-model", default=None,
                         help="fastembed cross-encoder to rerank with (e.g. BAAI/bge-reranker-v2-m3-int8); default: none")
     parser.add_argument("--output-dir", type=Path, default=None)
@@ -321,7 +375,8 @@ def main(argv: list[str] | None = None) -> int:
     report = run(_embedder(args.embedder, args.model), min_coverage=args.min_coverage,
                  min_similarity=args.min_similarity, mode=args.retrieval, answer_mode=args.answer_mode,
                  corpus_path={"base": CORPUS, "extended": EXTENDED}.get(args.corpus) or Path(args.corpus),
-                 reranker=_reranker(args.rerank_model))
+                 reranker=_reranker(args.rerank_model),
+                 generator=_generator(args.generator) if args.answer_mode == "generative" else None)
     text = to_markdown(report)
     print(text)
     if args.output_dir is not None:

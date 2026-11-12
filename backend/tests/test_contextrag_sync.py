@@ -70,6 +70,7 @@ def real_app():
 def sync_env(monkeypatch, real_app):
     """Sync enabled against the in-process ContextRAG. ``env['keys']`` maps organization -> key."""
     cfg = settings()
+    monkeypatch.setattr(cfg, "contextrag_outbox_enabled", True)  # retired by default (phase 1)
     monkeypatch.setattr(cfg, "contextrag_sync_enabled", True)
     monkeypatch.setattr(cfg, "contextrag_url", "http://localhost:8000")
     monkeypatch.setattr(cfg, "contextrag_keys_file", "unused-in-tests")

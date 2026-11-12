@@ -42,6 +42,7 @@ La referencia completa, con valores por defecto seguros para desarrollo, es [`.e
 | `RETRIEVAL_RRF_K` | Constante k de la fusión RRF (60) |
 | `RETRIEVAL_LEXICAL_CACHE_SECONDS` | Antigüedad máxima del corpus léxico en memoria por organización (60 s) |
 | `RETRIEVAL_LEXICAL_MAX_CHUNKS` | Por encima de estos fragmentos una organización no carga corpus léxico y usa solo búsqueda vectorial (50 000) |
+| `CONTEXTRAG_OUTBOX_ENABLED` | `false` por defecto (retirada de ContextRAG Sync, fase 1): no se escriben eventos ni se programan sus tareas. `true` restaura el comportamiento anterior. `CONTEXTRAG_SYNC_ENABLED=true` lo exige |
 | `RERANK_MODEL` | Vacío = sin reranking (por defecto). Modelo cross-encoder de fastembed, p. ej. `BAAI/bge-reranker-v2-m3-int8` (multilingüe, ONNX, 0,57 GB). Añade de 1 a 2 s por pregunta en CPU; medido en `docs/evaluation/rerank-2026-11-12.md` |
 | `RERANK_CANDIDATES` | Candidatos que reordena el reranker (20) |
 | `RERANK_TIMEOUT_SECONDS` | Tiempo máximo del reranker; si se supera, se conserva el orden de la primera etapa (5) |

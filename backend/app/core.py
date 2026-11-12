@@ -177,6 +177,10 @@ class Settings(BaseSettings):
     storage_reconcile_max_delete_fraction: float = 0.5
     # ContextRAG sync (docs/CONTEXTRAG_INTEGRATION.md). Events are always recorded in the outbox;
     # nothing is delivered unless CONTEXTRAG_SYNC_ENABLED=true and the URL/keys are configured.
+    # Retirement phase 1 (docs/CONTEXTRAG_SYNC_RETIREMENT_PLAN.md): the outbox is no longer written and its
+    # beat tasks are not scheduled. true restores the previous behaviour; reconcile() then re-creates the
+    # events that were not recorded meanwhile. Sync requires it.
+    contextrag_outbox_enabled: bool = False
     contextrag_sync_enabled: bool = False
     contextrag_url: str | None = None
     contextrag_keys_file: str | None = (
@@ -216,6 +220,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_runtime_configuration(self) -> "Settings":
         production = self.is_production
+        if self.contextrag_sync_enabled and not self.contextrag_outbox_enabled:
+            raise ValueError("CONTEXTRAG_SYNC_ENABLED requires CONTEXTRAG_OUTBOX_ENABLED=true")
         if self.contextrag_content_mode == "raw" and not self.contextrag_allow_raw_text:
             raise ValueError("CONTENT_MODE raw needs CONTEXTRAG_ALLOW_RAW_TEXT=true")
         if self.rls_enforced and not self.database_system_url:

@@ -20,6 +20,12 @@ from app.models import AuditLog, ContextRagEvent, OrganizationMember, Role
 from tests.conftest import make_pdf
 
 
+@pytest.fixture(autouse=True)
+def _outbox_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests cover the outbox itself, retired by default (CONTEXTRAG_OUTBOX_ENABLED, phase 1)."""
+    monkeypatch.setattr(settings(), "contextrag_outbox_enabled", True)
+
+
 class _NoKeys:
     """A peer that must never be reached: refusals happen before any request is sent."""
 

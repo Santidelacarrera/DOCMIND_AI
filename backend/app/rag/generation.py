@@ -176,6 +176,9 @@ class ChatGenerator:
 
     def __init__(self, provider: str) -> None:
         self.name = provider
+        # Usage of this instance (evaluation and scripts/vertex_check.py report it; tokens from the provider's
+        # response when it returns them, otherwise estimated at ~4 characters per token).
+        self.calls = self.prompt_tokens = self.completion_tokens = 0
 
     def _connection(self) -> tuple[str, str | None, str]:
         from app.core import settings
@@ -213,7 +216,12 @@ class ChatGenerator:
             raise GenerationError(exc.code) from None
         except openai.APIError:
             raise GenerationError("LLM_UNAVAILABLE") from None
-        return (response.choices[0].message.content or "") if response.choices else ""
+        content = (response.choices[0].message.content or "") if response.choices else ""
+        usage = getattr(response, "usage", None)
+        self.calls += 1
+        self.prompt_tokens += int(getattr(usage, "prompt_tokens", 0) or (len(system) + len(prompt)) // 4)
+        self.completion_tokens += int(getattr(usage, "completion_tokens", 0) or len(content) // 4)
+        return content
 
 
 def build_generator(provider: str) -> Generator:

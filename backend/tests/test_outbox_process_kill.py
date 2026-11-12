@@ -54,6 +54,9 @@ def test_sigkill_during_delivery_releases_the_claim_and_delivers_once(
             return ["Killed mid-delivery, delivered later."]
 
     monkeypatch.setattr(worker, "TesseractProvider", OCR)
+    from app.core import settings
+
+    monkeypatch.setattr(settings(), "contextrag_outbox_enabled", True)  # retired by default (phase 1)
     acct = register("kill")
     upload = acct.upload(acct.project(), make_pdf(1)).json()
     worker.process_document.run(upload["job_id"])  # type: ignore[attr-defined]

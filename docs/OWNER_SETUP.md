@@ -22,7 +22,13 @@ Tres cosas desbloquean lo que falta validar de la unificación (`docs/UNIFICATIO
    GEMINI_OUTPUT_PRICE_PER_1M=<precio vigente>
    ASK_MODE=generative      # solo cuando se quiera activar en ese entorno
    ```
-5. **Comprobación** (instalar antes el extra `vertex`: `pip install ".[vertex]"`):
+5. **Comprobación real** (dos llamadas pequeñas de pago; sin `--yes` solo muestra la configuración que usaría, y nunca imprime credenciales):
+   ```bash
+   cd backend
+   python scripts/vertex_check.py          # en seco: proveedor, modelo, región, si hay credenciales
+   python scripts/vertex_check.py --yes    # generación verificada + extracción, con latencia, tokens y coste estimado
+   ```
+   Después, la comparación sobre la cadena de verificación:
    ```bash
    cd backend
    python -m app.evaluation.rag --corpus extended --retrieval hybrid --answer-mode generative
@@ -44,6 +50,8 @@ Tres cosas desbloquean lo que falta validar de la unificación (`docs/UNIFICATIO
 5. **Retención:** `CONVERSATION_RETENTION_DAYS` (90 por defecto) debe coincidir con la política de datos acordada con el cliente.
 
 ## 3. Evaluación con documentos reales
+
+**Guía completa (preparación, validación previa, configuraciones a comparar, métricas y regla de decisión):** `docs/evaluation/REAL_DOCUMENT_EVALUATION.md`. Plantilla: `docs/evaluation/real_corpus_template.json`. Validador: `python scripts/validate_eval_corpus.py eval_private/corpus.json`.
 
 **Qué desbloquea:** decidir los valores por defecto (`RETRIEVAL_MODE`, `RERANK_MODEL`, `ASK_MODE`) con datos reales y no solo con los corpus ficticios.
 
