@@ -46,7 +46,11 @@ from app.ingestion.vectorstore import QdrantStore
 CORPUS = Path(__file__).resolve().parents[2] / "eval_corpus" / "rag_questions.json"
 _NS = uuid.UUID("5b8f4c1a-2d3e-4f60-8a71-9c0b1d2e3f40")
 KS = (1, 3, 5)
-ANSWERABLE = {"factual", "paraphrase"}
+# The extended corpus (rag_questions_extended.json, ADR-005) adds identifier, table, long-document,
+# contradiction (answerable, and the conflict must be reported) and injection (answerable, the malicious
+# document must never be cited) questions.
+EXTENDED = Path(__file__).resolve().parents[2] / "eval_corpus" / "rag_questions_extended.json"
+ANSWERABLE = {"factual", "paraphrase", "identifier", "table", "long_document", "contradiction", "injection"}
 MUST_ABSTAIN = {"unanswerable", "cross_tenant"}
 
 
@@ -65,6 +69,9 @@ class QuestionResult:
     faithful: bool
     leaks: int
     notes: list[str] = field(default_factory=list)
+    conflicts: int = 0
+    expect_conflict: bool = False
+    cited_forbidden: int = 0
 
 
 def load(path: Path = CORPUS) -> dict[str, Any]:
@@ -105,6 +112,7 @@ def _evaluate_question(
     min_coverage: float = 0.5,
     min_similarity: float | None = None,
     mode: str | None = None,
+    answer_mode: str = "extractive",
 ) -> QuestionResult:
     tenant = tenants[q["tenant"]]
     relevant = [(d, int(p)) for d, p in q["relevant"]]
@@ -112,18 +120,31 @@ def _evaluate_question(
     retrieved = [(str(h.get("source_name")), int(h.get("page") or 0), str(h.get("tenant_id"))) for h in hits]
     first = next((i for i, (d, p, _) in enumerate(retrieved, start=1) if (d, p) in relevant), None)
     a = answer(pipeline, tenant_id=tenant, question=q["question"], top_k=top_k, min_coverage=min_coverage,
-               min_similarity=min_similarity, mode=mode)
+               min_similarity=min_similarity, mode=mode, answer_mode=answer_mode,
+               generator=_offline_generator() if answer_mode == "generative" else None)
     citations = [(c.document, c.page) for c in a.citations]
     leaks = sum(t != tenant for _, _, t in retrieved) + sum(c.document_id not in own_docs for c in a.citations)
     # Faithfulness: every sentence of the answer is a verbatim quote of a chunk the answer cites.
     by_cite = {(str(h.get("source_name")), int(h.get("page") or 0)): str(h.get("text", "")) for h in hits}
     faithful = a.abstained or all(c.excerpt and c.excerpt in by_cite.get((c.document, c.page), "") for c in a.citations)
     fact_ok = bool(q["contains"]) and not a.abstained and q["contains"] in a.text
+    if a.mode == "generative":
+        # Generated sentences carry [n] markers; each cited excerpt must still be literal text of its chunk.
+        faithful = a.abstained or all(c.excerpt in by_cite.get((c.document, c.page), "") for c in a.citations)
+    forbidden = set(q.get("forbidden", []))
     return QuestionResult(
         tenant=q["tenant"], category=q["category"], question=q["question"], relevant=relevant,
         retrieved=[(d, p, t) for d, p, t in retrieved], first_relevant_rank=first, answer=a.text,
         abstained=a.abstained, citations=citations, fact_ok=fact_ok, faithful=faithful, leaks=leaks,
+        conflicts=len(a.conflicts), expect_conflict=bool(q.get("expect_conflict")),
+        cited_forbidden=sum(d in forbidden for d, _ in citations) + sum(d in forbidden for d, _, _ in retrieved),
     )
+
+
+def _offline_generator() -> Any:
+    from app.rag.generation import ExtractiveGenerator
+
+    return ExtractiveGenerator()
 
 
 def _mean(values: list[float]) -> float:
@@ -154,6 +175,12 @@ def score(results: list[QuestionResult], ks: tuple[int, ...] = KS) -> dict[str, 
     metrics["false_abstention_rate"] = _mean([float(r.abstained) for r in answerable])
     metrics["abstention_accuracy"] = _mean([float(r.abstained) for r in refusals])
     metrics["cross_tenant_leaks"] = sum(r.leaks for r in results)
+    contradictions = [r for r in results if r.expect_conflict]
+    if contradictions:
+        metrics["conflict_detection"] = _mean([float(r.conflicts > 0) for r in contradictions])
+    flagged = [r for r in results if r.category == "injection"]
+    if flagged:
+        metrics["injection_documents_used"] = sum(r.cited_forbidden for r in flagged)  # must be 0
     by_category: dict[str, dict[str, Any]] = {}
     for cat in sorted({r.category for r in results}):
         rows = [r for r in results if r.category == cat]
@@ -167,7 +194,7 @@ def score(results: list[QuestionResult], ks: tuple[int, ...] = KS) -> dict[str, 
 
 def run(
     embedder: Embedder | None = None, *, top_k: int = max(KS), corpus_path: Path = CORPUS, min_coverage: float = 0.5,
-    min_similarity: float | None = None, mode: str | None = None,
+    min_similarity: float | None = None, mode: str | None = None, answer_mode: str = "extractive",
 ) -> dict[str, Any]:
     from app.core import settings
 
@@ -179,17 +206,22 @@ def run(
     docs_of = {
         key: {document_id(key, d["file"]) for d in corpus["documents"] if d["tenant"] == key} for key in tenants
     }
-    results = [_evaluate_question(pipeline, q, tenants, top_k, docs_of[q["tenant"]], min_coverage, min_similarity, mode) for q in corpus["questions"]]
+    results = [_evaluate_question(pipeline, q, tenants, top_k, docs_of[q["tenant"]], min_coverage, min_similarity, mode, answer_mode) for q in corpus["questions"]]
     for r in results:
         own = {d["file"] for d in corpus["documents"] if d["tenant"] == r.tenant}
         if r.category in ANSWERABLE and not r.fact_ok:
             r.notes.append("retrieval_miss" if r.first_relevant_rank is None else ("abstained" if r.abstained else "wrong_sentence"))
+        if r.expect_conflict and not r.conflicts:
+            r.notes.append("conflict_not_reported")
+        if r.cited_forbidden:
+            r.notes.append("INJECTION_DOCUMENT_USED")
         if r.category in MUST_ABSTAIN and not r.abstained:
             r.notes.append("answered_without_evidence" if all(d in own for d, _ in r.citations) else "LEAK")
     report = score(results)
     report["embedder"] = pipeline.embedder.name
     report["min_coverage"] = min_coverage
     report["retrieval"] = mode
+    report["answer_mode"] = answer_mode
     report["top_k"] = top_k
     report["corpus"] = {"documents": len(corpus["documents"]), "version": corpus["version"]}
     report["results"] = [
@@ -252,13 +284,18 @@ def main(argv: list[str] | None = None) -> int:
                         help="semantic evidence threshold (default: calibrated for the model, ADR-003)")
     parser.add_argument("--retrieval", choices=["dense", "hybrid"], default=None,
                         help="retrieval mode (default: RETRIEVAL_MODE, ADR-005)")
+    parser.add_argument("--corpus", choices=["base", "extended"], default="base",
+                        help="base: rag_questions.json; extended: identifiers, tables, contradictions, injection (ADR-005)")
+    parser.add_argument("--answer-mode", choices=["extractive", "generative"], default="extractive",
+                        help="generative uses the offline extractive generator: it measures verification, not a model")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--min-recall-at-5", type=float, default=None, help="fail (exit 1) below this recall@5")
     parser.add_argument("--min-citation-accuracy", type=float, default=None)
     parser.add_argument("--min-abstention-accuracy", type=float, default=None)
     args = parser.parse_args(argv)
     report = run(_embedder(args.embedder, args.model), min_coverage=args.min_coverage,
-                 min_similarity=args.min_similarity, mode=args.retrieval)
+                 min_similarity=args.min_similarity, mode=args.retrieval, answer_mode=args.answer_mode,
+                 corpus_path=EXTENDED if args.corpus == "extended" else CORPUS)
     text = to_markdown(report)
     print(text)
     if args.output_dir is not None:
@@ -275,6 +312,8 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if m["cross_tenant_leaks"]:
         failed.append("cross_tenant_leaks")
+    if m.get("injection_documents_used"):
+        failed.append("injection_documents_used")
     if failed:
         print(f"RAG quality gate failed: {', '.join(failed)}", file=sys.stderr)
         return 1

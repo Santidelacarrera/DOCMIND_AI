@@ -162,6 +162,15 @@ def _score(a: str, b: str) -> tuple[str, float] | None:
     return ("value_mismatch", jaccard) if jaccard >= (MIN_JACCARD if subject_a else MIN_JACCARD_UNNAMED) else None
 
 
+_HEADING = re.compile(r"^(?:[A-ZÁÉÍÓÚÑÜ0-9][A-ZÁÉÍÓÚÑÜ0-9\-—.,:]*\s+){2,}(?=[A-ZÁÉÍÓÚÑÜ][a-záéíóúñü])")
+
+
+def strip_heading(sentence: str) -> str:
+    """Drop an all-caps heading that text extraction ran into the sentence ("ACTA DE MARZO La audiencia
+    ..."): otherwise the heading's words read as the sentence's subject and hide a real disagreement."""
+    return _HEADING.sub("", sentence, count=1)
+
+
 def detect(question: str, hits: Sequence[dict[str, Any]], *, per_source: int = 3, max_pairs: int = 200) -> list[Conflict]:
     """Possible conflicts among the sentences of ``hits`` that share words with ``question``.
 
@@ -172,7 +181,7 @@ def detect(question: str, hits: Sequence[dict[str, Any]], *, per_source: int = 3
     refs: list[SourceRef] = []
     for hit in hits:
         scored = []
-        for sentence in (s.strip() for s in _SENTENCE.split(str(hit.get("text", "")))):
+        for sentence in (strip_heading(s.strip()) for s in _SENTENCE.split(str(hit.get("text", "")))):
             overlap = len(wanted & set(_tokens(sentence)))
             if overlap and len(sentence) > 15:
                 scored.append((overlap, sentence))

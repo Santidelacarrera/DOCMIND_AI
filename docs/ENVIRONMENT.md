@@ -42,6 +42,13 @@ La referencia completa, con valores por defecto seguros para desarrollo, es [`.e
 | `RETRIEVAL_RRF_K` | Constante k de la fusión RRF (60) |
 | `RETRIEVAL_LEXICAL_CACHE_SECONDS` | Antigüedad máxima del corpus léxico en memoria por organización (60 s) |
 | `RETRIEVAL_LEXICAL_MAX_CHUNKS` | Por encima de estos fragmentos una organización no carga corpus léxico y usa solo búsqueda vectorial (50 000) |
+| `ASK_MODE` | `extractive` (por defecto: cita frases literales, sin modelo) o `generative` (el `LLM_PROVIDER` redacta y cada frase se verifica contra su fuente; una llamada al modelo por pregunta) |
+| `ASK_GENERATION_THRESHOLD` | Umbral de verificación de cada frase generada (0,95). Con el verificador léxico, solo 1,0 pasa |
+| `ASK_CONTEXT_CHARS` | Máximo de caracteres de fragmentos enviados al modelo (6000) |
+| `ASK_GENERATION_MAX_TOKENS` | Máximo de tokens de la respuesta generada (600) |
+| `CONVERSATION_ENCRYPTION_KEY` | Secreto del que se deriva la clave AES-256-GCM de cada organización (HKDF). Sin él, las conversaciones están desactivadas (503). Cambiarlo deja ilegibles las conversaciones existentes |
+| `CONVERSATION_RETENTION_DAYS` | Una conversación sin actividad durante estos días se borra (90) |
+| `CONVERSATION_MEMORY_TURNS` | Turnos previos que se pasan al modelo como contexto no citable en modo generativo (3) |
 | `PII_MASKING_KEY`, `PII_DETECTORS` | Enmascarado de PII antes de indexar (incluye RUT chileno con dígito verificador) |
 
 ## Retención, almacenamiento y sincronización

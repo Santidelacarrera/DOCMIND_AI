@@ -49,19 +49,25 @@ CHILD_TABLES = {
     "webhook_deliveries": ("webhook_id", "webhooks"),
 }
 POLICY = "docmind_tenant_isolation"
+# Tables created after 0009 (migration 0011_conversations). Kept apart so 0009 never names a table
+# that does not exist yet when it runs; ``all_policy_statements`` covers every table.
+TENANT_TABLES_0011 = ("conversations", "conversation_messages")
 
 
-def policy_statements() -> list[str]:
+def policy_statements(
+    tables: tuple[str, ...] = TENANT_TABLES, children: dict[str, tuple[str, str]] | None = None,
+) -> list[str]:
     """DDL for phase 2: enable RLS (no FORCE) and one isolation policy per table."""
+    children = CHILD_TABLES if children is None else children
     out: list[str] = []
-    for table in TENANT_TABLES:
+    for table in tables:
         out += [
             f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY",
             f"DROP POLICY IF EXISTS {POLICY} ON {table}",
             (f"CREATE POLICY {POLICY} ON {table} USING (organization_id = {_ORG}) "
             f"WITH CHECK (organization_id = {_ORG})"),
         ]
-    for table, (fk, parent) in CHILD_TABLES.items():
+    for table, (fk, parent) in children.items():
         # Identifiers come from the constants above, never from input: not an injection vector.
         visible = f"EXISTS (SELECT 1 FROM {parent} p WHERE p.id = {table}.{fk})"  # nosec B608
         out += [
@@ -70,6 +76,11 @@ def policy_statements() -> list[str]:
             f"CREATE POLICY {POLICY} ON {table} USING ({visible}) WITH CHECK ({visible})",
         ]
     return out
+
+
+def all_policy_statements() -> list[str]:
+    """Every table's policy: 0009's and those of later migrations (used to build a schema at once)."""
+    return [*policy_statements(), *policy_statements(TENANT_TABLES_0011, {})]
 
 
 # Phase 3. Lookups made before the organization is known. Each takes one unique, secret or

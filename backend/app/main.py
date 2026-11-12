@@ -149,12 +149,13 @@ from app.api_support import (  # noqa: F401  (re-exported: tests and scripts use
     organization_id,
     sanitize_filename,
 )
-from app.routers import admin, ask, auth, documents, members, projects, schemas
+from app.routers import admin, ask, auth, conversations, documents, members, projects, schemas
 from app.worker import process_document, process_vector_deletions  # noqa: F401  (re-exported for tests)
 
 # Routes are appended to the app's own flat route list rather than through include_router: in this
 # FastAPI version include_router adds one opaque _IncludedRouter per router, which would hide the
 # individual routes from app.routes -- the list the tenant-isolation tests walk, OpenAPI is built
 # from, and the metrics route-template label depends on. Runtime behaviour is the pre-split one.
-for _router in (auth.router, members.router, projects.router, schemas.router, admin.router, documents.router, ask.router):
+for _router in (auth.router, members.router, projects.router, schemas.router, admin.router, documents.router, ask.router,
+                conversations.router):
     app.router.routes.extend(_router.routes)

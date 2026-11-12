@@ -42,6 +42,14 @@ jobs:
         run: >-
           python -m app.evaluation.rag --output-dir eval_reports
           --min-recall-at-5 0.95 --min-citation-accuracy 0.85 --min-abstention-accuracy 1.0
+      - name: RAG quality gate, extended corpus (identifiers, tables, contradictions, injection; ADR-005)
+        run: >-
+          python -m app.evaluation.rag --corpus extended --retrieval hybrid --output-dir eval_reports/extended
+          --min-recall-at-5 1.0 --min-citation-accuracy 0.85 --min-abstention-accuracy 1.0
+      - name: RAG quality gate, verified generation with the offline generator
+        run: >-
+          python -m app.evaluation.rag --corpus extended --retrieval hybrid --answer-mode generative
+          --output-dir eval_reports/generative --min-citation-accuracy 1.0 --min-abstention-accuracy 1.0
       - name: Keep the evaluation report
         uses: actions/upload-artifact@v7
         with:

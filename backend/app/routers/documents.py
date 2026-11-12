@@ -129,25 +129,9 @@ def _kick_vector_deletions() -> None:
         logger.warning("could not enqueue vector deletion run; beat will pick it up")
 
 
-@router.post("/api/v1/documents", status_code=status.HTTP_202_ACCEPTED, response_model=None)
-def upload_document(
-    organization_id: str,
-    project_id: uuid.UUID,
-    request: Request,
-    schema_id: uuid.UUID | None = None,
-    file: UploadFile = File(...),
-    user: User | ApiPrincipal = Depends(current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, object] | JSONResponse:
-    enforce(request, "upload", settings().rate_limit_upload)
-    org_id = api_support.organization_id(organization_id)
-    membership(org_id, user, db, Role.member, scope="documents:write")
-    requested_schema_version = _resolve_requested_schema_version(db, org_id, schema_id)
-    declared = request.headers.get("content-length")
-    # Multipart framing adds a small overhead; reject clearly oversized bodies before reading.
-    if declared and declared.isdigit() and int(declared) > settings().max_upload_bytes + 65_536:
-        raise HTTPException(413, "FILE_TOO_LARGE")
-    require_project(db, org_id, user, project_id, write=True)  # phase 3B: a grant with write access, or a key for it
+def _validated_upload(file: UploadFile) -> tuple[bytes, bool, int]:
+    """Read and check an uploaded file: size, type by name and magic bytes, page count, antivirus.
+    Returns ``(content, is_docx, page_count)``. Shared by new documents and new versions."""
     content = file.file.read(settings().max_upload_bytes + 1)
     if len(content) > settings().max_upload_bytes:
         raise HTTPException(413, "FILE_TOO_LARGE")
@@ -181,6 +165,29 @@ def upload_document(
         antivirus().scan(content)
     except RuntimeError as exc:
         raise HTTPException(503 if str(exc) == "ANTIVIRUS_UNAVAILABLE" else 422, str(exc)) from None
+    return content, is_docx, page_count
+
+
+@router.post("/api/v1/documents", status_code=status.HTTP_202_ACCEPTED, response_model=None)
+def upload_document(
+    organization_id: str,
+    project_id: uuid.UUID,
+    request: Request,
+    schema_id: uuid.UUID | None = None,
+    file: UploadFile = File(...),
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object] | JSONResponse:
+    enforce(request, "upload", settings().rate_limit_upload)
+    org_id = api_support.organization_id(organization_id)
+    membership(org_id, user, db, Role.member, scope="documents:write")
+    requested_schema_version = _resolve_requested_schema_version(db, org_id, schema_id)
+    declared = request.headers.get("content-length")
+    # Multipart framing adds a small overhead; reject clearly oversized bodies before reading.
+    if declared and declared.isdigit() and int(declared) > settings().max_upload_bytes + 65_536:
+        raise HTTPException(413, "FILE_TOO_LARGE")
+    require_project(db, org_id, user, project_id, write=True)  # phase 3B: a grant with write access, or a key for it
+    content, is_docx, page_count = _validated_upload(file)
     # Lock the organization row so concurrent uploads cannot each observe the
     # same remaining quota and collectively exceed it.
     organization = db.scalar(
@@ -397,6 +404,79 @@ def process_existing_document(
         "status": job.status.value,
         "reused": False,
     }
+
+
+@router.post("/api/v1/documents/{document_id}/versions", status_code=status.HTTP_202_ACCEPTED)
+def upload_document_version(
+    document_id: uuid.UUID,
+    organization_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Replace a document's content with a new version and reprocess it (ADR-005, document update).
+
+    The previous file stays in ``document_versions`` (history; removed with the document). Processing
+    replaces the pages and extractions; indexing removes the previous version's vectors before adding the
+    new ones (``vector_index._index_document``), so no answer cites text that is no longer in the document.
+    Refused with 409 while a processing job is active. The same bytes as the current version: no-op.
+    """
+    enforce(request, "upload", settings().rate_limit_upload)
+    org_id = api_support.organization_id(organization_id)
+    membership(org_id, user, db, Role.member, scope="documents:write")
+    require_document(db, org_id, user, document_id, write=True)
+    content, is_docx, page_count = _validated_upload(file)
+    item = db.scalar(
+        select(Document)
+        .where(Document.id == document_id, Document.organization_id == org_id, Document.deleted_at.is_(None))
+        .with_for_update()
+    )
+    if item is None:
+        raise HTTPException(404, "DOCUMENT_NOT_FOUND")
+    busy = db.scalar(
+        select(ProcessingJob.id).where(
+            ProcessingJob.document_id == item.id,
+            ProcessingJob.status.in_([JobStatus.queued, JobStatus.processing, JobStatus.ocr_processing,
+                                      JobStatus.extracting, JobStatus.validating]),
+        )
+    )
+    if busy is not None:
+        raise HTTPException(409, "DOCUMENT_BUSY")
+    checksum = hashlib.sha256(content).hexdigest()
+    if checksum == item.checksum:
+        return {"document_id": str(item.id), "status": "unchanged"}
+    key = owned_key(org_id, f"{org_id}/{uuid.uuid4()}.{'docx' if is_docx else 'pdf'}")
+    storage.put(key, content)
+    try:
+        prior_attempt = db.scalar(
+            select(func.coalesce(func.max(ProcessingJob.attempt), 0)).where(ProcessingJob.document_id == item.id)
+        )
+        item.storage_key, item.checksum, item.page_count = key, checksum, page_count
+        item.mime_type = DOCX_MIME if is_docx else "application/pdf"
+        item.filename = sanitize_filename(file.filename)
+        item.indexed_at = None
+        last_version = db.scalar(
+            select(func.coalesce(func.max(DocumentVersion.version), 0)).where(DocumentVersion.document_id == item.id)
+        )
+        db.add(DocumentVersion(document_id=item.id, version=int(last_version or 0) + 1, storage_key=key,
+                               checksum=checksum))
+        job = ProcessingJob(organization_id=org_id, document_id=item.id, status=JobStatus.queued,
+                            attempt=int(prior_attempt or 0) + 1)
+        db.add(job)
+        db.add(UsageRecord(organization_id=org_id, metric="pages_reserved", quantity=page_count, document_id=item.id))
+        audit(db, "document.version", "document", str(item.id), user, org_id)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        storage.delete(key)
+        raise HTTPException(409, "DUPLICATE_DOCUMENT") from None
+    except Exception:
+        db.rollback()
+        storage.delete(key)
+        raise
+    _enqueue(job.id)
+    return {"document_id": str(item.id), "job_id": str(job.id), "status": job.status.value}
 
 
 @router.get("/api/v1/documents/{document_id}/status")

@@ -125,6 +125,38 @@ La respuesta incluye además `method`: `kind`, `text_source` (`embedded_text`, `
 Limitación: `normalized` significa que el número o la fecha aparece en el documento, no que sea el campo correcto. Un importe puede coincidir con otra línea del mismo documento.
 
 
+## Preguntas, conversaciones y versiones (ADR-005)
+
+| Método y ruta | Quién | Qué hace |
+|---|---|---|
+| `POST /api/v1/ask?organization_id=` | lectura (`documents:read`) | Respuesta sobre los expedientes que el usuario puede leer |
+| `POST /api/v1/projects/{id}/ask?organization_id=` | lectura del expediente | Respuesta sobre un expediente |
+| `POST /api/v1/conversations?organization_id=` `{"project_id": null}` | usuario con sesión (no claves API) | Crea una conversación privada (201). 503 `CONVERSATIONS_DISABLED` sin `CONVERSATION_ENCRYPTION_KEY` |
+| `GET /api/v1/conversations?organization_id=` | su usuario | Lista las conversaciones propias |
+| `GET /api/v1/conversations/{id}?organization_id=` | su usuario | Turnos descifrados, en orden |
+| `POST /api/v1/conversations/{id}/ask?organization_id=` `{"question"}` | su usuario | Pregunta dentro de la conversación; guarda pregunta y respuesta cifradas. 409 `CONVERSATION_CONFLICT` si otra petición añadió un turno a la vez |
+| `DELETE /api/v1/conversations/{id}?organization_id=` | su usuario | Borra la conversación y todos sus turnos (204) |
+| `POST /api/v1/documents/{id}/versions?organization_id=` (multipart `file`) | escritura del expediente | Sube una versión nueva: reprocesa y reindexa. 409 `DOCUMENT_BUSY` mientras se procesa; `{"status": "unchanged"}` si es el mismo archivo |
+
+Cualquier conversación ajena (de otro miembro, de un administrador o de otra organización) responde 404, igual que un id inexistente.
+
+Respuesta de las rutas de pregunta:
+
+```json
+{
+  "answer": "…", "abstained": false,
+  "mode": "extractive | generative",
+  "dropped_claims": 0,
+  "citations": [{"document_id": "…", "document": "contrato.pdf", "page": 2, "page_basis": "explicit",
+                 "score": 0.71, "label": "contrato.pdf, p.2", "chunk_index": 3, "excerpt": "…"}],
+  "conflicts": [{"kind": "value_mismatch", "needs_human_review": true, "sources": [{"document": "…", "page": 1, "text": "…"}]}]
+}
+```
+
+* `dropped_claims`: frases generadas que se eliminaron porque ninguna fuente citada las respalda (solo en `ASK_MODE=generative`).
+* `conflicts`: posibles discrepancias de fechas, cifras o negación con una fuente citada. Es heurístico y nunca decide qué fuente tiene razón.
+* 503 `VECTOR_INDEX_UNAVAILABLE` (Qdrant caído) y 503 `LLM_UNAVAILABLE` (modelo caído en modo generativo) se pueden reintentar.
+
 ## Sincronización con ContextRAG (administradores)
 
 `GET /api/v1/contextrag/events?organization_id=…` devuelve recuentos por estado (`pending`, `processing`, `done`, `failed`, `cancelled`), si la sincronización está activa y los problemas recientes con su código de error. No incluye contenido. Requiere rol ADMIN o superior; las claves API reciben 403.

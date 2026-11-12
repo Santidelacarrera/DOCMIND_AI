@@ -45,14 +45,40 @@ class AskInput(BaseModel):
 
 def _answer(pipeline: Any, **kwargs: Any) -> Any:
     """``answering.answer`` for the ask endpoints: a collection indexed with another embedding
-    model is a configuration error the operator must fix (503), never a 500 or a wrong answer."""
+    model is a configuration error the operator must fix (503), never a 500 or a wrong answer.
+    In ``ASK_MODE=generative`` an unavailable model is a 503 ``LLM_UNAVAILABLE``, not a guess."""
     from app.ingestion.answering import answer
     from app.ingestion.vectorstore import EmbeddingModelMismatch
+    from app.rag.generation import GenerationError, build_generator
 
+    cfg = settings()
+    if cfg.ask_mode == "generative":
+        kwargs.update(
+            answer_mode="generative", generator=build_generator(cfg.llm_provider),
+            generation_threshold=cfg.ask_generation_threshold, context_chars=cfg.ask_context_chars,
+        )
     try:
         return answer(pipeline, **kwargs)
     except EmbeddingModelMismatch:
         raise HTTPException(503, "EMBEDDING_MODEL_MISMATCH") from None
+    except GenerationError:
+        raise HTTPException(503, "LLM_UNAVAILABLE") from None
+    except Exception as exc:
+        if _vector_store_outage(exc):
+            logger.warning("vector store unavailable for a question", extra={"error": type(exc).__name__})
+            raise HTTPException(503, "VECTOR_INDEX_UNAVAILABLE") from None
+        raise
+
+
+def _vector_store_outage(exc: Exception) -> bool:
+    """Qdrant unreachable or failing (network, timeout, 5xx): a 503 the client may retry, not a 500."""
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    try:
+        from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
+    except ImportError:  # pragma: no cover - qdrant extra not installed
+        return False
+    return isinstance(exc, (ResponseHandlingException, UnexpectedResponse))
 
 
 def _answer_body(result: Any) -> dict[str, object]:
@@ -61,6 +87,8 @@ def _answer_body(result: Any) -> dict[str, object]:
     return {
         "answer": result.text,
         "abstained": result.abstained,
+        "mode": result.mode,
+        "dropped_claims": result.dropped_claims,
         "citations": [
             {
                 "document_id": c.document_id,
@@ -217,3 +245,35 @@ def project_ask(
         },
     )
     return _answer_body(result)
+
+
+def answer_in_scope(
+    db: Session, org_id: uuid.UUID, user: User | ApiPrincipal, question: str, top_k: int,
+    project_uuid: uuid.UUID | None, memory: str | None = None,
+) -> Any:
+    """The answer ``/ask`` (no project) or ``/projects/{id}/ask`` (project) would give, for callers that
+    already checked membership and project access (conversations). Same scope and liveness rules."""
+    if not vector_index.enabled():
+        raise HTTPException(503, "VECTOR_INDEX_DISABLED")
+
+    def is_live(document_id: str) -> bool:
+        try:
+            doc_uuid = uuid.UUID(document_id)
+        except ValueError:
+            return False
+        query = select(Document.id).where(
+            Document.id == doc_uuid, Document.organization_id == org_id, Document.deleted_at.is_(None),
+        )
+        if project_uuid is not None:
+            query = query.where(Document.project_id == project_uuid)
+        return db.scalar(query) is not None
+
+    scope: dict[str, Any] = (
+        {"project_id": str(project_uuid)} if project_uuid is not None
+        else {"project_ids": as_strings(accessible_project_ids(db, org_id, user))}
+    )
+    return _answer(
+        vector_index.get_pipeline(), tenant_id=str(org_id), question=question, top_k=top_k, is_live=is_live,
+        min_coverage=settings().ask_min_evidence_coverage, min_similarity=settings().ask_min_semantic_similarity,
+        memory=memory, **scope,
+    )

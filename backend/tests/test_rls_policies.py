@@ -25,7 +25,7 @@ pytestmark = [
 ]
 
 PROBE = "docmind_rls_probe"
-PROTECTED = (*rls.TENANT_TABLES, *rls.CHILD_TABLES)
+PROTECTED = (*rls.TENANT_TABLES, *rls.TENANT_TABLES_0011, *rls.CHILD_TABLES)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -50,7 +50,7 @@ def worlds(register: Any) -> dict[str, Any]:
         worker.process_document.run(body["job_id"])  # type: ignore[attr-defined]
         out[label] = {"org": acct.org, "document": body["document_id"]}
     with engine.begin() as conn:
-        for statement in rls.policy_statements():
+        for statement in rls.all_policy_statements():
             conn.execute(text(statement))
         conn.execute(text(f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {PROBE}"))
         conn.execute(text(f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {PROBE}"))
@@ -83,7 +83,7 @@ def test_every_protected_table_has_rls_enabled_and_a_policy(worlds: dict[str, An
     assert set(PROTECTED) <= enabled and set(PROTECTED) <= policies
 
 
-@pytest.mark.parametrize("table", rls.TENANT_TABLES)
+@pytest.mark.parametrize("table", (*rls.TENANT_TABLES, *rls.TENANT_TABLES_0011))
 def test_a_tenant_table_shows_only_the_context_organization(worlds: dict[str, Any], table: str) -> None:
     a, b = worlds["a"]["org"], worlds["b"]["org"]
     seen = {str(r[0]) for r in as_app(a, f"SELECT DISTINCT organization_id FROM {table}")}

@@ -71,6 +71,11 @@ class Answer:
     # Possible disagreements (dates, figures, negation) between a cited source and another retrieved
     # one (app.rag.conflicts). Not semantic; for a person to review. Empty when none were found.
     conflicts: tuple[conflict_detection.Conflict, ...] = field(default_factory=tuple)
+    # "extractive" (quoted sentences) or "generative" (model wording, every sentence verified against
+    # the passage it cites; app.rag.generation). ``dropped_claims``: generated sentences removed
+    # because no cited passage supported them.
+    mode: str = "extractive"
+    dropped_claims: int = 0
 
     def __post_init__(self) -> None:
         if self.abstained == bool(self.citations):
@@ -203,6 +208,12 @@ def answer(
     min_similarity: float | None = None,
     mode: str | None = None,
     detect_conflicts: bool = True,
+    answer_mode: str = "extractive",
+    generator: Any = None,
+    generation_threshold: float = 0.95,
+    context_chars: int = 6000,
+    memory: str | None = None,
+    require_named_terms: bool = True,
 ) -> Answer:
     """Answer ``question`` from this tenant's documents only.
 
@@ -226,12 +237,31 @@ def answer(
     ``mode`` is the retrieval mode (``"dense"`` or ``"hybrid"``, see :func:`retrieve`); ``None`` uses
     ``RETRIEVAL_MODE``. With ``detect_conflicts`` the answer lists possible disagreements between a
     cited page and another retrieved one (:mod:`app.rag.conflicts`); the quoted text is unchanged.
+
+    ``answer_mode="generative"`` (``ASK_MODE``) asks ``generator`` to word the answer from the
+    retrieved passages and keeps only the sentences verified against the passage they cite
+    (:mod:`app.rag.generation`). Before generating, a question naming something (a capitalised name or
+    an identifier) that appears in no retrieved passage abstains (:mod:`app.rag.entities`).
     """
     question = question.strip()
     hits, vector = _retrieve(
         pipeline, tenant_id=tenant_id, question=question, top_k=top_k, min_score=min_score,
         is_live=is_live, project_id=project_id, project_ids=project_ids, mode=mode,
     )
+    if answer_mode == "generative":
+        return _generative(
+            question, hits, generator, threshold=generation_threshold, context_chars=context_chars,
+            detect_conflicts=detect_conflicts, memory=memory,
+        )
+    if answer_mode != "extractive":
+        raise ValueError("UNKNOWN_ANSWER_MODE")
+    if require_named_terms and hits:
+        from app.rag.entities import missing_terms
+
+        if missing_terms(question, [str(h.get("text", "")) for h in hits]):
+            # The question names something (a capitalised name, an identifier such as "ZX-4471") that no
+            # retrieved passage contains: any sentence quoted would be about something else.
+            return Answer(question, ABSTENTION, (), True)
     threshold = min_similarity if min_similarity is not None else CALIBRATED_SIMILARITY.get(
         str(getattr(pipeline.embedder, "name", ""))
     )
@@ -255,14 +285,64 @@ def answer(
         if all((citation.document_id, citation.page) != (c.document_id, c.page) for c in citations):
             citations.append(citation)
     text = " ".join(sentence for sentence, _ in picked)
-    found: tuple[conflict_detection.Conflict, ...] = ()
-    if detect_conflicts:
-        cited = {(c.document_id, c.page) for c in citations}
-        found = tuple(
-            c for c in conflict_detection.detect(question, hits)
-            if (c.a.document_id, c.a.page) in cited or (c.b.document_id, c.b.page) in cited
-        )
+    found = _conflicts(question, hits, citations) if detect_conflicts else ()
     return Answer(question, text, tuple(citations), False, found)
+
+
+def _conflicts(
+    question: str, hits: Sequence[dict[str, Any]], citations: Sequence[Citation],
+) -> tuple[conflict_detection.Conflict, ...]:
+    cited = {(c.document_id, c.page) for c in citations}
+    return tuple(
+        c for c in conflict_detection.detect(question, hits)
+        if (c.a.document_id, c.a.page) in cited or (c.b.document_id, c.b.page) in cited
+    )
+
+
+def _citation(hit: dict[str, Any], excerpt: str) -> Citation:
+    return Citation(
+        document_id=str(hit["document_id"]), document=str(hit.get("source_name") or hit["document_id"]),
+        page=int(hit.get("page") or hit.get("page_start") or 0), page_basis=str(hit.get("page_basis", "explicit")),
+        score=round(float(hit.get("score", 0.0)), 4), chunk_index=_chunk_index(hit), excerpt=excerpt[:EXCERPT_CHARS],
+    )
+
+
+def _generative(
+    question: str, hits: list[dict[str, Any]], generator: Any, *, threshold: float, context_chars: int,
+    detect_conflicts: bool, memory: str | None = None,
+) -> Answer:
+    """Generated wording, verified sentence by sentence. Markers ``[n]`` are renumbered to the
+    position of the citation in ``Answer.citations``."""
+    from app.rag.entities import missing_terms
+    from app.rag.generation import generate_verified
+
+    if generator is None:
+        raise ValueError("GENERATOR_REQUIRED")
+    if not hits or missing_terms(question, [str(h.get("text", "")) for h in hits]):
+        return Answer(question, ABSTENTION, (), True, mode="generative")
+    result = generate_verified(question, hits, generator, max_chars=context_chars, threshold=threshold, memory=memory)
+    if not result.text:
+        return Answer(question, ABSTENTION, (), True, mode="generative", dropped_claims=result.dropped)
+    citations: list[Citation] = []
+    position: dict[tuple[str, int], int] = {}
+    sentences: list[str] = []
+    for verdict in result.supported:
+        hit = result.passages[(verdict.passage or 1) - 1].hit
+        citation = _citation(hit, verdict.evidence)
+        key = (citation.document_id, citation.page)
+        if key not in position:
+            citations.append(citation)
+            position[key] = len(citations)
+        cited_keys = []
+        for index in verdict.citations:
+            cited_hit = result.passages[index - 1].hit
+            cited_key = (str(cited_hit["document_id"]), int(cited_hit.get("page") or cited_hit.get("page_start") or 0))
+            if cited_key in position:
+                cited_keys.append(position[cited_key])
+        markers = "".join(f"[{n}]" for n in dict.fromkeys(cited_keys or [position[key]]))
+        sentences.append(f"{verdict.claim} {markers}")
+    found = _conflicts(question, hits, citations) if detect_conflicts else ()
+    return Answer(question, " ".join(sentences), tuple(citations), False, found, "generative", result.dropped)
 
 
 def _chunk_index(hit: dict[str, Any]) -> int | None:

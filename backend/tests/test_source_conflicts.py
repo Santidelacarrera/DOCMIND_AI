@@ -86,3 +86,13 @@ def test_answers_report_conflicts_with_the_cited_source() -> None:
     quiet = answering.answer(p, tenant_id=tenant, question="¿Cuál es el precio total del contrato de servicios?",
                              detect_conflicts=False)
     assert quiet.conflicts == () and quiet.text == result.text
+
+
+def test_a_heading_run_into_the_sentence_does_not_hide_the_conflict() -> None:
+    # PDF text extraction often joins a page heading and the first sentence without punctuation.
+    found = conflicts.detect("¿Cuándo es la audiencia de juicio?", [
+        hit("ACTA DE REUNIÓN DE MARZO La audiencia de juicio del expediente se celebrará el 5 de mayo de 2026.", "d1"),
+        hit("ACTA DE REUNIÓN DE ABRIL La audiencia de juicio del expediente se celebrará el 9 de junio de 2026.", "d2"),
+    ])
+    assert [c.kind for c in found] == ["value_mismatch"]
+    assert conflicts.strip_heading("El contrato con ACME SA vence en mayo.") == "El contrato con ACME SA vence en mayo."

@@ -139,6 +139,18 @@ class Settings(BaseSettings):
     retrieval_rrf_k: int = Field(default=60, ge=1, le=1000)
     retrieval_lexical_cache_seconds: float = Field(default=60.0, ge=0.0, le=3600.0)
     retrieval_lexical_max_chunks: int = Field(default=50_000, ge=1)
+    # Answers for /ask (ADR-005). "extractive": quoted sentences, no model. "generative": the LLM_PROVIDER
+    # words the answer from the retrieved (masked) passages and every sentence is verified against the
+    # passage it cites; unverified sentences are removed. Each question is then one LLM call (cost).
+    ask_mode: Literal["extractive", "generative"] = "extractive"
+    ask_generation_threshold: float = Field(default=0.95, gt=0.0, le=1.0)
+    ask_context_chars: int = Field(default=6000, ge=500, le=50_000)
+    ask_generation_max_tokens: int = Field(default=600, ge=50, le=4000)
+    # Conversations (ADR-005 delivery 3). Turns are AES-GCM encrypted with a per-organization key derived
+    # from this secret; without it conversations are disabled (503), never stored in clear text.
+    conversation_encryption_key: SecretStr | None = None
+    conversation_retention_days: int = Field(default=90, ge=1, le=3650)
+    conversation_memory_turns: int = Field(default=3, ge=0, le=20)  # earlier turns given to the generator
 
     @field_validator("ask_min_semantic_similarity", mode="before")
     @classmethod

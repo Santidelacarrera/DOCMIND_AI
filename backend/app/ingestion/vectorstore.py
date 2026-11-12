@@ -170,6 +170,8 @@ class QdrantStore:
     def delete_document(self, tenant_id: str, document_id: str) -> None:
         from qdrant_client import models
 
+        if not self._c.collection_exists(self._collection):
+            return  # nothing was ever indexed: nothing to delete (first indexing of a fresh store)
         self._c.delete(
             self._collection,
             points_selector=models.FilterSelector(filter=self.tenant_filter(tenant_id, document_id=document_id)),
