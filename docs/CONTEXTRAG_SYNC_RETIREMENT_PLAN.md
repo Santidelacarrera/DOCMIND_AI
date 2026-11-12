@@ -1,6 +1,10 @@
 # Plan de retirada de la sincronización con ContextRAG externo
 
-**Estado:** propuesto el 2026-11-12. **No ejecutado.** Cada fase que cambia comportamiento o borra datos necesita la autorización explícita del propietario. Hasta entonces la sincronización sigue en el código, **desactivada por defecto** (`CONTEXTRAG_SYNC_ENABLED=false`) y con sus pruebas pasando.
+**Estado (2026-11-12):**
+* Fases 1 y 2 **autorizadas** por el propietario (misión «Validación real, staging y producción», sección 11).
+* **Fase 1 ejecutada**: `CONTEXTRAG_OUTBOX_ENABLED=false` por defecto (rama `claude/real-validation-prep`).
+* Fase 2: en su propia PR, después de la fase 1.
+* **Fase 3 (borrar la tabla): no autorizada, no se ejecutará sin una autorización explícita.**
 
 ## Por qué existe y por qué sobra
 
@@ -36,10 +40,15 @@ Antes de ADR-005, DOCMIND enviaba el texto enmascarado de los documentos a un se
 
 ## Fases propuestas (cada una reversible hasta la 3)
 
-### Fase 1 — dejar de producir trabajo (sin borrar nada)
+### Fase 1 — dejar de producir trabajo (sin borrar nada) — EJECUTADA
 * Un ajuste nuevo, `CONTEXTRAG_OUTBOX_ENABLED=false`, que deja de encolar eventos; y sacar del beat `deliver-contextrag-events` y `reconcile-contextrag` mientras esté en `false`.
 * **Reversión:** volver a `true`. `reconcile()` vuelve a crear los eventos que falten (ya probado: `test_reconcile_recreates_missing_events_*`).
 * **Pruebas previas:** suite completa con el ajuste en `false`; comprobar que no se crean filas nuevas en la tabla.
+* **Resultado:**
+  * `test_with_the_outbox_retired_documents_are_processed_and_no_event_is_written`: procesar, borrar y reconciliar no escriben eventos.
+  * `test_retired_contextrag_tasks_are_not_scheduled_but_remain_registered`: las tareas siguen registradas, sin programar.
+  * Reversibilidad comprobada: con el ajuste en `true` y ContextRAG en `PYTHONPATH` (sin instalarlo ni escribir en su repositorio), 57 pruebas de la sincronización pasan; 1 omitida (solo PostgreSQL); 1 fallida porque necesita `fork`, que no existe en Windows, y que en CI se omite.
+  * `CONTEXTRAG_SYNC_ENABLED=true` exige ahora `CONTEXTRAG_OUTBOX_ENABLED=true`.
 
 ### Fase 2 — retirar el código (la tabla se conserva)
 * Quitar `contextrag_sync.py`, `integrations/contextrag.py`, las 3 rutas de administración, las tareas de beat, las 7 variables y sus pruebas y documentación. `ContextRagEvent` se conserva para que la base de datos no cambie.

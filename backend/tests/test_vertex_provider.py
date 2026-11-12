@@ -129,3 +129,42 @@ def test_staging_requires_a_vertex_project() -> None:
     with pytest.raises(ValueError, match="VERTEX_PROJECT"):
         staging_settings(llm_provider="vertex")
     assert staging_settings(llm_provider="vertex", vertex_project="p").vertex_project == "p"
+
+
+def test_vertex_check_script_reports_generation_and_extraction(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """scripts/vertex_check.py logic with a stand-in model (proves the script, not the model: the real
+    check needs credentials, docs/OWNER_SETUP.md section 1)."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    from app import processing
+    from app.core import settings
+    from app.rag import generation
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "vertex_check.py"
+    spec = importlib.util.spec_from_file_location("vertex_check", path)
+    module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    monkeypatch.setattr(settings(), "llm_provider", "vertex")
+    monkeypatch.setattr(settings(), "vertex_project", "placeholder-project")
+
+    def complete(self, system: str, prompt: str) -> str:
+        self.calls, self.prompt_tokens, self.completion_tokens = 1, 120, 20
+        return "El contrato de mantenimiento ficticio tiene un plazo de 24 meses [1]."
+
+    class Extractor:
+        def extract(self, text: str, schema: dict, prompt_instructions: str | None = None) -> dict:
+            return {"fields": {"invoice_number": "F-2026-0042", "total": "1.452,00 EUR"},
+                    "usage": {"prompt_tokens": 80, "completion_tokens": 15, "estimated_cost": 0.00001}}
+
+    monkeypatch.setattr(generation.ChatGenerator, "complete", complete)
+    monkeypatch.setattr(processing, "llm", lambda: Extractor())
+    monkeypatch.setattr(sys, "argv", ["vertex_check.py"])
+    assert module.main() == 0  # dry run: no call without --yes
+    assert "dry run" in capsys.readouterr().out
+    monkeypatch.setattr(sys, "argv", ["vertex_check.py", "--yes"])
+    assert module.main() == 0
+    out = capsys.readouterr().out
+    assert '"verified_claims": 1' in out and '"invoice_number_correct": true' in out
+    assert "placeholder-project" not in out  # identifiers and credentials are never printed

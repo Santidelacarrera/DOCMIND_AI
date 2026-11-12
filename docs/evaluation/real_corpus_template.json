@@ -1,0 +1,35 @@
+{
+  "_instructions": "Copy to backend/eval_private/corpus.json (git-ignored). Replace every <...>. Remove this key. Guide: docs/evaluation/REAL_DOCUMENT_EVALUATION.md",
+  "version": 1,
+  "tenants": {
+    "cliente_a": "<descripción anonimizada del cliente A>",
+    "cliente_b": "<descripción anonimizada del cliente B: sus documentos sirven de control de aislamiento>"
+  },
+  "documents": [
+    {"tenant": "cliente_a", "file": "<nombre_unico.pdf>", "path": "docs/cliente_a/<nombre_unico.pdf>"},
+    {"tenant": "cliente_a", "file": "<nombre_unico.docx>", "path": "docs/cliente_a/<nombre_unico.docx>"},
+    {"tenant": "cliente_b", "file": "<otro_documento.pdf>", "path": "docs/cliente_b/<otro_documento.pdf>"}
+  ],
+  "questions": [
+    {"tenant": "cliente_a", "category": "factual", "question": "<pregunta cuya respuesta está literalmente en el documento>",
+     "relevant": [["<nombre_unico.pdf>", 3]], "contains": "<texto literal de la respuesta, tal como aparece>"},
+    {"tenant": "cliente_a", "category": "paraphrase", "question": "<la misma idea con otras palabras>",
+     "relevant": [["<nombre_unico.pdf>", 3]], "contains": "<texto literal>"},
+    {"tenant": "cliente_a", "category": "identifier", "question": "<pregunta por un número de expediente, factura o RUT>",
+     "relevant": [["<nombre_unico.docx>", 1]], "contains": "<texto literal>"},
+    {"tenant": "cliente_a", "category": "table", "question": "<pregunta por un valor de una tabla>",
+     "relevant": [["<nombre_unico.pdf>", 5]], "contains": "<valor literal de la celda>"},
+    {"tenant": "cliente_a", "category": "long_document", "question": "<dato en una página interior de un documento largo>",
+     "relevant": [["<nombre_unico.pdf>", 27]], "contains": "<texto literal>"},
+    {"tenant": "cliente_a", "category": "contradiction", "question": "<pregunta que dos documentos responden distinto>",
+     "relevant": [["<documento_1.pdf>", 2], ["<documento_2.pdf>", 1]], "contains": "<parte común a ambas respuestas>",
+     "expect_conflict": true},
+    {"tenant": "cliente_a", "category": "injection", "question": "<pregunta legítima>",
+     "relevant": [["<documento_legitimo.pdf>", 1]], "contains": "<texto literal>",
+     "forbidden": ["<documento_con_instrucciones_maliciosas.pdf>"]},
+    {"tenant": "cliente_a", "category": "unanswerable", "question": "<pregunta que ningún documento responde>",
+     "relevant": [], "contains": ""},
+    {"tenant": "cliente_b", "category": "cross_tenant", "question": "<pregunta que solo responden documentos del cliente A>",
+     "relevant": [], "contains": ""}
+  ]
+}

@@ -113,8 +113,15 @@ def _insert_if_absent(db: Session, values: dict[str, Any]) -> None:
     )
 
 
+def outbox_enabled() -> bool:
+    """Retirement phase 1: with CONTEXTRAG_OUTBOX_ENABLED=false (default) nothing is enqueued or reconciled."""
+    return bool(settings().contextrag_outbox_enabled)
+
+
 def enqueue_upsert(db: Session, organization_id: uuid.UUID, document_id: uuid.UUID) -> None:
     """Record that the document's current content should be in ContextRAG. Call in the state-changing transaction."""
+    if not outbox_enabled():
+        return
     version = (
         db.scalar(
             select(DocumentVersion.version)
@@ -146,6 +153,8 @@ def enqueue_upsert(db: Session, organization_id: uuid.UUID, document_id: uuid.UU
 
 def enqueue_retire(db: Session, organization_id: uuid.UUID, document_id: uuid.UUID) -> None:
     """Record that every page of the document must leave ContextRAG. Idempotent; call in the same transaction."""
+    if not outbox_enabled():
+        return
     now = utcnow()
     _insert_if_absent(
         db,
@@ -394,6 +403,8 @@ def reconcile(*, limit: int = 500) -> dict[str, int]:
     documents with no retire event (e.g. changes made before the outbox existed). Enqueues the missing
     events; delivery is left to ``process_due``."""
     created = {"upsert": 0, "retire": 0}
+    if not outbox_enabled():
+        return created
     with SystemSessionLocal.begin() as db:
         live = db.execute(
             select(Document.id, Document.organization_id)

@@ -5,6 +5,29 @@
 
 Este documento es el punto de continuidad: otra sesión puede retomar desde «Próximas acciones». El historial completo de la unificación está en `docs/UNIFICATION_PROGRESS.md`.
 
+
+## Misión «validación real, staging y producción» — 2026-11-12
+
+**Estado de `main`:** comprobado. PR #74–#77 fusionadas (`0e1763b`), árbol limpio. `backend/eval_private/` está ignorado por git (`.gitignore:28`) y no existe todavía. No hay credenciales de Vertex en la máquina.
+
+| Pendiente | Dependencia | Qué hago yo | Qué necesito del propietario | Estado |
+|---|---|---|---|---|
+| Evaluación con documentos reales | 30–50 documentos anonimizados con preguntas | Plantilla, validador, NDCG, latencia, coste y comparación A0/A/B/C/D/C0 preparados (`REAL_DOCUMENT_EVALUATION.md`) | Los documentos y `corpus.json` en `backend/eval_private/` | **Preparada; esperando documentos** |
+| Vertex AI real | Proyecto GCP con facturación, API, cuenta de servicio | `scripts/vertex_check.py` (en seco o real) y `--generator vertex` en la evaluación | Credenciales configuradas fuera del chat (`OWNER_SETUP.md` §1) y autorización del gasto | **Preparado; esperando credenciales** |
+| Staging | Servidor, dominio, HTTPS, secretos | Procedimiento (`DEPLOYMENT.md`, `STAGING.md`), `fetch_models.py`, humo, carga | Elegir proveedor y autorizar el coste | Pendiente |
+| Cifrado en un entorno real | Staging y gestor de secretos | Validación de clave ausente, incorrecta y entre clientes (probada en local) | `CONVERSATION_ENCRYPTION_KEY` en el gestor de secretos de staging | Pendiente |
+| RLS en staging | Staging | Activación según `RLS_DESIGN.md` y pruebas con varios clientes | El entorno | Pendiente |
+| Alertmanager | Destinatarios | Configuración, alerta de prueba controlada y documentación | **Quién recibe las alertas** y por qué canal | Pendiente |
+| Retirada de ContextRAG Sync | Autorización | **Fase 1 hecha** (reversible); fase 2 en la siguiente PR | Autorización explícita de la fase 3 (borrar la tabla) cuando toque | En curso |
+| Producción | Staging validado | Procedimiento, reversión y revisión de riesgos | Autorización del despliegue | Pendiente |
+
+**Hecho en esta misión (rama `claude/real-validation-prep`):**
+* `app/evaluation/rag.py`: NDCG@1/3/5, latencia p50/p95/max por pregunta, `--generator vertex|gemini|openai` (modelo real) con tokens y coste estimado.
+* `scripts/validate_eval_corpus.py`: validación previa sin coste y sin imprimir texto.
+* `docs/evaluation/real_corpus_template.json` y `REAL_DOCUMENT_EVALUATION.md`: metodología y regla de decisión fijadas antes de ver los datos.
+* `scripts/vertex_check.py`: prueba real de generación y extracción, que pide `--yes` antes de gastar.
+* ContextRAG Sync, fase 1: `CONTEXTRAG_OUTBOX_ENABLED=false`.
+
 ## Niveles de validación
 
 Se distinguen cinco niveles, y ninguno implica el siguiente:

@@ -6,6 +6,7 @@ every unanswerable or foreign question abstains, every quoted excerpt is in the 
 """
 
 import uuid
+from typing import Any
 
 import pytest
 
@@ -123,3 +124,49 @@ def test_a_corpus_of_real_files_can_be_evaluated(tmp_path) -> None:
     report = rag.run(corpus_path=path)
     assert report["metrics"]["fact_accuracy"] == 1.0 and report["metrics"]["cross_tenant_leaks"] == 0
     assert rag.main(["--corpus", str(path), "--min-abstention-accuracy", "1.0"]) == 0
+
+
+def _validator() -> Any:
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "validate_eval_corpus.py"
+    spec = importlib.util.spec_from_file_location("validate_eval_corpus", path)
+    module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    return module
+
+
+def test_the_corpus_validator_catches_mistakes_before_an_evaluation(tmp_path) -> None:
+    """scripts/validate_eval_corpus.py on a synthetic corpus (a technical check, not a quality evaluation)."""
+    import json
+
+    from app.evaluation.pdfgen import digital_pdf
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "a.pdf").write_bytes(digital_pdf([["Portada"], ["El plazo de entrega es de 30 dias."]]))
+    good = {
+        "tenants": {"t1": "uno", "t2": "dos"},
+        "documents": [{"tenant": "t1", "file": "a.pdf", "path": "docs/a.pdf"}],
+        "questions": [
+            {"tenant": "t1", "category": "factual", "question": "¿Plazo de entrega?", "relevant": [["a.pdf", 2]],
+             "contains": "30 dias"},
+            {"tenant": "t2", "category": "cross_tenant", "question": "¿Plazo de entrega?", "relevant": [], "contains": ""},
+        ],
+    }
+    path = tmp_path / "corpus.json"
+    path.write_text(json.dumps(good), encoding="utf-8")
+    errors, warnings, summary = _validator().validate(path)
+    assert errors == [] and summary["documents"] == 1 and summary["pages"] == 2
+    assert any("30–50" in w for w in warnings)  # size target is reported, not hidden
+
+    bad = json.loads(json.dumps(good))
+    bad["questions"][0]["relevant"] = [["a.pdf", 7]]
+    bad["questions"].append({"tenant": "t1", "category": "factual", "question": "¿Otra?", "relevant": [["a.pdf", 2]],
+                             "contains": "45 dias"})
+    bad["documents"].append({"tenant": "t1", "file": "missing.pdf", "path": "docs/missing.pdf"})
+    path.write_text(json.dumps(bad), encoding="utf-8")
+    errors, warnings, _ = _validator().validate(path)
+    assert any("not page 7" in e for e in errors) and any("file not found" in e for e in errors)
+    assert any("'contains' does not appear" in w for w in warnings)
+    assert _validator().main([str(path)]) == 1
