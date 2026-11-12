@@ -17,7 +17,7 @@ import sys
 from sqlalchemy import select
 
 from app import vector_index
-from app.db import SessionLocal
+from app.db import SystemSessionLocal as SessionLocal  # every organization's documents
 from app.models import Document
 
 

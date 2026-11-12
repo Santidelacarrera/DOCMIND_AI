@@ -35,7 +35,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from app.core import settings
-from app.db import SessionLocal
+from app.db import SystemSessionLocal
 from app.ingestion.pii import PiiMasker
 from app.integrations.contextrag import (
     ContextRagClient,
@@ -255,7 +255,7 @@ def _deliver(claim: _Claim, client_factory: Any) -> tuple[str, str | None]:
         _verify_retired(client, claim)  # an HTTP 200 is not proof: check what is still retrievable
         return DONE, None
     # Upsert: rebuild from the database *now*. A deleted document or superseded content is never sent.
-    with SessionLocal() as db:
+    with SystemSessionLocal() as db:
         document = db.get(Document, claim.document_id)
         if document is None or document.deleted_at is not None:
             return CANCELLED, "DOCUMENT_DELETED"
@@ -280,7 +280,7 @@ def _deliver(claim: _Claim, client_factory: Any) -> tuple[str, str | None]:
 def _finalize(
     claim: _Claim, outcome: str, error: str | None, now: datetime, max_attempts: int
 ) -> None:
-    with SessionLocal.begin() as db:
+    with SystemSessionLocal.begin() as db:
         row = db.get(ContextRagEvent, claim.id)
         # Fencing: only the claim holding the current token may finish the event.
         if row is None or row.status != PROCESSING or row.claim_token != claim.token:
@@ -318,7 +318,7 @@ def _release_unstarted(claims: list[_Claim], now: datetime) -> int:
     """Give back claims that were never attempted: no attempt is counted, nothing waits for the stale timeout."""
     if not claims:
         return 0
-    with SessionLocal.begin() as db:
+    with SystemSessionLocal.begin() as db:
         released = 0
         for claim in claims:
             row = db.get(ContextRagEvent, claim.id)
@@ -353,12 +353,12 @@ def process_due(
         return result
     factory = client_factory or build_client
     deadline = clock() + budget_seconds
-    with SessionLocal.begin() as db:
+    with SystemSessionLocal.begin() as db:
         result["released"] = _release_stale(db, now)
     for _ in range(max_rounds):
         if clock() >= deadline:
             break
-        with SessionLocal.begin() as db:
+        with SystemSessionLocal.begin() as db:
             claims = _claim_due(db, now, limit)
         if not claims:
             break
@@ -394,7 +394,7 @@ def reconcile(*, limit: int = 500) -> dict[str, int]:
     documents with no retire event (e.g. changes made before the outbox existed). Enqueues the missing
     events; delivery is left to ``process_due``."""
     created = {"upsert": 0, "retire": 0}
-    with SessionLocal.begin() as db:
+    with SystemSessionLocal.begin() as db:
         live = db.execute(
             select(Document.id, Document.organization_id)
             .where(Document.deleted_at.is_(None))

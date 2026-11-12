@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     environment: str = "development"
     database_url: str | None = None
+    # Row-Level Security phase 3 (docs/RLS_DESIGN.md). DATABASE_URL is then the docmind_app role
+    # (no SUPERUSER, no BYPASSRLS, not the table owner) and DATABASE_SYSTEM_URL the docmind_system
+    # role used only by the cross-organization maintenance tasks. Unset: one connection, as before.
+    database_system_url: str | None = None
+    rls_enforced: bool = False
     redis_url: str | None = None
     local_storage_path: Path = Path("./uploads")
     storage_provider: str = "local"
@@ -45,6 +50,11 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-3.1-flash-lite"
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     # Free tier costs nothing; set the real prices when moving to a paid tier or Vertex AI.
+    # Gemini on Vertex AI (LLM_PROVIDER=vertex): paid, not used for training, covered by Google
+    # Cloud's data processing terms. Credentials: Application Default Credentials, never a key here.
+    vertex_project: str | None = None
+    vertex_location: str = "us-central1"
+    vertex_model: str | None = None  # defaults to GEMINI_MODEL
     gemini_input_price_per_1m: float = 0.0
     gemini_output_price_per_1m: float = 0.0
     cors_origins: str = "http://localhost:3000"
@@ -181,6 +191,8 @@ class Settings(BaseSettings):
         production = self.is_production
         if self.contextrag_content_mode == "raw" and not self.contextrag_allow_raw_text:
             raise ValueError("CONTENT_MODE raw needs CONTEXTRAG_ALLOW_RAW_TEXT=true")
+        if self.rls_enforced and not self.database_system_url:
+            raise ValueError("RLS_ENFORCED=true needs DATABASE_SYSTEM_URL (docmind_system) for maintenance tasks")
         if production:
             required = {
                 "DATABASE_URL": self.database_url,
@@ -203,6 +215,8 @@ class Settings(BaseSettings):
                 )
             if self.llm_provider == "openai" and not self.openai_api_key:
                 raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
+            if self.llm_provider == "vertex" and not self.vertex_project:
+                raise ValueError("VERTEX_PROJECT is required when LLM_PROVIDER=vertex")
             if self.llm_provider == "gemini" and not self.gemini_api_key:
                 raise ValueError("GEMINI_API_KEY is required when LLM_PROVIDER=gemini")
             if self.antivirus_provider == "disabled":
@@ -264,6 +278,14 @@ class Settings(BaseSettings):
     @property
     def effective_database_url(self) -> str:
         return self.database_url or "postgresql+psycopg://docmind:docmind@localhost:5432/docmind"
+
+    @property
+    def effective_vertex_model(self) -> str:
+        return self.vertex_model or self.gemini_model
+
+    @property
+    def effective_database_system_url(self) -> str:
+        return self.database_system_url or self.effective_database_url
 
     @property
     def effective_redis_url(self) -> str:

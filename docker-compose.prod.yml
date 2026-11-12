@@ -79,7 +79,36 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
     networks: [backend]
+  backup:
+    # Scheduled pg_dump of the bundled database (deploy/backup/pg_backup.sh): daily, verified,
+    # 14 days kept. Opt in with `--profile backup`; with a managed database use its backups.
+    profiles: [backup]
+    image: postgres:17-alpine
+    entrypoint: ["/bin/sh", "/opt/backup/pg_backup.sh"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      PGHOST: db
+      PGDATABASE: ${POSTGRES_DB:-docmind}
+      PGUSER: ${POSTGRES_USER:-docmind}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - ./deploy/backup/pg_backup.sh:/opt/backup/pg_backup.sh:ro
+      - backups:/backups
+    depends_on:
+      db: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 256M}
+    networks: [backend]
 
 networks:
   edge: {}
   backend: {internal: true}
+
+volumes:
+  backups: {}

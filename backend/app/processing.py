@@ -1,4 +1,5 @@
 import json
+import logging
 import threading
 from typing import Any, Protocol
 
@@ -6,6 +7,7 @@ from pypdf import PdfReader
 
 from app.core import settings
 
+logger = logging.getLogger("docmind.llm")
 _llm_slots = threading.BoundedSemaphore(settings().openai_max_concurrency)
 
 # Untrusted document text is fenced between these markers. Any occurrence inside the
@@ -43,7 +45,7 @@ def estimate_cost(prompt_tokens: int | None, completion_tokens: int | None) -> f
     if prompt_tokens is None or completion_tokens is None:
         return None
     cfg = settings()
-    if cfg.llm_provider == "gemini":
+    if cfg.llm_provider in ("gemini", "vertex"):
         input_price, output_price = cfg.gemini_input_price_per_1m, cfg.gemini_output_price_per_1m
     else:
         input_price, output_price = cfg.openai_input_price_per_1m, cfg.openai_output_price_per_1m
@@ -56,7 +58,9 @@ def estimate_cost(prompt_tokens: int | None, completion_tokens: int | None) -> f
 def llm_model() -> str | None:
     """Model name recorded with each extraction run (None for the mock provider)."""
     cfg = settings()
-    return {"openai": cfg.openai_model, "gemini": cfg.gemini_model}.get(cfg.llm_provider)
+    return {"openai": cfg.openai_model, "gemini": cfg.gemini_model, "vertex": cfg.effective_vertex_model}.get(
+        cfg.llm_provider
+    )
 
 
 class LLMProvider(Protocol):
@@ -170,8 +174,7 @@ class GeminiProvider:
         from openai import OpenAI
 
         cfg = settings()
-        if not cfg.gemini_api_key:
-            raise RuntimeError("GEMINI_API_KEY is required for Gemini provider")
+        api_key, base_url, model = self._connection()
         bounded_text = text[: cfg.openai_max_input_chars]
         instructions = (
             f"{build_instructions(prompt_instructions)}\n\n"
@@ -181,12 +184,12 @@ class GeminiProvider:
         try:
             with _llm_slots:
                 response = OpenAI(
-                    api_key=cfg.gemini_api_key,
-                    base_url=cfg.gemini_base_url,
+                    api_key=api_key,
+                    base_url=base_url,
                     timeout=cfg.openai_timeout_seconds,
                     max_retries=cfg.openai_max_retries,
                 ).chat.completions.create(
-                    model=cfg.gemini_model,
+                    model=model,
                     messages=[
                         {"role": "system", "content": instructions},
                         {"role": "user", "content": fence_document(bounded_text)},
@@ -208,6 +211,55 @@ class GeminiProvider:
         if isinstance(result, dict):
             result["usage"] = usage
         return result  # type: ignore[no-any-return]
+
+    def _connection(self) -> tuple[str, str, str]:
+        cfg = settings()
+        if not cfg.gemini_api_key:
+            raise RuntimeError("GEMINI_API_KEY is required for Gemini provider")
+        return cfg.gemini_api_key, cfg.gemini_base_url, cfg.gemini_model
+
+
+class VertexProvider(GeminiProvider):
+    """Gemini on Vertex AI (``LLM_PROVIDER=vertex``): the paid, contract-covered path for real documents.
+
+    Same OpenAI-compatible protocol as :class:`GeminiProvider`, on the project's regional Vertex
+    endpoint. Authentication is Google Application Default Credentials (a service account through
+    workload identity or ``GOOGLE_APPLICATION_CREDENTIALS``), never a key in configuration; the
+    short-lived access token is refreshed before it expires.
+    """
+
+    _credentials: Any = None
+    _lock = threading.Lock()
+
+    def _connection(self) -> tuple[str, str, str]:
+        cfg = settings()
+        if not cfg.vertex_project:
+            raise RuntimeError("VERTEX_PROJECT is required for the Vertex AI provider")
+        location = cfg.vertex_location
+        host = "aiplatform.googleapis.com" if location == "global" else f"{location}-aiplatform.googleapis.com"
+        base_url = f"https://{host}/v1/projects/{cfg.vertex_project}/locations/{location}/endpoints/openapi"
+        return self._access_token(), base_url, f"google/{cfg.effective_vertex_model}"
+
+    @classmethod
+    def _access_token(cls) -> str:
+        try:
+            import google.auth
+            from google.auth.transport.requests import Request
+        except ImportError:
+            raise ProcessingError("LLM_REQUEST_FAILED") from None
+        with cls._lock:
+            try:
+                if cls._credentials is None:
+                    cls._credentials, _ = google.auth.default(
+                        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                    )
+                if not cls._credentials.valid:
+                    cls._credentials.refresh(Request())
+            except Exception:
+                # Credential errors carry paths and account names: keep only the class.
+                logger.warning("vertex credentials unavailable", exc_info=False)
+                raise ProcessingError("LLM_UNAVAILABLE", retryable=True) from None
+            return str(cls._credentials.token)
 
 
 def _chat_usage(response: Any, prompt: str, completion: str) -> dict[str, Any]:
@@ -292,6 +344,8 @@ def llm() -> LLMProvider:
         return OpenAIProvider()
     if provider == "gemini":
         return GeminiProvider()
+    if provider == "vertex":
+        return VertexProvider()
     return MockLLMProvider()
 
 

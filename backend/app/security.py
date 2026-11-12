@@ -101,6 +101,7 @@ def current_user(
     user = db.get(User, user_id)
     if not user or not user.is_active or claims.get("sv") != user.session_version:
         raise HTTPException(401, "AUTH_REQUIRED")
+    rls.set_user(db, user.id)
     return user
 
 
@@ -147,6 +148,10 @@ def issue_api_key() -> tuple[str, str, str]:
 
 def lookup_api_key(token: str, db: Session) -> ApiKey | None:
     digest = hashlib.sha256(token.encode()).hexdigest()
+    # Under RLS the key row is invisible until its organization is the context.
+    org = rls.organization_of(db, "docmind_api_key_org", digest)
+    if org:
+        rls.set_context(db, org)
     key = db.scalar(select(ApiKey).where(ApiKey.key_hash == digest))
     if key and not key.revoked_at and (not key.expires_at or as_aware_utc(key.expires_at) > datetime.now(UTC)):
         key.last_used_at = datetime.now(UTC)

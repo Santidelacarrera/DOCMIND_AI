@@ -19,8 +19,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import rls
 from app.core import settings
-from app.db import SessionLocal
+from app.db import SessionLocal, SystemSessionLocal
 from app.ingestion.chunking import TenantError
 from app.ingestion.embeddings import build_embedder
 from app.ingestion.pipeline import IngestionPipeline, IngestionRefused
@@ -86,7 +87,7 @@ def process_deletions(*, limit: int = 100, now: datetime | None = None) -> dict[
     if not enabled():
         return result
     store = get_store()
-    with SessionLocal.begin() as db:
+    with SystemSessionLocal.begin() as db:  # every organization's outbox
         rows = db.scalars(
             select(VectorDeletion)
             .where(VectorDeletion.done_at.is_(None), VectorDeletion.next_attempt_at <= now)
@@ -128,6 +129,14 @@ def index_document(organization_id: str, document_id: str) -> str:
     """Ingest one document into the vector store. Returns ``indexed``, ``skipped`` or ``refused:<code>``."""
     if not enabled():
         return "skipped"
+    org_context = rls.CURRENT_ORG.set(organization_id)  # app.rls: every transaction below is this tenant's
+    try:
+        return _index_document(organization_id, document_id)
+    finally:
+        rls.CURRENT_ORG.reset(org_context)
+
+
+def _index_document(organization_id: str, document_id: str) -> str:
     org, doc_id = uuid.UUID(organization_id), uuid.UUID(document_id)
     with SessionLocal() as db:
         doc = db.get(Document, doc_id)
@@ -175,7 +184,7 @@ def backfill_project_ids(*, store: VectorStore | None = None) -> dict[str, int]:
     if not enabled():
         return result
     target = store or get_store()
-    with SessionLocal() as db:
+    with SystemSessionLocal() as db:
         rows = db.execute(
             select(Document.organization_id, Document.id, Document.project_id).where(
                 Document.deleted_at.is_(None), Document.indexed_at.is_not(None)
@@ -209,7 +218,7 @@ def reindex_all(*, organization_id: uuid.UUID | None = None) -> dict[str, int]:
     result = {"indexed": 0, "refused": 0, "skipped": 0, "failed": 0}
     if not enabled():
         return result
-    with SessionLocal() as db:
+    with SystemSessionLocal() as db:
         query = select(Document.organization_id, Document.id).where(Document.deleted_at.is_(None))
         if organization_id is not None:
             query = query.where(Document.organization_id == organization_id)

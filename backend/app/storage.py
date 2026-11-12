@@ -81,7 +81,17 @@ class S3StorageProvider:
         self.client.put_object(**params)
 
     def get(self, key: str) -> bytes:
-        return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+        from botocore.exceptions import ClientError
+
+        try:
+            return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()  # type: ignore[no-any-return]
+        except ClientError as exc:
+            # Same contract as LocalStorageProvider: a missing object is FileNotFoundError, which
+            # every caller maps to a permanent "not found". Anything else (auth, KMS, throttling)
+            # propagates as a transient storage error.
+            if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404", "NotFound"):
+                raise FileNotFoundError(key) from None
+            raise
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=key)

@@ -1,21 +1,30 @@
 # Diseño de Row-Level Security para DOCMIND_AI
 
-**Estado (2026-11-10): fases 1 y 2 implementadas** — `docs/rls/roles.sql`, migración `0009_rls_policies` (políticas sin `FORCE` en 20 tablas) y contexto por transacción (`backend/app/rls.py`). Verificado en PostgreSQL 17 como rol sin privilegios (`tests/test_rls_policies.py`, 47 pruebas: aislamiento por tabla, cero filas sin contexto, `UPDATE`/`INSERT` cruzados rechazados, contexto que no sobrevive al `COMMIT`). **La fase 3 (`FORCE` + `docmind_app`) no está activada**: faltan las lecturas previas al contexto con `SECURITY DEFINER` (sección 6) y `organizations`/`users`. Hasta entonces el aislamiento efectivo sigue siendo el de la aplicación.
+**Estado (2026-11-12): fases 1, 2 y 3 implementadas; activación en producción pendiente de staging.** Decisiones de la fase 3 en [ADR-004](decisions/ADR-004-rls-phase3.md). La suite completa pasa con la aplicación conectada como `docmind_app` (rol que no es propietario, ni `SUPERUSER`, ni `BYPASSRLS`) en PostgreSQL 17: job de CI `backend-postgres-rls` (`TEST_RLS_ENFORCED=1`). Activarla en un entorno es configuración (sección «Activación»), no código.
 
-### Inventario para la fase 3 (tomado del código el 2026-11-10)
+### Inventario de la fase 3 y cómo quedó resuelto
 
-Lo que deja de funcionar con `FORCE` y la aplicación conectada como `docmind_app`, y cómo resolverlo. La fase 3 se activa solo con **todo** esto hecho y probado en staging (la activación parcial está prohibida).
+| # | Lectura o tarea | Resuelto con |
+|---|---|---|
+| 1 | Clave API por hash (`security.lookup_api_key`) | `docmind_api_key_org(hash)` → contexto → lectura normal |
+| 2 | Organizaciones del usuario (`routers/auth.organizations`) | Contexto `app.user_id` (fijado al autenticar) y políticas `docmind_own_memberships` y `docmind_visible_organizations` |
+| 3 | Registro y creación de organización | Contexto de la organización nueva antes de insertar |
+| 4 | Aceptar invitación por token | `docmind_invitation_org(hash)` |
+| 5 | Reclamo del trabajo (`worker._claim`) | `docmind_job_org(id)`; todo el trabajo corre en el contexto de su organización, también entregas de webhooks e indexado vectorial |
+| 6 | Tareas de beat entre organizaciones | `SystemSessionLocal` → `DATABASE_SYSTEM_URL` (`docmind_system`) |
+| 7 | `organizations` y `users` | `organizations` con política; `users` sin ella (identidad global, sin columnas de tenant) |
+| 8 | Verificación | Suite completa como `docmind_app`; `/ready` devuelve 503 `RLS_ROLE_UNSAFE` si el rol es superusuario, tiene `BYPASSRLS` o es dueño de tablas |
+| — | Auditoría de eventos de cuenta (login, logout) sin organización | La app puede insertarlos (`organization_id` NULL y `actor_id` = usuario del contexto) pero no leerlos |
 
-| # | Lectura o tarea | Dónde | Por qué falla con `FORCE` | Solución prevista |
-|---|---|---|---|---|
-| 1 | Clave API por hash | `security.lookup_api_key` | `api_keys` filtrada y aún no hay organización | `SECURITY DEFINER docmind_api_key_org(hash)` → organización; luego `set_context` y lectura normal |
-| 2 | Organizaciones del usuario | `routers/auth.organizations` | `organization_members` de varias organizaciones a la vez | Contexto `app.user_id` y política adicional `user_id = app.user_id` en `organization_members` y `organizations` |
-| 3 | Registro (crea organización y miembro) | `routers/auth.register`, `create_organization` | Insertar el miembro exige contexto de la organización recién creada | `set_context(nueva_org)` antes del `INSERT` |
-| 4 | Aceptar invitación por token | `routers/members.accept_invitation` | `invitations` de otra organización | `SECURITY DEFINER docmind_invitation_org(token_hash)` |
-| 5 | Reclamo del trabajo | `worker._claim` | `processing_jobs` sin contexto | `SECURITY DEFINER docmind_job_org(job_id)`; el resto del trabajo ya fija contexto (`rls.CURRENT_ORG`) |
-| 6 | Tareas de beat que recorren todas las organizaciones | `recover_stuck_jobs`, `purge_expired_data`, `process_vector_deletions`, `reconcile_storage`, `deliver_contextrag_events`, `reconcile_contextrag` | Leen filas de todas las organizaciones | Motor aparte con `docmind_system` (`BYPASSRLS`, credenciales propias), usado solo por estas tareas |
-| 7 | `organizations` y `users` | — | Hoy sin política | Políticas: organización visible si es la del contexto o el usuario es miembro; `users` sin política (identidad global) pero sin columnas de tenant |
-| 8 | Verificación | — | — | La suite completa ejecutada como `docmind_app` con `FORCE` en PostgreSQL 17, y prueba de arranque que exija `rolsuper = false` y `rolbypassrls = false` |
+`FORCE` no se activa: para un rol que no es el propietario las políticas ya se aplican, y con `FORCE` las funciones `SECURITY DEFINER` quedarían filtradas (ADR-004).
+
+### Activación (staging primero)
+
+1. Como administrador: `docs/rls/roles.sql` con contraseñas del gestor de secretos.
+2. Como propietario: `alembic upgrade head` (incluye `0010_rls_phase3`). Las migraciones siempre se ejecutan como propietario.
+3. API y worker: `DATABASE_URL` con `docmind_app`, `DATABASE_SYSTEM_URL` con `docmind_system`, `RLS_ENFORCED=true`. El scheduler (beat) y el worker necesitan ambas.
+4. Verificar: `/ready` en 200, `python backend/scripts/staging_smoke.py --base-url … --ask`, y un día de tráfico real sin errores `row-level security` en los logs.
+5. Rollback: volver a la cadena de conexión anterior y `RLS_ENFORCED=false`. No hay datos que migrar.
 
 **Estado original (2026-10-27): diseño y prototipo verificado.**
 Implementarlo cambia cómo se abren las sesiones, qué rol usa la aplicación y qué consultas pueden ejecutarse sin contexto, así que requiere tu decisión antes de tocar nada (ver sección 9).

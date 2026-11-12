@@ -9,11 +9,48 @@ from pathlib import Path
 from typing import ClassVar
 
 _TMP = Path(tempfile.mkdtemp(prefix="docmind-tests-"))
+
+# TEST_RLS_ENFORCED=1 (with a PostgreSQL TEST_DATABASE_URL whose user may create roles) runs the
+# suite as RLS phase 3 runs in production: the application connects as docmind_app (not the table
+# owner, no SUPERUSER, no BYPASSRLS), so every policy applies to it, and maintenance tasks as
+# docmind_system. TEST_DATABASE_URL stays the owner, used only for the schema.
+RLS_ENFORCED = os.environ.get("TEST_RLS_ENFORCED") == "1"
+_ROLE_PASSWORD = "docmind-rls-test"  # throwaway roles of a throwaway test database
+
+
+def _rls_role_urls(owner_url: str) -> tuple[str, str]:
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import make_url
+
+    owner = create_engine(owner_url)
+    with owner.begin() as conn:
+        for role, extra in (("docmind_app", "NOBYPASSRLS"), ("docmind_system", "BYPASSRLS")):
+            exists = conn.scalar(text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": role})
+            verb = "ALTER" if exists else "CREATE"
+            conn.execute(text(f"{verb} ROLE {role} LOGIN NOSUPERUSER {extra} PASSWORD '{_ROLE_PASSWORD}'"))
+        conn.execute(text("GRANT USAGE ON SCHEMA public TO docmind_app, docmind_system"))
+    owner.dispose()
+    base = make_url(owner_url)
+    return (
+        base.set(username="docmind_app", password=_ROLE_PASSWORD).render_as_string(hide_password=False),
+        base.set(username="docmind_system", password=_ROLE_PASSWORD).render_as_string(hide_password=False),
+    )
+
+
+_OWNER_URL = os.environ.get("TEST_DATABASE_URL")
+if RLS_ENFORCED:
+    if not _OWNER_URL or not _OWNER_URL.startswith("postgresql"):
+        raise RuntimeError("TEST_RLS_ENFORCED=1 needs a PostgreSQL TEST_DATABASE_URL")
+    _APP_URL, _SYSTEM_URL = _rls_role_urls(_OWNER_URL)
+    os.environ.update({"DATABASE_SYSTEM_URL": _SYSTEM_URL, "RLS_ENFORCED": "true"})
+
 os.environ.update(
     {
         "ENVIRONMENT": "development",
         # TEST_DATABASE_URL runs the suite on Postgres (real row locks); default is hermetic SQLite.
-        "DATABASE_URL": os.environ.get("TEST_DATABASE_URL", f"sqlite:///{(_TMP / 'test.db').as_posix()}"),
+        "DATABASE_URL": _APP_URL if RLS_ENFORCED else os.environ.get(
+            "TEST_DATABASE_URL", f"sqlite:///{(_TMP / 'test.db').as_posix()}"
+        ),
         "LOCAL_STORAGE_PATH": str(_TMP / "uploads"),
         "STORAGE_PROVIDER": "local",
         "JWT_SECRET": "test-secret-test-secret-test-secret-123",
@@ -31,8 +68,48 @@ import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
-from app import main, rate_limit
-from app.db import Base, engine
+from app import main, rate_limit, rls
+from app.db import Base, SystemSessionLocal, engine, system_engine
+
+if RLS_ENFORCED:
+    from sqlalchemy import create_engine as _create_engine
+    from sqlalchemy import text as _text
+
+    schema_engine = _create_engine(_OWNER_URL)  # type: ignore[arg-type]
+else:
+    schema_engine = engine
+
+
+def _rebuild_schema() -> None:
+    engine.dispose()
+    system_engine.dispose()
+    if RLS_ENFORCED:
+        # Policies reference other tables (organizations -> organization_members), which
+        # drop_all cannot order around: start from an empty schema instead.
+        with schema_engine.begin() as conn:
+            conn.execute(_text("DROP SCHEMA public CASCADE"))
+            conn.execute(_text("CREATE SCHEMA public"))
+            conn.execute(_text("GRANT USAGE ON SCHEMA public TO PUBLIC"))  # PostgreSQL's default
+            conn.execute(_text("GRANT USAGE ON SCHEMA public TO docmind_app, docmind_system"))
+    else:
+        if schema_engine.dialect.name == "postgresql":
+            # A database last used with TEST_RLS_ENFORCED keeps the cross-table policy on
+            # organizations, which would block drop_all.
+            with schema_engine.begin() as conn:
+                conn.exec_driver_sql(
+                    "DO $$ BEGIN IF to_regclass('public.organizations') IS NOT NULL THEN "
+                    f"DROP POLICY IF EXISTS {rls.ORG_POLICY} ON organizations; END IF; END $$"
+                )
+        Base.metadata.drop_all(schema_engine)
+    Base.metadata.create_all(schema_engine)
+    if RLS_ENFORCED:
+        with schema_engine.begin() as conn:
+            for statement in (*rls.policy_statements(), *rls.phase3_statements()):
+                conn.execute(_text(statement))
+            conn.execute(_text(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO docmind_app, docmind_system"
+            ))
+            conn.execute(_text("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO docmind_app, docmind_system"))
 
 
 class FakeRedis:
@@ -99,12 +176,19 @@ def _hermetic_dns(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
+def _environment(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> Iterator[None]:
+    rls.clear_context()
+    _rebuild_schema()
     # Recreated tables invalidate server-side prepared statements held by pooled Postgres
     # connections ("cached plan must not change result type"); start each test with fresh ones.
     engine.dispose()
+    system_engine.dispose()
+    # Tests arrange and inspect rows of several organizations directly: under RLS_ENFORCED they do
+    # it as docmind_system, while the application code under test keeps its docmind_app sessions.
+    # Its own patcher, so a test calling monkeypatch.undo() does not switch it back.
+    as_system = pytest.MonkeyPatch()
+    if RLS_ENFORCED and hasattr(request.module, "SessionLocal"):
+        as_system.setattr(request.module, "SessionLocal", SystemSessionLocal)
     # The database is rebuilt per test; stored objects must be too, or tests see each other's files.
     from app.storage import storage as _storage
 
@@ -131,6 +215,7 @@ def _environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
     ConsoleEmailProvider.sent = []
     yield
+    as_system.undo()
 
 
 @pytest.fixture

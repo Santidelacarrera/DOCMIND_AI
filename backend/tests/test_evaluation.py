@@ -124,7 +124,7 @@ def report():  # type: ignore[no-untyped-def]
     from fastapi.testclient import TestClient
 
     from app import main
-    from app.db import Base, engine
+    from tests.conftest import _rebuild_schema
 
     mp = pytest.MonkeyPatch()
     mp.setattr(worker, "llm", worker.llm)  # restored on teardown, whatever the runner does
@@ -150,8 +150,7 @@ def report():  # type: ignore[no-untyped-def]
     mp.setenv("PYTHONHASHSEED", "0")
     # The corpus is larger than the FREE plan's monthly page quota; the CLI lifts it the same way.
     mp.setattr(__import__("app.core", fromlist=["x"]).settings(), "free_pages_per_month", 100_000)
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
+    _rebuild_schema()  # as the schema owner, also under TEST_RLS_ENFORCED
     del os, tempfile
     try:
         with TestClient(main.app) as client:

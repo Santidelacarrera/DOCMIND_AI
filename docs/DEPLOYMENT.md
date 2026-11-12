@@ -76,7 +76,20 @@ Ver `.env.example` para la lista completa y los valores de desarrollo.
 
   Resultado: conteos iguales en `users` 5, `organizations` 5, `documents` 3, `document_versions` 3, `extraction_fields` 12, `audit_logs` 15; los 3 objetos presentes con SHA-256 idéntico; `reconcile --dry-run` → `objects: 3, orphans: 0, rows_without_object: 0`. Control negativo: con el volumen vacío el mismo verificador informó 3 objetos ausentes.
 * **Qdrant:** los vectores son datos derivados y no se respaldan. Tras restaurar (o para cambiar de modelo de embeddings sobre una colección nueva) se reconstruyen con `python scripts/reindex_vectors.py [--organization-id <uuid>]`: lee los archivos guardados, no llama al LLM y no toca extracciones ni revisiones. **Medido** (2026-11-10, 12 CPU, un proceso, Qdrant en memoria, documentos de 5 páginas): 5,3 documentos/s con el modelo multilingüe, 55/s con `hashing`; unas **31 minutos para 10 000 documentos** por proceso, sin contar la red hasta Qdrant ni la lectura desde S3. No uses `POST /documents/{id}/process` para esto: repite la extracción con el LLM. `scripts/backfill_vector_projects.py` no reindexa: solo marca el proyecto en vectores existentes. **No verificado:** snapshot y restauración de Qdrant.
-* **S3 y KMS:** siguen sin verificar (sin cuenta).
+* **Copias programadas de la base incluida, verificado en local el 2026-11-12:** `docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile backup up -d` arranca el servicio `backup` (`deploy/backup/pg_backup.sh`): `pg_dump -Fc` diario, comprobado con `pg_restore --list` antes de guardarlo, 14 días de retención (`BACKUP_INTERVAL_SECONDS`, `BACKUP_RETENTION_DAYS`). Una copia que no se puede leer se borra y el servicio sale con error, visible en `docker compose ps`. Prueba: copia de una base con 1 000 filas, restaurada en una base nueva con 1 000/1 000. El volumen `backups` debe estar en disco cifrado y copiarse fuera del servidor; con una base gestionada, usar sus copias (PITR) en vez de este servicio.
+* **S3 y KMS:** el proveedor está probado contra un S3 en proceso (`moto`, `tests/test_s3_storage.py`): ida y vuelta, `SSE-KMS` con la clave configurada en cada escritura, objeto ausente como «no encontrado» (antes subía como error 500 en descargas e indexado), listado paginado y prefijo de organización. **Sin verificar con una cuenta real:** permisos IAM, política del bucket, versionado y la clave KMS del cliente.
+
+### LLM para documentos reales (Vertex AI)
+
+`LLM_PROVIDER=vertex` usa Gemini en Vertex AI (de pago, sin uso para entrenamiento, bajo los términos de tratamiento de datos de Google Cloud). Pasos con la cuenta:
+
+1. Proyecto de Google Cloud con facturación y la API de Vertex AI activada; región según residencia de datos (`southamerica-east1` es São Paulo).
+2. Cuenta de servicio con el rol `roles/aiplatform.user` y nada más; credenciales por identidad de carga de trabajo o `GOOGLE_APPLICATION_CREDENTIALS` montado como secreto. Nunca una clave en `.env`.
+3. `VERTEX_PROJECT`, `VERTEX_LOCATION`, `VERTEX_MODEL` (vacío = `GEMINI_MODEL`) y los precios vigentes en `GEMINI_INPUT_PRICE_PER_1M` / `GEMINI_OUTPUT_PRICE_PER_1M`.
+4. Tope de gasto en la consola de Google Cloud y la alerta `DocMindLlmSpendHigh`.
+5. Medir con documentos reales anonimizados antes de abrir a clientes (`docs/EVALUATION.md`).
+
+Probado sin red (`tests/test_vertex_provider.py`): endpoint regional y global, token de credenciales cargado una vez y renovado al expirar, errores de credenciales como `LLM_UNAVAILABLE` reintentable sin filtrar rutas ni cuentas, coste estimado. **Sin verificar contra Vertex real** (sin cuenta).
 
 ### Observabilidad
 

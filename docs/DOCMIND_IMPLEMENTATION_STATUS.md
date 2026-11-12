@@ -29,14 +29,18 @@
 | Separar evidencia de inferencia | VALIDADA (por diseño) | `answer()` es extractivo: solo cita frases literales; `faithfulness` 1,0 | No hay inferencia que etiquetar | — |
 | Organizaciones, roles, miembros, invitaciones | IMPLEMENTADA | `test_members.py`, `test_collaboration.py` | — | — |
 | Autorización por proyecto (expediente) | IMPLEMENTADA | `test_project_authorization.py`, `test_document_authorization.py` | — | — |
-| Aislamiento entre organizaciones (API, SQL, Qdrant, archivos, exportaciones, webhooks) | VALIDADA | Suite completa + smoke (403/404 para B) + `cross_tenant_leaks` 0 | Sin RLS como segunda barrera | P1 |
+| Aislamiento entre organizaciones (API, SQL, Qdrant, archivos, exportaciones, webhooks) | VALIDADA | Suite completa + smoke (403/404 para B) + `cross_tenant_leaks` 0; con RLS como segunda barrera probada en CI | RLS por activar en producción | P1 |
 | API keys con scopes | IMPLEMENTADA | `test_tenant_isolation.py::test_api_key_scopes_gate_each_capability_independently` | — | — |
 | SSRF en webhooks | IMPLEMENTADA | `test_webhook_ssrf.py` | — | — |
 | Exportación JSON/CSV/XLSX | VALIDADA (JSON) | Smoke: 200 | CSV/XLSX solo en suite | — |
 | Revisión humana | IMPLEMENTADA | `test_review_workflow.py`, `test_mandatory_review.py` | — | — |
 | Observabilidad (logs JSON, X-Request-Id, Prometheus, OTel) | IMPLEMENTADA | `test_observability_surface.py`, `test_metrics_labels.py` | Perfil `observability` no levantado hoy | P1 |
 | Copia y restauración (base + archivos) | VALIDADA (local) | `docs/DEPLOYMENT.md` §Backups | S3/KMS no verificados | P1 |
-| RLS PostgreSQL | PENDIENTE | `docs/RLS_DESIGN.md` | Decidida, sin migración | P1 |
+| RLS PostgreSQL | VALIDADA (CI), no activada en producción | Fases 1–3 (`0009`, `0010`, ADR-004); suite completa como `docmind_app` (job `backend-postgres-rls`); `tests/test_rls_phase3.py`, `tests/test_rls_policies.py` | Activación tras staging | P1 |
+| Copias programadas de PostgreSQL | VALIDADA (local) | Servicio `backup` (`--profile backup`): dump diario verificado, 14 días; restauración 1 000/1 000 filas | Base gestionada: usar sus copias | — |
+| Alertas Prometheus | IMPLEMENTADA | `deploy/prometheus/alerts.yml`, 11 reglas; `promtool check` y `test rules` en CI | Sin Alertmanager conectado | P2 |
+| Almacenamiento S3 + KMS | IMPLEMENTADA | `tests/test_s3_storage.py` contra S3 en proceso (moto); objeto ausente corregido (antes 500) | Sin cuenta real | P1 |
+| LLM Vertex AI | IMPLEMENTADA | `tests/test_vertex_provider.py` (sin red) | Sin proyecto de Google Cloud | Bloqueada (cuenta) |
 | Frontend: lint + typecheck | VALIDADA | `npm run lint`, `npm run typecheck` | — | — |
 | Frontend e2e (Playwright) | VALIDADA | 8/8 contra el stack Compose, incluida `ask-citations.spec.ts` (cita con documento, página, fragmento y extracto; abstención; enlace al documento) | — | — |
 | Despliegue en staging/producción | BLOQUEADA | — | Sin entorno ni secretos | — |

@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app import request_context
+from app import request_context, rls
 from app.core import settings
 from app.db import get_db
 from app.limits import MaxBodySizeMiddleware
@@ -114,6 +114,12 @@ def health() -> dict[str, str]:
 @app.get("/ready")
 def ready(db: Session = Depends(get_db)) -> dict[str, str]:
     db.execute(select(1))
+    if settings().rls_enforced:
+        problems = rls.role_problems(db)
+        if problems:
+            # A connection that bypasses the policies must never take traffic as if it did not.
+            logger.error("RLS_ENFORCED but the database role bypasses row-level security: %s", "; ".join(problems))
+            raise HTTPException(503, "RLS_ROLE_UNSAFE")
     return {"status": "ready"}
 
 
