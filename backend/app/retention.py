@@ -26,6 +26,8 @@ from app.db import SystemSessionLocal
 from app.metrics import RETENTION_PURGED_TOTAL
 from app.models import (
     AuditLog,
+    Conversation,
+    ConversationMessage,
     Document,
     DocumentPage,
     DocumentVersion,
@@ -134,6 +136,17 @@ def purge_expired(now: datetime | None = None) -> dict[str, int]:
             )
         summary["purged"] = len(due)
 
+    # Conversations idle longer than CONVERSATION_RETENTION_DAYS: turns and conversation, hard-deleted.
+    summary["conversations"] = 0
+    conversation_cutoff = now - timedelta(days=cfg.conversation_retention_days)
+    with SystemSessionLocal.begin() as db:
+        stale = db.scalars(select(Conversation).where(Conversation.updated_at < conversation_cutoff)).all()
+        for conv in stale:
+            db.execute(delete(ConversationMessage).where(ConversationMessage.conversation_id == conv.id))
+            db.delete(conv)
+        summary["conversations"] = len(stale)
+
     RETENTION_PURGED_TOTAL.labels("documents").inc(summary["purged"])
+    RETENTION_PURGED_TOTAL.labels("conversations").inc(summary["conversations"])
     RETENTION_PURGED_TOTAL.labels("expired").inc(summary["expired"])
     return summary

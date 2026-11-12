@@ -104,7 +104,7 @@ def _rebuild_schema() -> None:
     Base.metadata.create_all(schema_engine)
     if RLS_ENFORCED:
         with schema_engine.begin() as conn:
-            for statement in (*rls.policy_statements(), *rls.phase3_statements()):
+            for statement in (*rls.all_policy_statements(), *rls.phase3_statements()):
                 conn.execute(_text(statement))
             conn.execute(_text(
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO docmind_app, docmind_system"

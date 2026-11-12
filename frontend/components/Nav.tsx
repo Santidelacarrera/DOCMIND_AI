@@ -18,6 +18,9 @@ export default function Nav({ current }: { current?: string }) {
       <Link href="/ask" aria-current={current === "ask" ? "page" : undefined}>
         Ask
       </Link>
+      <Link href="/conversations" aria-current={current === "conversations" ? "page" : undefined}>
+        Conversations
+      </Link>
       <Link href="/schemas" aria-current={current === "schemas" ? "page" : undefined}>
         Schemas
       </Link>

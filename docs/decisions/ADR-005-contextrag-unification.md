@@ -1,6 +1,13 @@
 # ADR-005 — Unificar ContextRAG dentro de DOCMIND como módulo `app/rag`
 
-**Estado:** aceptado el 2026-11-12. Primera entrega implementada: recuperación híbrida, detección de conflictos entre fuentes y patrones de inyección. El resto del plan está en `docs/UNIFICATION_PROGRESS.md`.
+**Estado:** aceptado e implementado el 2026-11-12, en cuatro entregas:
+
+1. Recuperación híbrida, conflictos e inyección.
+2. Respuestas generativas verificadas por frase y abstención por términos nombrados.
+3. Conversaciones cifradas en PostgreSQL con RLS.
+4. Versiones de documento, reindexado limpio y evaluación ampliada.
+
+Lo descartado y sus motivos (reranker, DeBERTa, Ragas) están en `docs/UNIFICATION_PROGRESS.md`.
 
 ## Contexto
 
@@ -35,3 +42,9 @@ La auditoría (`docs/UNIFICATION_PROGRESS.md`, matriz) muestra que lo valioso de
 * `/ask` añade el campo `conflicts`: un cambio aditivo y compatible. La interfaz muestra «Sources that may disagree».
 * En modo `hybrid`, cada proceso mantiene en memoria el texto enmascarado de los fragmentos de las organizaciones consultadas, como máximo `RETRIEVAL_LEXICAL_MAX_CHUNKS` por organización. Un corpus de otro proceso puede tener hasta `RETRIEVAL_LEXICAL_CACHE_SECONDS` de antigüedad. Un documento borrado no se cita nunca: lo impiden `is_live` y la ausencia de su vector. Un documento nuevo tarda como máximo el TTL en aparecer por vía léxica.
 * El detector de conflictos es heurístico y sus umbrales no están calibrados para DOCMIND. Avisa, nunca decide.
+
+## Entregas 2–4
+
+* **Generación verificada** (`app/rag/generation.py`, `verification.py`, `entities.py`): el modelo solo aporta la redacción. Cada frase debe citar un pasaje y estar implicada por él (`LexicalEntailment`, que falla cerrado); las demás se eliminan. Es opcional (`ASK_MODE=generative`), porque cada pregunta pasa a costar una llamada al LLM.
+* **Conversaciones**: el `memory/store.py` de ContextRAG (SQLite) no se porta tal cual. Se rediseña sobre PostgreSQL con RLS y con las mismas garantías: turnos inmutables y numerados, cifrado por tenant ligado a la posición y borrado completo. La memoria nunca es una fuente citable.
+* **Versiones**: reindexar borra primero los vectores del documento. El id de cada fragmento incluye el hash de su contenido, así que sin ese borrado una versión nueva convivía con fragmentos de la anterior.

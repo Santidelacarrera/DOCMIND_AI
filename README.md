@@ -56,6 +56,9 @@ DocMind AI turns PDF and Word (`.docx`) documents (invoices, contracts, policies
 - **Measured quality** — a reference corpus and `python -m app.evaluation` report precision/recall per field, OCR error, calibration and what the review gate catches ([docs/EVALUATION.md](docs/EVALUATION.md)).
 - **Recoverable jobs** — durable job state, atomic claims, bounded retries, stuck-job and lost-message recovery, no duplicate results ([docs/RELIABILITY.md](docs/RELIABILITY.md)).
 - **Answers with citations** — `POST /api/v1/ask` returns an extractive answer plus `{document, page}` for every claim, or an explicit "not found"; it never answers without a source ([docs/INGESTION.md](docs/INGESTION.md), demo in [docs/DEMO.md](docs/DEMO.md)).
+- **Hybrid retrieval and verified answers** — vector search, optionally fused with BM25 keyword search (`RETRIEVAL_MODE=hybrid`); answers quoted verbatim, or worded by an LLM with every sentence verified against the passage it cites (`ASK_MODE=generative`); refusal when the question names something no document contains; warnings when sources disagree on dates or figures ([ADR-005](docs/decisions/ADR-005-contextrag-unification.md), [docs/UNIFICATION_PROGRESS.md](docs/UNIFICATION_PROGRESS.md)).
+- **Private conversations** — per-user conversations with the documents, encrypted per organization (AES-GCM), scoped to one case or to every case the user can read, erasable and purged by retention.
+- **Document versions** — upload a new version of a document; it is reprocessed and reindexed and the previous version's text disappears from answers.
 - **Vector-ready ingestion** — PDF sanitisation, checksum-validated PII masking, tenant-bound chunks and a tenant-filtered Qdrant store ([docs/INGESTION.md](docs/INGESTION.md)).
 - **Retention** — deletion removes files and text immediately and purges derived data on a schedule ([docs/DATA_RETENTION.md](docs/DATA_RETENTION.md)).
 - **Team collaboration** — email invitations to add people to a workspace, and webhooks that notify your own systems when a document finishes processing.
@@ -160,6 +163,30 @@ flowchart LR
 ├── docker-compose.prod.yml     # hardened overlay
 └── .github/                    # CI, CodeQL, Dependabot, PR template
 ```
+
+## Question answering (retrieval, verification, conversations)
+
+```mermaid
+flowchart LR
+    Q[Question] --> M[PII masking]
+    M --> D[Vector search<br/>tenant + case filter in Qdrant]
+    M --> B[BM25 over the tenant's chunks<br/>RETRIEVAL_MODE=hybrid]
+    D --> F[Reciprocal rank fusion]
+    B --> F
+    F --> L[Scope + liveness checks<br/>deleted documents never cited]
+    L --> G{named terms present?}
+    G -->|no| X[Abstain]
+    G -->|yes| E{ASK_MODE}
+    E -->|extractive| S[Quote best sentences<br/>sufficient-evidence rule]
+    E -->|generative| P[Fenced passages + memory -> LLM]
+    P --> V[Verify each sentence<br/>against its cited passage]
+    V -->|none verified| X
+    S --> C[Conflicts between sources]
+    V --> C
+    C --> R[Answer + citations<br/>document, page, fragment]
+```
+
+All of it runs in the API process on the canonical chunks (one Qdrant collection, one chunker): `backend/app/ingestion/answering.py` and `backend/app/rag/` (capabilities ported from ContextRAG_Engine, ADR-005). Conversations (`/api/v1/conversations`) store each turn encrypted and pass earlier turns to the generator only as non-citable context.
 
 ## Processing pipeline
 

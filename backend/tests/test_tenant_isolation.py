@@ -35,6 +35,8 @@ BODIES: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/webhooks"): {"url": "https://example.com/hook", "events": ["document.completed"]},
     ("PATCH", "/api/v1/extraction-fields/{field_id}"): "hacked",
     ("POST", "/api/v1/ask"): {"question": "vacaciones del personal"},
+    ("POST", "/api/v1/conversations"): {"project_id": None},
+    ("POST", "/api/v1/conversations/{conversation_id}/ask"): {"question": "outsider attempt to read"},
 }
 EXTRA_QUERY = {
     ("POST", "/api/v1/members"): "&email=x@example.com&role=MEMBER",
@@ -84,6 +86,8 @@ class World:
             # Membership is checked before the event is looked up, so an id that does not exist is
             # enough to prove that an outsider gets 403 and never learns whether it exists.
             "event_id": str(uuid.uuid4()),
+            # Same for conversations: membership, then ownership, are checked before anything else.
+            "conversation_id": str(uuid.uuid4()),
         }
         self.secrets = [
             self.document, "victim-secret-contract", self.schema, "victim-schema", self.webhook,
@@ -98,6 +102,10 @@ class World:
         extra = EXTRA_QUERY.get((method, template), "").replace("{project_id}", self.project)
         url = f"{path}?organization_id={org}{extra}"
         if (method, template) == ("POST", "/api/v1/documents"):
+            return self.client.post(
+                url, files={"file": ("x.pdf", make_pdf(), "application/pdf")}, headers=headers
+            )
+        if (method, template) == ("POST", "/api/v1/documents/{document_id}/versions"):
             return self.client.post(
                 url, files={"file": ("x.pdf", make_pdf(), "application/pdf")}, headers=headers
             )

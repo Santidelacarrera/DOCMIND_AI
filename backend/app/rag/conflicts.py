@@ -15,6 +15,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from app.rag.text import ends_with_break, sentence_breaks, split_at
+
 MONTHS = {m: i for i, names in enumerate(
     ["enero january jan", "febrero february feb", "marzo march mar", "abril april apr", "mayo may", "junio june jun",
      "julio july jul", "agosto august aug", "septiembre setiembre september sep", "octubre october oct",
@@ -27,7 +29,6 @@ _DATES = [
     (re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b"), "iso"),
 ]
 _NUMBER = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d+))?(?:\s*(millones|millón|mil)\b)?", re.IGNORECASE)
-_SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
 _WORD = re.compile(r"[^\W_][\w\-]*", re.UNICODE)
 _STOP = frozenset(
     ["a", "an", "the", "of", "to", "in", "on", "for", "and", "or", "is", "are", "was", "were", "be", "been", "it", "its", "this", "that", "these", "those", "with", "as", "by", "at", "from", "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al", "y", "o", "en", "es", "son", "fue", "ser", "se", "su", "sus", "que", "con", "por", "para", "como", "lo"]
@@ -125,7 +126,7 @@ def named_phrases(text: str) -> list[str]:
 
     for index, m in enumerate(_WORD.finditer(text)):
         word = m.group()
-        initial = index == 0 or bool(re.search(r"[.!?:;\n]\s*$", text[previous_end:m.start()]))
+        initial = index == 0 or ends_with_break(text[previous_end:m.start()], ".!?:;")
         previous_end = m.end()
         lower = word.lower()
         identifier = any(c.isdigit() for c in word) and any(c.isalpha() for c in word)
@@ -162,6 +163,15 @@ def _score(a: str, b: str) -> tuple[str, float] | None:
     return ("value_mismatch", jaccard) if jaccard >= (MIN_JACCARD if subject_a else MIN_JACCARD_UNNAMED) else None
 
 
+_HEADING = re.compile(r"^(?:[A-ZÁÉÍÓÚÑÜ0-9][A-ZÁÉÍÓÚÑÜ0-9\-—.,:]*\s+){2,}(?=[A-ZÁÉÍÓÚÑÜ][a-záéíóúñü])")
+
+
+def strip_heading(sentence: str) -> str:
+    """Drop an all-caps heading that text extraction ran into the sentence ("ACTA DE MARZO La audiencia
+    ..."): otherwise the heading's words read as the sentence's subject and hide a real disagreement."""
+    return _HEADING.sub("", sentence, count=1)
+
+
 def detect(question: str, hits: Sequence[dict[str, Any]], *, per_source: int = 3, max_pairs: int = 200) -> list[Conflict]:
     """Possible conflicts among the sentences of ``hits`` that share words with ``question``.
 
@@ -172,7 +182,7 @@ def detect(question: str, hits: Sequence[dict[str, Any]], *, per_source: int = 3
     refs: list[SourceRef] = []
     for hit in hits:
         scored = []
-        for sentence in (s.strip() for s in _SENTENCE.split(str(hit.get("text", "")))):
+        for sentence in (strip_heading(s.strip()) for s in split_at(str(hit.get("text", "")), sentence_breaks(str(hit.get("text", "")), word_after=False))):
             overlap = len(wanted & set(_tokens(sentence)))
             if overlap and len(sentence) > 15:
                 scored.append((overlap, sentence))

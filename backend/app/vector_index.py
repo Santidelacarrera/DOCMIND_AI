@@ -149,7 +149,11 @@ def _index_document(organization_id: str, document_id: str) -> str:
         _mark(doc_id, indexed=False, error="STORAGE_OBJECT_MISSING")
         return "refused:STORAGE_OBJECT_MISSING"
     try:
-        get_pipeline().ingest(
+        pipeline = get_pipeline()
+        # Remove the previous version's vectors first: chunk ids include the chunk's content hash, so a
+        # changed document would otherwise keep stale chunks next to the new ones.
+        pipeline.store.delete_document(str(org), str(doc_id))
+        pipeline.ingest(
             tenant_id=str(org), document_id=str(doc_id), content=content, source_name=filename, project_id=project,
         )
     except (IngestionRefused, TenantError, EmbeddingModelMismatch) as exc:  # permanent: no retry

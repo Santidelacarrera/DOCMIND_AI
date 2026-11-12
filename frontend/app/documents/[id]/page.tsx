@@ -2,7 +2,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Nav from "../../../components/Nav";
-import { API_URL, api } from "../../../lib/api";
+import { API_URL, api, csrfHeaders } from "../../../lib/api";
 type Trust = "human_reviewed" | "automatic_evidenced" | "automatic_unverified";
 type Evidence = {
   status: "exact" | "normalized" | "not_found" | "not_applicable" | "unavailable";
@@ -173,6 +173,25 @@ export default function DocumentDetail() {
     } else setMessage("Could not restart processing.");
   }
 
+  async function uploadVersion(file: File | undefined) {
+    if (!org || !file) return;
+    const data = new FormData();
+    data.append("file", file);
+    const res = await fetch(`${API_URL}/api/v1/documents/${params.id}/versions?organization_id=${org}`, {
+      method: "POST",
+      body: data,
+      credentials: "include",
+      headers: csrfHeaders(),
+    });
+    if (res.status === 409) setMessage("The document is still processing, or this file is already another document.");
+    else if (!res.ok) setMessage("The new version could not be uploaded.");
+    else if ((await res.json()).status === "unchanged") setMessage("That file is the current version already.");
+    else {
+      setMessage("New version queued: it replaces the content, extractions and search index of this document.");
+      setReloadKey((n) => n + 1);
+    }
+  }
+
   function download(format: string) {
     if (org)
       window.open(
@@ -222,6 +241,14 @@ export default function DocumentDetail() {
           </div>
           {message && <p role="status">{message}</p>}
           {failed && <button onClick={retry}>Retry processing</button>}
+          <label>
+            Upload a new version (PDF or Word)
+            <input
+              type="file"
+              accept=".pdf,.docx"
+              onChange={(e) => void uploadVersion(e.target.files?.[0])}
+            />
+          </label>
           {review.status === "approved" && <p role="status">Reviewed and approved.</p>}
           {requiresReview && review.status !== "approved" && (
             <div role="alert" className="field">

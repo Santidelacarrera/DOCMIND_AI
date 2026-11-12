@@ -73,7 +73,7 @@ def test_delete_removes_file_and_text_immediately_but_keeps_the_rest_for_the_gra
 def test_purge_waits_for_the_retention_window_then_removes_everything_derived(client, register) -> None:
     acct, upload = _processed(register)
     _delete(client, acct, upload["document_id"])
-    assert purge_expired() == {"expired": 0, "purged": 0, "storage_failures": 0}  # still inside the window
+    assert purge_expired() == {"expired": 0, "purged": 0, "storage_failures": 0, "conversations": 0}  # still inside the window
 
     later = utcnow() + timedelta(days=settings().retention_deleted_days, seconds=5)
     assert purge_expired(later)["purged"] == 1
@@ -134,4 +134,4 @@ def test_a_storage_failure_is_reported_and_never_blocks_the_purge(client, regist
 
 def test_the_retention_task_is_scheduled_and_callable(client, register) -> None:
     assert "purge-expired-data" in worker.celery_app.conf.beat_schedule
-    assert worker.purge_expired_data.run() == {"expired": 0, "purged": 0, "storage_failures": 0}  # type: ignore[attr-defined]
+    assert worker.purge_expired_data.run() == {"expired": 0, "purged": 0, "storage_failures": 0, "conversations": 0}  # type: ignore[attr-defined]
