@@ -112,17 +112,28 @@ that exporter in the `traces` pipeline.
 docker compose --profile observability up --build
 ```
 
-## Alert starting points
+## Alerting rules
 
-A reasonable first pass for staging/production alerting, once the above is
-wired into your monitoring stack:
+[`deploy/prometheus/alerts.yml`](../deploy/prometheus/alerts.yml) holds 11 Prometheus rules,
+checked with `promtool check rules` and unit-tested with `promtool test rules alerts_test.yml`
+in CI (`docker` job). Load it with `rule_files: [alerts.yml]` and route the alerts with
+Alertmanager (email, Slack, pager: that part is the operator's).
 
-- `rate(docmind_documents_processed_total{status="failed"}[15m])` trending up
-- `docmind_http_requests_total{status=~"5.."}` error-rate spikes
-- `docmind_webhook_deliveries_total{success="false"}` trending up (a tenant's
-  endpoint, or DNS/SSRF validation, is rejecting deliveries)
-- p95 of `docmind_document_processing_duration_seconds` approaching
-  `PROCESSING_TIMEOUT_SECONDS`
+| Group | Alerts |
+|---|---|
+| API | API down (2 min), 5xx over 5 % for 10 min, p95 latency over 2 s |
+| Processing | over 20 % of documents failed in 30 min, jobs failed after exhausting recoveries, many stuck jobs re-enqueued, review load over 60 % |
+| Integrations | vector deletions failing (critical: deleted content stays searchable), vector indexing failing, webhook failures |
+| Cost | estimated LLM spend over 20 per day (`docmind_llm_estimated_cost_total`, from the `*_PRICE_PER_1M` settings); keep a hard cap in the provider console as well |
+
+Thresholds are starting points for a pilot; tune them on real traffic. Scrape config example:
+
+```yaml
+scrape_configs:
+  - job_name: docmind-api      # the name the rules expect in up{job="docmind-api"}
+    static_configs: [{targets: ["api:8000"]}]
+rule_files: [alerts.yml]
+```
 
 ---
 Relacionado: [[empresa]]

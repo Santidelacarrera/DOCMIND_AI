@@ -1,12 +1,13 @@
 # Lista de salida a producción
 
-Estado a 2026-11-12 (revisado tras RLS fases 1–2, recuperación de vectores y división de la API). Lo marcado **[hecho]** está en el repositorio y verificado en CI; lo marcado **[tuyo]** requiere una cuenta, un secreto o una decisión que no puede tomar un asistente.
+Estado a 2026-11-12 (revisado tras RLS fase 3, Vertex AI, copias programadas y alertas). Lo marcado **[hecho]** está en el repositorio y verificado en CI; lo marcado **[tuyo]** requiere una cuenta, un secreto o una decisión que no puede tomar un asistente.
 
 ## 1. Datos y LLM
 
 * **[hecho]** Proveedor Gemini (`LLM_PROVIDER=gemini`), validación de la respuesta y revisión humana obligatoria de `governing_law` y `counterparty` (`ALWAYS_REVIEW_FIELDS`).
 * **Decisión vigente:** API gratuita de Gemini, coste registrado 0. **Límite:** Google puede usar el contenido de la capa gratuita para mejorar sus productos. Úsala solo con documentos sintéticos o no confidenciales.
-* **[tuyo] Antes del primer cliente real:** pasar a la capa de pago o a Vertex AI (sin uso para entrenamiento, acuerdo de tratamiento de datos), poner los precios vigentes en `GEMINI_INPUT_PRICE_PER_1M` / `GEMINI_OUTPUT_PRICE_PER_1M` y documentar proveedor, región y retención (ver `docs/DATA_RETENTION.md`).
+* **[hecho]** Proveedor Vertex AI (`LLM_PROVIDER=vertex`) listo y probado sin red; pasos en `docs/DEPLOYMENT.md`, «LLM para documentos reales».
+* **[tuyo] Antes del primer cliente real:** crear el proyecto de Vertex AI (cuenta de servicio, región) o pasar a la capa de pago (sin uso para entrenamiento, acuerdo de tratamiento de datos), poner los precios vigentes en `GEMINI_INPUT_PRICE_PER_1M` / `GEMINI_OUTPUT_PRICE_PER_1M` y documentar proveedor, región y retención (ver `docs/DATA_RETENTION.md`).
 * **[tuyo]** Medir con 30–50 documentos reales anonimizados (`docs/EVALUATION.md`): el 96 % de F1 es sobre el corpus sintético.
 
 ## 2. Secretos y configuración (staging y producción)
@@ -16,7 +17,9 @@ Estado a 2026-11-12 (revisado tras RLS fases 1–2, recuperación de vectores y 
 | `ENVIRONMENT` | `staging` o `production`: activa las validaciones de arranque |
 | `JWT_SECRET` | valor aleatorio largo (`python -c "import secrets;print(secrets.token_urlsafe(64))"`), distinto en cada entorno |
 | `GEMINI_API_KEY` | clave del entorno, desde el gestor de secretos, nunca en el repositorio |
-| `DATABASE_URL` | PostgreSQL gestionado, usuario **sin** superusuario ni `BYPASSRLS` |
+| `DATABASE_URL` | PostgreSQL gestionado, usuario `docmind_app` (**sin** superusuario, `BYPASSRLS` ni propiedad de tablas) |
+| `DATABASE_SYSTEM_URL`, `RLS_ENFORCED=true` | `docmind_system` para las tareas de mantenimiento; activa RLS fase 3 (`docs/RLS_DESIGN.md`, «Activación») |
+| `VERTEX_PROJECT`, `VERTEX_LOCATION` | con `LLM_PROVIDER=vertex`; credenciales por cuenta de servicio |
 | `REDIS_URL` | Redis gestionado con contraseña |
 | `STORAGE_PROVIDER` y `S3_*` / `AWS_*` | almacenamiento privado con versionado y cifrado; la misma inyección para API y worker |
 | `COOKIE_SECURE=true`, `CORS_ORIGINS` | solo el dominio real, con HTTPS |
@@ -33,8 +36,9 @@ Cómo validar sin mostrar valores: `docs/STAGING.md`, sección «Avoiding split 
 ## 4. Copias de seguridad y monitorización
 
 * **[hecho]** Procedimiento de copia y restauración de PostgreSQL probado en local (`docs/DEPLOYMENT.md`), y reconstrucción del índice vectorial sin LLM (`backend/scripts/reindex_vectors.py`, ≈ 31 min por 10 000 documentos y proceso).
-* **[tuyo]** Programar las copias automáticas en el proveedor (diarias, retención ≥ 14 días) y el versionado del almacenamiento de objetos.
-* **[hecho]** Métricas Prometheus y trazas OpenTelemetry (`docs/OBSERVABILITY.md`). **[tuyo]** Conectar alertas: tasa de 5xx, trabajos fallidos, cola creciente, gasto del LLM.
+* **[hecho]** Servicio de copias programadas para la base incluida (`--profile backup`: diarias, verificadas, 14 días), probado con restauración.
+* **[tuyo]** Con base gestionada, activar sus copias (PITR, ≥ 14 días); en ambos casos, copiar fuera del servidor y activar el versionado del bucket.
+* **[hecho]** Métricas Prometheus, trazas OpenTelemetry y 11 reglas de alerta probadas con `promtool` (`deploy/prometheus/alerts.yml`: 5xx, latencia, trabajos fallidos, vectores sin borrar, gasto del LLM). **[tuyo]** Conectarlas a Prometheus/Alertmanager y elegir a quién avisan.
 * **[tuyo]** Con la capa de pago de Gemini, fijar un tope de gasto en la consola de Google.
 
 ## 5. Prueba de humo
@@ -47,5 +51,5 @@ Registra dos organizaciones, sube una factura sintética, espera el procesamient
 
 ## 6. Pendiente de implementación
 
-* **Row-Level Security** (`docs/RLS_DESIGN.md`): fases 1–2 **[hecho]** (migración `0009`, 20 políticas, contexto por transacción, 47 pruebas como rol sin privilegios en PostgreSQL 17, en CI). Las políticas aún no se fuerzan (`FORCE`) porque la conexión de la app es propietaria de las tablas; la fase 3 (8 puntos inventariados) se activa solo tras probarla en staging. Hasta entonces el aislamiento efectivo es el de la aplicación más sus pruebas negativas.
+* **Row-Level Security** (`docs/RLS_DESIGN.md`, ADR-004): fases 1–3 **[hecho]**; la suite completa pasa con la app conectada como `docmind_app` (job `backend-postgres-rls`). **[tuyo]** Activarla en staging con los pasos de «Activación», un día de tráfico, y después en producción.
 * **Licencia:** propietaria (`LICENSE`); falta la revisión de un abogado y confirmar el titular definitivo antes de vender.

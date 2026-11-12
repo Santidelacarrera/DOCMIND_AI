@@ -51,3 +51,13 @@ Hecho: CI sin los pasos temporales (sin `pull-requests: write`), `main.py` divid
 Siguiente, por prioridad:
 1. RLS fase 3 según el inventario de `RLS_DESIGN.md` (8 puntos), probada como `docmind_app` con `FORCE`, y activada solo tras staging.
 2. Evaluación con documentos reales y LLM de pago (bloqueado: cuenta y datos del propietario).
+
+## Actualización 2026-11-12
+
+Hecho sin depender del propietario: RLS fase 3 implementada y probada con la suite completa como `docmind_app` (ADR-004, job `backend-postgres-rls`); proveedor Vertex AI listo; almacenamiento S3/KMS probado contra S3 en proceso (y corregido: un objeto ausente daba 500); servicio de copias programadas verificado con restauración; 11 reglas de alerta probadas con `promtool`, incluida la de gasto del LLM.
+
+Lo que queda, todo del propietario:
+1. Staging: desplegar, activar RLS (`RLS_DESIGN.md`, «Activación») y pasar `staging_smoke.py --ask`.
+2. Proyecto de Vertex AI y medición con 30–50 documentos reales anonimizados.
+3. Cuenta S3/KMS real (o base y bucket gestionados con sus copias) y conectar las alertas a Alertmanager.
+4. Revisión jurídica de la licencia.

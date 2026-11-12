@@ -13,10 +13,16 @@ import pytest
 from sqlalchemy import text
 
 from app import rls, worker
+from app.core import settings
 from app.db import SessionLocal, engine
 from app.evaluation.pdfgen import digital_pdf
 
-pytestmark = pytest.mark.skipif(engine.dialect.name != "postgresql", reason="Row-Level Security is PostgreSQL only")
+pytestmark = [
+    pytest.mark.skipif(engine.dialect.name != "postgresql", reason="Row-Level Security is PostgreSQL only"),
+    # Under TEST_RLS_ENFORCED the whole suite already runs as docmind_app, which cannot create the
+    # probe role; these checks run in the backend-postgres job, where the app connects as owner.
+    pytest.mark.skipif(settings().rls_enforced, reason="covered by the docmind_app run of the whole suite"),
+]
 
 PROBE = "docmind_rls_probe"
 PROTECTED = (*rls.TENANT_TABLES, *rls.CHILD_TABLES)

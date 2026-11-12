@@ -5,5 +5,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr p
 RUN useradd --create-home --shell /usr/sbin/nologin appuser
 COPY --chown=appuser:appuser . .
 # qdrant extra: the vector index behind POST /api/v1/ask (inert unless QDRANT_URL is set).
-RUN pip install --no-cache-dir ".[qdrant]"
+RUN pip install --no-cache-dir ".[qdrant,vertex]"
 USER appuser

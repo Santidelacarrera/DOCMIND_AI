@@ -1,0 +1,93 @@
+# Prometheus alerting rules for DocMind AI (metrics from GET /metrics, app/metrics.py).
+# Load with `rule_files: [alerts.yml]`; routing (email, Slack, pager) is Alertmanager's job.
+# Validated with `promtool check rules` and `promtool test rules alerts_test.yml` (docs/OBSERVABILITY.md).
+# Thresholds are starting points for a pilot: tune them on real traffic.
+groups:
+  - name: docmind-api
+    rules:
+      - alert: DocMindApiDown
+        expr: up{job="docmind-api"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "The DocMind API is not answering /metrics"
+          runbook: "docs/TROUBLESHOOTING.md: check `docker compose ps`, the api logs and /ready."
+      - alert: DocMindHigh5xxRate
+        expr: |
+          sum(rate(docmind_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(docmind_http_requests_total[5m])), 1e-9) > 0.05
+          and sum(rate(docmind_http_requests_total[5m])) > 0.1
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "More than 5% of API requests fail with 5xx"
+          runbook: "Look up the request_id of failing calls in the API logs."
+      - alert: DocMindSlowRequests
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(docmind_http_request_duration_seconds_bucket{route!="/api/v1/documents"}[10m]))) > 2
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "p95 API latency above 2 s (uploads excluded)"
+
+  - name: docmind-processing
+    rules:
+      - alert: DocMindProcessingFailures
+        expr: |
+          sum(increase(docmind_documents_processed_total{status="failed"}[30m]))
+            / clamp_min(sum(increase(docmind_documents_processed_total[30m])), 1) > 0.2
+          and sum(increase(docmind_documents_processed_total[30m])) >= 5
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 20% of documents failed processing in the last 30 minutes"
+          runbook: "failure_code on the jobs: LLM_UNAVAILABLE points at the provider, OCR_FAILED at Tesseract."
+      - alert: DocMindStuckJobsFailed
+        expr: increase(docmind_jobs_recovered_total{outcome="failed"}[1h]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Jobs were failed after exhausting recoveries (PROCESSING_TIMEOUT)"
+          runbook: "Workers dying or the broker losing messages: worker logs, Redis memory."
+      - alert: DocMindJobsRequeuedOften
+        expr: increase(docmind_jobs_recovered_total{outcome="requeued"}[1h]) > 10
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 10 stuck jobs re-enqueued in an hour"
+      - alert: DocMindReviewLoadHigh
+        expr: |
+          sum(increase(docmind_extraction_requires_review_total[6h]))
+            / clamp_min(sum(increase(docmind_documents_processed_total{status="completed"}[6h])), 1) > 0.6
+          and sum(increase(docmind_documents_processed_total{status="completed"}[6h])) >= 20
+        labels: {severity: info}
+        annotations:
+          summary: "Over 60% of extractions need human review (evaluation baseline: 31%)"
+
+  - name: docmind-integrations
+    rules:
+      - alert: DocMindVectorDeletionsFailing
+        expr: increase(docmind_vector_deletions_total{outcome="failed"}[1h]) > 0
+        for: 30m
+        labels: {severity: critical}
+        annotations:
+          summary: "Vectors of deleted documents are not being removed"
+          runbook: "Deleted content stays searchable until this clears: check Qdrant, then vector_deletions.last_error."
+      - alert: DocMindVectorIndexingFailing
+        expr: increase(docmind_vector_indexing_total{outcome="failed"}[1h]) > 5
+        labels: {severity: warning}
+        annotations:
+          summary: "Vector indexing keeps failing; /ask will miss new documents"
+          runbook: "backend/scripts/reindex_vectors.py once Qdrant is healthy."
+      - alert: DocMindWebhookFailures
+        expr: increase(docmind_webhook_deliveries_total{success="False"}[1h]) > 20
+        labels: {severity: info}
+        annotations:
+          summary: "Many webhook deliveries failed (a customer endpoint is down)"
+
+  - name: docmind-cost
+    rules:
+      - alert: DocMindLlmSpendHigh
+        # Daily budget in the price currency of *_PRICE_PER_1M. Keep a hard cap in the provider console too.
+        expr: sum(increase(docmind_llm_estimated_cost_total[24h])) > 20
+        labels: {severity: warning}
+        annotations:
+          summary: "Estimated LLM spend over 20 in the last 24 hours"

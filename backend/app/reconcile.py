@@ -30,7 +30,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.core import settings
-from app.db import SessionLocal
+from app.db import SystemSessionLocal
 from app.models import Document, DocumentVersion
 from app.storage import storage
 
@@ -62,7 +62,7 @@ def reconcile(
     cutoff = (now or datetime.now(UTC)) - timedelta(hours=cfg.storage_reconcile_grace_hours)
 
     objects = list(storage.list_objects())
-    with SessionLocal() as db:
+    with SystemSessionLocal() as db:
         known = set(db.scalars(select(Document.storage_key))) | set(
             db.scalars(select(DocumentVersion.storage_key))
         )

@@ -18,7 +18,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import api_support
+from app import api_support, rls
 from app.api_support import audit
 from app.core import settings
 from app.db import get_db
@@ -298,6 +298,9 @@ def accept_invitation(
     """The invitee must already be logged in (register or log in first) with the
     exact email address the invitation was sent to."""
     token_hash = hashlib.sha256(token.encode()).hexdigest()
+    org = rls.organization_of(db, "docmind_invitation_org", token_hash)
+    if org:
+        rls.set_context(db, org)
     invitation = db.scalar(select(Invitation).where(Invitation.token_hash == token_hash))
     if not invitation or invitation.status != InvitationStatus.pending:
         raise HTTPException(404, "INVITATION_NOT_FOUND")

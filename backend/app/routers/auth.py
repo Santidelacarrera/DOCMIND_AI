@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import uuid
 from secrets import token_urlsafe
 
 from fastapi import (
@@ -16,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import rls
 from app.api_support import Name, audit
 from app.core import settings
 from app.db import get_db
@@ -115,8 +117,10 @@ def register(
         raise HTTPException(422, "Organization name is required")
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "EMAIL_EXISTS")
-    user = User(email=email, password_hash=hash_password(payload.password))
-    org = Organization(name=org_name)
+    user = User(id=uuid.uuid4(), email=email, password_hash=hash_password(payload.password))
+    org = Organization(id=uuid.uuid4(), name=org_name)
+    rls.set_context(db, org.id)  # the new organization's rows are written in its own context
+    rls.set_user(db, user.id)
     db.add_all([user, org])
     try:
         db.flush()
@@ -152,6 +156,7 @@ def login(
             request.client.host if request.client else "unknown",
         )
         raise HTTPException(401, "INVALID_CREDENTIALS")
+    rls.set_user(db, user.id)  # the login audit row is the user's own (no organization)
     audit(db, "login", "user", str(user.id), user)
     db.commit()
     token = create_access_token(user)
@@ -186,9 +191,10 @@ def me(user: User = Depends(require_user)) -> dict[str, object]:
 def create_organization(
     name: str = Name, user: User = Depends(require_user), db: Session = Depends(get_db)
 ) -> dict[str, str]:
-    org = Organization(name=name.strip())
+    org = Organization(id=uuid.uuid4(), name=name.strip())
     if not org.name:
         raise HTTPException(422, "Organization name is required")
+    rls.set_context(db, org.id)
     db.add(org)
     db.flush()
     db.add(OrganizationMember(organization_id=org.id, user_id=user.id, role=Role.owner))

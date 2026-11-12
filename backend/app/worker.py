@@ -13,13 +13,14 @@ from sqlalchemy.orm import Session
 
 from app import contextrag_sync, rls
 from app.core import settings
-from app.db import SessionLocal
+from app.db import SessionLocal, SystemSessionLocal
 from app.ingestion.docx import DOCX_MIME
 from app.logging_config import configure_logging
 from app.metrics import (
     DOCUMENTS_PROCESSED_TOTAL,
     EXTRACTION_REQUIRES_REVIEW_TOTAL,
     JOBS_RECOVERED_TOTAL,
+    LLM_ESTIMATED_COST_TOTAL,
     PROCESSING_DURATION_SECONDS,
     WEBHOOK_DELIVERIES_TOTAL,
 )
@@ -477,11 +478,15 @@ def _commit_success(claim: _Claim, computed: _Computed, log: _StepLog) -> bool:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             estimated_cost=(
-                estimate_cost(prompt_tokens, completion_tokens) if provider in ("openai", "gemini") else 0.0
+                estimate_cost(prompt_tokens, completion_tokens)
+                if provider in ("openai", "gemini", "vertex")
+                else 0.0
             ),
         )
         db.add(run)
         db.flush()
+        if run.estimated_cost:
+            LLM_ESTIMATED_COST_TOTAL.labels(provider).inc(run.estimated_cost)
         if computed.issues:
             EXTRACTION_REQUIRES_REVIEW_TOTAL.inc()
             logger.info(
@@ -579,16 +584,28 @@ def process_document(self, job_id: str) -> None:
     is the last line of defence against duplicated results.
     """
     started_at = time.perf_counter()
-    claim = _claim(job_id)  # phase 3 of RLS needs this pre-context read via SECURITY DEFINER (rls.py)
-    if claim is None:
-        return
-    # Every later transaction of this job is scoped to its organization (app.rls); a worker process
-    # running jobs of several organizations in turn never carries one job's context into the next.
-    org_context = rls.CURRENT_ORG.set(str(claim.organization_id))
+    # Every transaction of this job, the claim included, is scoped to its organization (app.rls);
+    # a worker process running jobs of several organizations in turn never carries one job's
+    # context into the next. The organization is read through a SECURITY DEFINER lookup, since
+    # under RLS the job row is invisible until its organization is the context.
+    org_context = rls.CURRENT_ORG.set(_job_organization(job_id))
     try:
+        claim = _claim(job_id)
+        if claim is None:
+            return
+        rls.CURRENT_ORG.set(str(claim.organization_id))
         _run_claimed(self, job_id, claim, started_at)
     finally:
         rls.CURRENT_ORG.reset(org_context)
+
+
+def _job_organization(job_id: str) -> str | None:
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        return None
+    with SessionLocal() as db:
+        return rls.organization_of(db, "docmind_job_org", job_uuid)
 
 
 def _run_claimed(self: Any, job_id: str, claim: "_Claim", started_at: float) -> None:
@@ -641,7 +658,7 @@ def recover_stuck_jobs() -> int:
     requeue: list[str] = []
     failed: list[tuple[uuid.UUID, uuid.UUID]] = []
 
-    with SessionLocal.begin() as db:
+    with SystemSessionLocal.begin() as db:  # every organization's jobs (docmind_system under RLS)
         jobs = db.scalars(
             select(ProcessingJob)
             .where(
@@ -741,6 +758,14 @@ def dispatch_webhooks(self, organization_id: str, event: str, payload: dict[str,
     to it. Each delivery attempt is logged to WebhookDelivery for operator
     visibility; failures do not raise (a tenant's broken endpoint must never
     poison the queue or affect other tenants)."""
+    org_context = rls.CURRENT_ORG.set(organization_id)
+    try:
+        return _dispatch_webhooks(organization_id, event, payload, self.request.retries + 1)
+    finally:
+        rls.CURRENT_ORG.reset(org_context)
+
+
+def _dispatch_webhooks(organization_id: str, event: str, payload: dict[str, object], attempt: int) -> int:
     delivered = 0
     with SessionLocal.begin() as db:
         webhooks = db.scalars(
@@ -760,7 +785,7 @@ def dispatch_webhooks(self, organization_id: str, event: str, payload: dict[str,
                     status_code=status_code,
                     success=success,
                     error=error,
-                    attempt=self.request.retries + 1,
+                    attempt=attempt,
                 )
             )
             webhook.last_delivery_at = utcnow()

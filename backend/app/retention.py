@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app import contextrag_sync, vector_index
 from app.core import settings
-from app.db import SessionLocal
+from app.db import SystemSessionLocal
 from app.metrics import RETENTION_PURGED_TOTAL
 from app.models import (
     AuditLog,
@@ -92,7 +92,7 @@ def purge_expired(now: datetime | None = None) -> dict[str, int]:
 
     if cfg.retention_document_days > 0:
         cutoff = now - timedelta(days=cfg.retention_document_days)
-        with SessionLocal.begin() as db:
+        with SystemSessionLocal.begin() as db:
             expired = db.scalars(
                 select(Document).where(Document.deleted_at.is_(None), Document.created_at < cutoff)
             ).all()
@@ -116,7 +116,7 @@ def purge_expired(now: datetime | None = None) -> dict[str, int]:
             summary["expired"] = len(expired)
 
     cutoff = now - timedelta(days=cfg.retention_deleted_days)
-    with SessionLocal.begin() as db:
+    with SystemSessionLocal.begin() as db:
         due = db.scalars(
             select(Document).where(Document.deleted_at.is_not(None), Document.deleted_at <= cutoff)
         ).all()

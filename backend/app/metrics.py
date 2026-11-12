@@ -30,6 +30,11 @@ PROCESSING_DURATION_SECONDS = Histogram(
     "End-to-end processing time per document, from job pickup to terminal state",
     buckets=(1, 5, 15, 30, 60, 120, 300, 600, 1200),
 )
+LLM_ESTIMATED_COST_TOTAL = Counter(
+    "docmind_llm_estimated_cost_total",
+    "Estimated LLM spend in the configured price currency (*_PRICE_PER_1M), by provider",
+    ["provider"],
+)
 EXTRACTION_REQUIRES_REVIEW_TOTAL = Counter(
     "docmind_extraction_requires_review_total",
     "Extraction runs flagged for manual review by the validation layer",

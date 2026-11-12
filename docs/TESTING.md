@@ -7,6 +7,8 @@ Qué se prueba, cómo ejecutarlo y qué no se omite en CI. Resultados de referen
 | Estático | `ruff check .` · `mypy app` · `bandit -r app -ll` | Estilo, tipos estrictos, seguridad |
 | Backend | `pytest --cov=app` | API, autenticación, aislamiento multi-tenant ruta a ruta, subidas, worker, reintentos, exportaciones, RAG, RUT, OCR por palabra. SQLite y dobles en memoria |
 | Backend en PostgreSQL | `TEST_DATABASE_URL=postgresql+psycopg://… pytest` | Lo mismo con bloqueos de fila reales y las **políticas RLS** (`tests/test_rls_policies.py`, solo PostgreSQL) |
+| Backend con RLS forzado | `TEST_DATABASE_URL=… TEST_RLS_ENFORCED=1 pytest` (el usuario de la URL debe poder crear roles) | La suite completa con la app conectada como `docmind_app`: cada consulta pasa por las políticas (`tests/test_rls_phase3.py`) |
+| Alertas | `promtool check rules alerts.yml` · `promtool test rules alerts_test.yml` (en `deploy/prometheus/`) | Sintaxis y disparo de las reglas |
 | Cola real | `pytest tests/test_celery_redis.py` | Celery + Redis reales; requiere `redis-server` |
 | Calidad de extracción | `python -m app.evaluation --min-f1 0.89` | P/R/F1 por campo (incluye documentos chilenos), CER del OCR, atribución de errores (validación, normalización, OCR, extracción), captura de errores por la revisión |
 | Calidad RAG | `python -m app.evaluation.rag --min-recall-at-5 0.95 --min-citation-accuracy 0.85 --min-abstention-accuracy 1.0` | Recall@k, precision@k, MRR, exactitud y precisión de citas, fidelidad, abstención, fugas entre tenants |
@@ -25,7 +27,7 @@ Las pruebas que necesitan `tesseract`, `pdftoppm` o `redis-server` se omiten **e
 
 ## Compuertas de CI (`.github/workflows/ci.yml`)
 
-Backend (SQLite + cobertura ≥ 75 %), backend en PostgreSQL 17, compuerta de extracción, compuerta RAG, bandit, pip-audit, frontend (lint, tipos, build, npm audit), build de Docker, e2e Playwright contra el stack Compose, CodeQL.
+Backend (SQLite + cobertura ≥ 75 %), backend en PostgreSQL 17, backend en PostgreSQL 17 como `docmind_app` (RLS), compuerta de extracción, compuerta RAG, bandit, pip-audit, frontend (lint, tipos, build, npm audit), reglas de alerta (promtool), build de Docker, e2e Playwright contra el stack Compose, CodeQL.
 
 ## Últimos resultados
 

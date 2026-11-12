@@ -11,13 +11,17 @@ La referencia completa, con valores por defecto seguros para desarrollo, es [`.e
 | `COOKIE_SECURE`, `CORS_ORIGINS` | Cookies solo HTTPS, orígenes permitidos | `true`, solo `https://` |
 | `ANTIVIRUS_PROVIDER` | `disabled` / `clamav` | `clamav` (obligatorio en staging/producción) |
 | `DATABASE_URL`, `REDIS_URL` | Conexiones | Servicios gestionados, con TLS y contraseña; usuario de base de datos sin superusuario ni `BYPASSRLS` |
+| `RLS_ENFORCED` | RLS fase 3 (ADR-004): `DATABASE_URL` es `docmind_app` y `/ready` responde 503 `RLS_ROLE_UNSAFE` si ese rol es superusuario, tiene `BYPASSRLS` o es dueño de tablas | `true` tras el periodo de prueba en staging |
+| `DATABASE_SYSTEM_URL` | Conexión `docmind_system` solo para las tareas de mantenimiento entre organizaciones. Obligatoria con `RLS_ENFORCED=true`; vacía, se usa `DATABASE_URL` | Credenciales propias, distintas de las de la app |
 
 ## Documentos y procesamiento
 
 | Variable | Qué hace |
 |---|---|
 | `MAX_UPLOAD_BYTES`, `MAX_PDF_PAGES`, `MAX_OCR_PAGES` | Límites de subida y de OCR |
-| `LLM_PROVIDER` | `mock` (desarrollo), `openai`, `gemini` |
+| `LLM_PROVIDER` | `mock` (desarrollo), `openai`, `gemini` (capa gratuita: solo datos sintéticos), `vertex` (Gemini en Vertex AI, de pago, para documentos reales) |
+| `VERTEX_PROJECT`, `VERTEX_LOCATION`, `VERTEX_MODEL` | Proyecto de Google Cloud, región (`southamerica-east1` deja los datos en São Paulo; `global` usa el endpoint global) y modelo (vacío = `GEMINI_MODEL`). Credenciales: Application Default Credentials de una cuenta de servicio, nunca una clave en `.env` |
+| `GEMINI_INPUT_PRICE_PER_1M`, `GEMINI_OUTPUT_PRICE_PER_1M` | Precios vigentes, también para `vertex`: alimentan `estimated_cost` y la métrica `docmind_llm_estimated_cost_total` |
 | `CONFIDENCE_REVIEW_THRESHOLD` | Campos con confianza menor van a revisión |
 | `ALWAYS_REVIEW_FIELDS` | Campos que siempre revisa una persona |
 | `OCR_REVIEW_THRESHOLD` | Media de confianza OCR por página bajo la cual todo el documento va a revisión |
@@ -38,6 +42,8 @@ La referencia completa, con valores por defecto seguros para desarrollo, es [`.e
 ## Retención, almacenamiento y sincronización
 
 `RETENTION_*` ([DATA_RETENTION.md](DATA_RETENTION.md)), `STORAGE_PROVIDER` y `S3_*` ([DEPLOYMENT.md](DEPLOYMENT.md)), `CONTEXTRAG_*` (desactivado, [CONTEXTRAG_INTEGRATION.md](CONTEXTRAG_INTEGRATION.md)).
+
+Copias de la base incluida (`docker-compose.prod.yml --profile backup`): `BACKUP_INTERVAL_SECONDS` (86400) y `BACKUP_RETENTION_DAYS` (14).
 
 ## Nunca en el repositorio
 
