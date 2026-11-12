@@ -95,12 +95,20 @@ def build_pipeline(embedder: Embedder | None = None) -> IngestionPipeline:
     )
 
 
-def ingest(pipeline: IngestionPipeline, corpus: dict[str, Any]) -> None:
+def ingest(pipeline: IngestionPipeline, corpus: dict[str, Any], base_dir: Path | None = None) -> None:
+    """Ingest the corpus. A document either lists its ``pages`` (generated as PDF or DOCX) or names a real
+    file with ``path`` (relative to the corpus file, or absolute), for evaluating real documents."""
     from app.evaluation.pdfgen import digital_pdf
 
     tenants = tenant_ids(corpus)
     for doc in corpus["documents"]:
-        content = docx_bytes(doc["pages"], author="Autor Ficticio") if doc["file"].endswith(".docx") else digital_pdf(doc["pages"])
+        if "path" in doc:
+            file = Path(doc["path"])
+            content = (file if file.is_absolute() else (base_dir or CORPUS.parent) / file).read_bytes()
+        elif doc["file"].endswith(".docx"):
+            content = docx_bytes(doc["pages"], author="Autor Ficticio")
+        else:
+            content = digital_pdf(doc["pages"])
         pipeline.ingest(
             tenant_id=tenants[doc["tenant"]], document_id=document_id(doc["tenant"], doc["file"]),
             content=content, source_name=doc["file"],
@@ -113,14 +121,15 @@ def _evaluate_question(
     min_similarity: float | None = None,
     mode: str | None = None,
     answer_mode: str = "extractive",
+    reranker: Any = None,
 ) -> QuestionResult:
     tenant = tenants[q["tenant"]]
     relevant = [(d, int(p)) for d, p in q["relevant"]]
-    hits = retrieve(pipeline, tenant_id=tenant, question=q["question"], top_k=top_k, mode=mode)
+    hits = retrieve(pipeline, tenant_id=tenant, question=q["question"], top_k=top_k, mode=mode, reranker=reranker)
     retrieved = [(str(h.get("source_name")), int(h.get("page") or 0), str(h.get("tenant_id"))) for h in hits]
     first = next((i for i, (d, p, _) in enumerate(retrieved, start=1) if (d, p) in relevant), None)
     a = answer(pipeline, tenant_id=tenant, question=q["question"], top_k=top_k, min_coverage=min_coverage,
-               min_similarity=min_similarity, mode=mode, answer_mode=answer_mode,
+               min_similarity=min_similarity, mode=mode, answer_mode=answer_mode, reranker=reranker,
                generator=_offline_generator() if answer_mode == "generative" else None)
     citations = [(c.document, c.page) for c in a.citations]
     leaks = sum(t != tenant for _, _, t in retrieved) + sum(c.document_id not in own_docs for c in a.citations)
@@ -195,18 +204,19 @@ def score(results: list[QuestionResult], ks: tuple[int, ...] = KS) -> dict[str, 
 def run(
     embedder: Embedder | None = None, *, top_k: int = max(KS), corpus_path: Path = CORPUS, min_coverage: float = 0.5,
     min_similarity: float | None = None, mode: str | None = None, answer_mode: str = "extractive",
+    reranker: Any = None,
 ) -> dict[str, Any]:
     from app.core import settings
 
     mode = mode or settings().retrieval_mode
     corpus = load(corpus_path)
     pipeline = build_pipeline(embedder)
-    ingest(pipeline, corpus)
+    ingest(pipeline, corpus, corpus_path.parent)
     tenants = tenant_ids(corpus)
     docs_of = {
         key: {document_id(key, d["file"]) for d in corpus["documents"] if d["tenant"] == key} for key in tenants
     }
-    results = [_evaluate_question(pipeline, q, tenants, top_k, docs_of[q["tenant"]], min_coverage, min_similarity, mode, answer_mode) for q in corpus["questions"]]
+    results = [_evaluate_question(pipeline, q, tenants, top_k, docs_of[q["tenant"]], min_coverage, min_similarity, mode, answer_mode, reranker) for q in corpus["questions"]]
     for r in results:
         own = {d["file"] for d in corpus["documents"] if d["tenant"] == r.tenant}
         if r.category in ANSWERABLE and not r.fact_ok:
@@ -222,8 +232,9 @@ def run(
     report["min_coverage"] = min_coverage
     report["retrieval"] = mode
     report["answer_mode"] = answer_mode
+    report["reranker"] = getattr(reranker, "name", None)
     report["top_k"] = top_k
-    report["corpus"] = {"documents": len(corpus["documents"]), "version": corpus["version"]}
+    report["corpus"] = {"documents": len(corpus["documents"]), "version": corpus.get("version", 1)}
     report["results"] = [
         {"tenant": r.tenant, "category": r.category, "question": r.question,
          "expected": [f"{d}, p.{p}" for d, p in r.relevant], "first_relevant_rank": r.first_relevant_rank,
@@ -275,6 +286,17 @@ def _embedder(name: str, model: str | None = None) -> Embedder:
     return LocalEmbedder(model or cfg.embedding_model, local_files_only=cfg.embedding_local_files_only)
 
 
+def _reranker(model: str | None) -> Any:
+    if not model:
+        return None
+    from app.core import settings
+    from app.rag.rerank import CrossEncoderReranker
+
+    cfg = settings()
+    return CrossEncoderReranker(model, cache_dir=str(cfg.embedding_cache_dir) if cfg.embedding_cache_dir else None,
+                                local_files_only=cfg.embedding_local_files_only)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.evaluation.rag", description="RAG retrieval and citation evaluation")
     parser.add_argument("--embedder", choices=["hashing", "local"], default="hashing")
@@ -284,10 +306,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="semantic evidence threshold (default: calibrated for the model, ADR-003)")
     parser.add_argument("--retrieval", choices=["dense", "hybrid"], default=None,
                         help="retrieval mode (default: RETRIEVAL_MODE, ADR-005)")
-    parser.add_argument("--corpus", choices=["base", "extended"], default="base",
-                        help="base: rag_questions.json; extended: identifiers, tables, contradictions, injection (ADR-005)")
+    parser.add_argument("--corpus", default="base",
+                        help="base: rag_questions.json; extended: identifiers, tables, contradictions, injection "
+                             "(ADR-005); or the path of a corpus JSON (real documents: docs/REAL_DOCUMENT_EVALUATION.md)")
     parser.add_argument("--answer-mode", choices=["extractive", "generative"], default="extractive",
                         help="generative uses the offline extractive generator: it measures verification, not a model")
+    parser.add_argument("--rerank-model", default=None,
+                        help="fastembed cross-encoder to rerank with (e.g. BAAI/bge-reranker-v2-m3-int8); default: none")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--min-recall-at-5", type=float, default=None, help="fail (exit 1) below this recall@5")
     parser.add_argument("--min-citation-accuracy", type=float, default=None)
@@ -295,7 +320,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     report = run(_embedder(args.embedder, args.model), min_coverage=args.min_coverage,
                  min_similarity=args.min_similarity, mode=args.retrieval, answer_mode=args.answer_mode,
-                 corpus_path=EXTENDED if args.corpus == "extended" else CORPUS)
+                 corpus_path={"base": CORPUS, "extended": EXTENDED}.get(args.corpus) or Path(args.corpus),
+                 reranker=_reranker(args.rerank_model))
     text = to_markdown(report)
     print(text)
     if args.output_dir is not None:

@@ -40,6 +40,11 @@ RETRIEVAL_LEXICAL_TOTAL = Counter(
     "Lexical (BM25) corpus lookups for hybrid retrieval: cached, loaded, or skipped because the tenant is too large",
     ["outcome"],
 )
+RERANK_TOTAL = Counter(
+    "docmind_rerank_total",
+    "Cross-encoder reranking of retrieved candidates: reranked, failed (first-stage order kept) or unavailable",
+    ["outcome"],
+)
 RETRIEVAL_DURATION_SECONDS = Histogram(
     "docmind_retrieval_duration_seconds",
     "Time to retrieve the chunks a question is answered from, by retrieval mode (kind=dense|hybrid)",

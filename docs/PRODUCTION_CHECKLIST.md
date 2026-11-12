@@ -38,7 +38,7 @@ Cómo validar sin mostrar valores: `docs/STAGING.md`, sección «Avoiding split 
 * **[hecho]** Procedimiento de copia y restauración de PostgreSQL probado en local (`docs/DEPLOYMENT.md`), y reconstrucción del índice vectorial sin LLM (`backend/scripts/reindex_vectors.py`, ≈ 31 min por 10 000 documentos y proceso).
 * **[hecho]** Servicio de copias programadas para la base incluida (`--profile backup`: diarias, verificadas, 14 días), probado con restauración.
 * **[tuyo]** Con base gestionada, activar sus copias (PITR, ≥ 14 días); en ambos casos, copiar fuera del servidor y activar el versionado del bucket.
-* **[hecho]** Métricas Prometheus, trazas OpenTelemetry y 11 reglas de alerta probadas con `promtool` (`deploy/prometheus/alerts.yml`: 5xx, latencia, trabajos fallidos, vectores sin borrar, gasto del LLM). **[tuyo]** Conectarlas a Prometheus/Alertmanager y elegir a quién avisan.
+* **[hecho]** Métricas Prometheus, trazas OpenTelemetry y 12 reglas de alerta probadas con `promtool` (`deploy/prometheus/alerts.yml`: 5xx, latencia, trabajos fallidos, vectores sin borrar, gasto del LLM, reranking degradado). **[tuyo]** Conectarlas a Prometheus/Alertmanager y elegir a quién avisan.
 * **[tuyo]** Con la capa de pago de Gemini, fijar un tope de gasto en la consola de Google.
 
 ## 5. Prueba de humo

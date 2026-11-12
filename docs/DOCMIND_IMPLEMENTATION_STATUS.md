@@ -38,7 +38,7 @@
 | Copia y restauración (base + archivos) | VALIDADA (local) | `docs/DEPLOYMENT.md` §Backups | S3/KMS no verificados | P1 |
 | RLS PostgreSQL | VALIDADA (CI), no activada en producción | Fases 1–3 (`0009`, `0010`, ADR-004); suite completa como `docmind_app` (job `backend-postgres-rls`); `tests/test_rls_phase3.py`, `tests/test_rls_policies.py` | Activación tras staging | P1 |
 | Copias programadas de PostgreSQL | VALIDADA (local) | Servicio `backup` (`--profile backup`): dump diario verificado, 14 días; restauración 1 000/1 000 filas | Base gestionada: usar sus copias | — |
-| Alertas Prometheus | IMPLEMENTADA | `deploy/prometheus/alerts.yml`, 11 reglas; `promtool check` y `test rules` en CI | Sin Alertmanager conectado | P2 |
+| Alertas Prometheus | IMPLEMENTADA | `deploy/prometheus/alerts.yml`, 12 reglas (incluida la de reranking degradado); `promtool check` y `test rules` en CI | Sin Alertmanager conectado | P2 |
 | Almacenamiento S3 + KMS | IMPLEMENTADA | `tests/test_s3_storage.py` contra S3 en proceso (moto); objeto ausente corregido (antes 500) | Sin cuenta real | P1 |
 | LLM Vertex AI | IMPLEMENTADA | `tests/test_vertex_provider.py` (sin red) | Sin proyecto de Google Cloud | Bloqueada (cuenta) |
 | Frontend: lint + typecheck | VALIDADA | `npm run lint`, `npm run typecheck` | — | — |

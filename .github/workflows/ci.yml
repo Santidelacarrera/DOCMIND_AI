@@ -184,6 +184,8 @@ jobs:
           echo 'RATE_LIMIT_REGISTER=1000' >> .env
           echo 'RATE_LIMIT_LOGIN=1000' >> .env
           echo 'RATE_LIMIT_UPLOAD=1000' >> .env
+          # Conversations need a key; this one is random per run and never leaves the runner.
+          echo "CONVERSATION_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> .env
           docker compose up --build -d --wait
       - run: npm ci
         working-directory: frontend

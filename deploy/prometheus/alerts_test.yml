@@ -55,3 +55,21 @@ tests:
           - exp_labels: {severity: warning}
             exp_annotations:
               summary: "Estimated LLM spend over 20 in the last 24 hours"
+
+  - interval: 1m
+    input_series:
+      - series: 'docmind_rerank_total{outcome="failed"}'
+        values: '0+1x60'
+      - series: 'docmind_rerank_total{outcome="reranked"}'
+        values: '0+5x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: DocMindRerankDegraded
+        exp_alerts: []  # within its 15 minute "for"
+      - eval_time: 30m
+        alertname: DocMindRerankDegraded
+        exp_alerts:
+          - exp_labels: {severity: warning, outcome: failed}
+            exp_annotations:
+              summary: "Cross-encoder reranking is failing; answers use the first-stage order"
+              runbook: "Answers still work, ranked without the reranker. Check RERANK_MODEL files in EMBEDDING_CACHE_DIR, CPU load and RERANK_TIMEOUT_SECONDS."

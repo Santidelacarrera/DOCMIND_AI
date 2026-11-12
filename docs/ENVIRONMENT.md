@@ -42,6 +42,9 @@ La referencia completa, con valores por defecto seguros para desarrollo, es [`.e
 | `RETRIEVAL_RRF_K` | Constante k de la fusión RRF (60) |
 | `RETRIEVAL_LEXICAL_CACHE_SECONDS` | Antigüedad máxima del corpus léxico en memoria por organización (60 s) |
 | `RETRIEVAL_LEXICAL_MAX_CHUNKS` | Por encima de estos fragmentos una organización no carga corpus léxico y usa solo búsqueda vectorial (50 000) |
+| `RERANK_MODEL` | Vacío = sin reranking (por defecto). Modelo cross-encoder de fastembed, p. ej. `BAAI/bge-reranker-v2-m3-int8` (multilingüe, ONNX, 0,57 GB). Añade de 1 a 2 s por pregunta en CPU; medido en `docs/evaluation/rerank-2026-11-12.md` |
+| `RERANK_CANDIDATES` | Candidatos que reordena el reranker (20) |
+| `RERANK_TIMEOUT_SECONDS` | Tiempo máximo del reranker; si se supera, se conserva el orden de la primera etapa (5) |
 | `ASK_MODE` | `extractive` (por defecto: cita frases literales, sin modelo) o `generative` (el `LLM_PROVIDER` redacta y cada frase se verifica contra su fuente; una llamada al modelo por pregunta) |
 | `ASK_GENERATION_THRESHOLD` | Umbral de verificación de cada frase generada (0,95). Con el verificador léxico, solo 1,0 pasa |
 | `ASK_CONTEXT_CHARS` | Máximo de caracteres de fragmentos enviados al modelo (6000) |

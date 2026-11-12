@@ -24,6 +24,7 @@ from app.ingestion.pipeline import IngestionPipeline
 from app.metrics import RETRIEVAL_DURATION_SECONDS
 from app.rag import conflicts as conflict_detection
 from app.rag import lexical
+from app.rag import rerank as reranking
 from app.rag.fusion import reciprocal_rank_fusion
 
 ABSTENTION = "No encontré información sobre eso en los documentos disponibles."
@@ -214,6 +215,7 @@ def answer(
     context_chars: int = 6000,
     memory: str | None = None,
     require_named_terms: bool = True,
+    reranker: Any = "configured",
 ) -> Answer:
     """Answer ``question`` from this tenant's documents only.
 
@@ -246,7 +248,7 @@ def answer(
     question = question.strip()
     hits, vector = _retrieve(
         pipeline, tenant_id=tenant_id, question=question, top_k=top_k, min_score=min_score,
-        is_live=is_live, project_id=project_id, project_ids=project_ids, mode=mode,
+        is_live=is_live, project_id=project_id, project_ids=project_ids, mode=mode, reranker=reranker,
     )
     if answer_mode == "generative":
         return _generative(
@@ -361,6 +363,7 @@ def retrieve(
     project_id: str | None = None,
     project_ids: Sequence[str] | None = None,
     mode: str | None = None,
+    reranker: Any = "configured",
 ) -> list[dict[str, Any]]:
     """The chunks ``answer()`` reads, best first, after every scope and liveness check.
 
@@ -374,7 +377,7 @@ def retrieve(
     """
     return _retrieve(
         pipeline, tenant_id=tenant_id, question=question, top_k=top_k, min_score=min_score,
-        is_live=is_live, project_id=project_id, project_ids=project_ids, mode=mode,
+        is_live=is_live, project_id=project_id, project_ids=project_ids, mode=mode, reranker=reranker,
     )[0]
 
 
@@ -389,6 +392,7 @@ def _retrieve(
     project_id: str | None,
     project_ids: Sequence[str] | None,
     mode: str | None = None,
+    reranker: Any = "configured",
 ) -> tuple[list[dict[str, Any]], list[float] | None]:
     """Hits plus the (masked) question vector, so ``answer()`` does not embed the question twice."""
     from app.core import settings
@@ -408,7 +412,10 @@ def _retrieve(
         return [], None
     started = time.perf_counter()
     vector = pipeline.query_vector(tenant_id=tenant, question=question)
+    active = reranking.configured() if reranker == "configured" else reranker
     limit = top_k if mode == "dense" else max(top_k, cfg.retrieval_candidates)
+    if active is not None:
+        limit = max(limit, cfg.rerank_candidates)  # the cross-encoder needs candidates to reorder
     candidates = pipeline.store.search(tenant, vector, limit=limit, project_id=project, project_ids=scope)
     if mode == "hybrid":
         lexical_hits = lexical.search(
@@ -423,7 +430,12 @@ def _retrieve(
         and (project is None or h.get("project_id") == project)
         and (allowed is None or h.get("project_id") in allowed)
         and (is_live is None or is_live(str(h.get("document_id"))))
-    ][:top_k]
+    ]
+    # Reranking only reorders hits that already passed every check above; it cannot add one.
+    if active is not None:  # the question masked like the chunks it is compared with (no PII to the model)
+        hits = reranking.rerank(active, pipeline.mask_query(tenant_id=tenant, question=question), hits,
+                                candidates=cfg.rerank_candidates)
+    hits = hits[:top_k]
     RETRIEVAL_DURATION_SECONDS.labels(mode).observe(time.perf_counter() - started)
     return hits, vector
 
