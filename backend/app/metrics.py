@@ -35,6 +35,17 @@ LLM_ESTIMATED_COST_TOTAL = Counter(
     "Estimated LLM spend in the configured price currency (*_PRICE_PER_1M), by provider",
     ["provider"],
 )
+RETRIEVAL_LEXICAL_TOTAL = Counter(
+    "docmind_retrieval_lexical_total",
+    "Lexical (BM25) corpus lookups for hybrid retrieval: cached, loaded, or skipped because the tenant is too large",
+    ["outcome"],
+)
+RETRIEVAL_DURATION_SECONDS = Histogram(
+    "docmind_retrieval_duration_seconds",
+    "Time to retrieve the chunks a question is answered from, by retrieval mode (kind=dense|hybrid)",
+    ["kind"],
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5),
+)
 EXTRACTION_REQUIRES_REVIEW_TOTAL = Counter(
     "docmind_extraction_requires_review_total",
     "Extraction runs flagged for manual review by the validation layer",

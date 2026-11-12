@@ -300,5 +300,5 @@ def test_pagination_is_not_offered_and_citations_are_bounded_by_top_k(register: 
     """The endpoint returns one answer, not a list of pages: the bound is ``top_k`` (1..8)."""
     acct, project, _ = ingest(register, env, ALPHA_TEXT)
     body = ask(client, acct, project, top_k=1).json()
-    assert set(body) == {"answer", "abstained", "citations"}
+    assert set(body) == {"answer", "abstained", "citations", "conflicts"}
     assert len(body["citations"]) <= 1

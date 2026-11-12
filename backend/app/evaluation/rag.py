@@ -104,14 +104,15 @@ def _evaluate_question(
     pipeline: IngestionPipeline, q: dict[str, Any], tenants: dict[str, str], top_k: int, own_docs: set[str],
     min_coverage: float = 0.5,
     min_similarity: float | None = None,
+    mode: str | None = None,
 ) -> QuestionResult:
     tenant = tenants[q["tenant"]]
     relevant = [(d, int(p)) for d, p in q["relevant"]]
-    hits = retrieve(pipeline, tenant_id=tenant, question=q["question"], top_k=top_k)
+    hits = retrieve(pipeline, tenant_id=tenant, question=q["question"], top_k=top_k, mode=mode)
     retrieved = [(str(h.get("source_name")), int(h.get("page") or 0), str(h.get("tenant_id"))) for h in hits]
     first = next((i for i, (d, p, _) in enumerate(retrieved, start=1) if (d, p) in relevant), None)
     a = answer(pipeline, tenant_id=tenant, question=q["question"], top_k=top_k, min_coverage=min_coverage,
-               min_similarity=min_similarity)
+               min_similarity=min_similarity, mode=mode)
     citations = [(c.document, c.page) for c in a.citations]
     leaks = sum(t != tenant for _, _, t in retrieved) + sum(c.document_id not in own_docs for c in a.citations)
     # Faithfulness: every sentence of the answer is a verbatim quote of a chunk the answer cites.
@@ -166,8 +167,11 @@ def score(results: list[QuestionResult], ks: tuple[int, ...] = KS) -> dict[str, 
 
 def run(
     embedder: Embedder | None = None, *, top_k: int = max(KS), corpus_path: Path = CORPUS, min_coverage: float = 0.5,
-    min_similarity: float | None = None,
+    min_similarity: float | None = None, mode: str | None = None,
 ) -> dict[str, Any]:
+    from app.core import settings
+
+    mode = mode or settings().retrieval_mode
     corpus = load(corpus_path)
     pipeline = build_pipeline(embedder)
     ingest(pipeline, corpus)
@@ -175,7 +179,7 @@ def run(
     docs_of = {
         key: {document_id(key, d["file"]) for d in corpus["documents"] if d["tenant"] == key} for key in tenants
     }
-    results = [_evaluate_question(pipeline, q, tenants, top_k, docs_of[q["tenant"]], min_coverage, min_similarity) for q in corpus["questions"]]
+    results = [_evaluate_question(pipeline, q, tenants, top_k, docs_of[q["tenant"]], min_coverage, min_similarity, mode) for q in corpus["questions"]]
     for r in results:
         own = {d["file"] for d in corpus["documents"] if d["tenant"] == r.tenant}
         if r.category in ANSWERABLE and not r.fact_ok:
@@ -185,6 +189,7 @@ def run(
     report = score(results)
     report["embedder"] = pipeline.embedder.name
     report["min_coverage"] = min_coverage
+    report["retrieval"] = mode
     report["top_k"] = top_k
     report["corpus"] = {"documents": len(corpus["documents"]), "version": corpus["version"]}
     report["results"] = [
@@ -201,7 +206,7 @@ def to_markdown(report: dict[str, Any]) -> str:
     m = report["metrics"]
     lines = [
         "# RAG evaluation report", "",
-        (f"Embedder `{report['embedder']}` (lexical hashing unless stated otherwise), top_k={report['top_k']}, min_coverage={report['min_coverage']}, "
+        (f"Embedder `{report['embedder']}` (lexical hashing unless stated otherwise), retrieval={report.get('retrieval', 'dense')}, top_k={report['top_k']}, min_coverage={report['min_coverage']}, "
         f"{report['corpus']['documents']} fictitious documents in 2 tenants, {report['questions']} questions "
         f"({report['answerable']} answerable, {report['must_abstain']} that must abstain)."), "",
         "Reproduce: `cd backend && python -m app.evaluation.rag --output-dir eval_reports`.", "",
@@ -245,13 +250,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-coverage", type=float, default=0.5, help="sufficient-evidence threshold (ADR-002)")
     parser.add_argument("--min-similarity", type=float, default=None,
                         help="semantic evidence threshold (default: calibrated for the model, ADR-003)")
+    parser.add_argument("--retrieval", choices=["dense", "hybrid"], default=None,
+                        help="retrieval mode (default: RETRIEVAL_MODE, ADR-005)")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--min-recall-at-5", type=float, default=None, help="fail (exit 1) below this recall@5")
     parser.add_argument("--min-citation-accuracy", type=float, default=None)
     parser.add_argument("--min-abstention-accuracy", type=float, default=None)
     args = parser.parse_args(argv)
     report = run(_embedder(args.embedder, args.model), min_coverage=args.min_coverage,
-                 min_similarity=args.min_similarity)
+                 min_similarity=args.min_similarity, mode=args.retrieval)
     text = to_markdown(report)
     print(text)
     if args.output_dir is not None:

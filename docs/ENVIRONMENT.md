@@ -37,6 +37,11 @@ La referencia completa, con valores por defecto seguros para desarrollo, es [`.e
 | `EMBEDDING_MODEL` | Por defecto el multilingüe MiniLM. Cambiarlo sobre un índice existente se rechaza (`EMBEDDING_MODEL_MISMATCH`) |
 | `ASK_MIN_EVIDENCE_COVERAGE` | Cobertura léxica mínima de la pregunta para responder (0,5, ADR-002) |
 | `ASK_MIN_SEMANTIC_SIMILARITY` | Vacío = umbral calibrado para el modelo, o ninguno. Fijarlo solo tras medir con `python -m app.evaluation.rag` (ADR-003) |
+| `RETRIEVAL_MODE` | `dense` (por defecto, búsqueda vectorial) o `hybrid` (vectorial + BM25 fusionados con RRF, ADR-005). Medir antes de cambiarlo |
+| `RETRIEVAL_CANDIDATES` | Candidatos por ranking antes de fusionar en modo `hybrid` (20) |
+| `RETRIEVAL_RRF_K` | Constante k de la fusión RRF (60) |
+| `RETRIEVAL_LEXICAL_CACHE_SECONDS` | Antigüedad máxima del corpus léxico en memoria por organización (60 s) |
+| `RETRIEVAL_LEXICAL_MAX_CHUNKS` | Por encima de estos fragmentos una organización no carga corpus léxico y usa solo búsqueda vectorial (50 000) |
 | `PII_MASKING_KEY`, `PII_DETECTORS` | Enmascarado de PII antes de indexar (incluye RUT chileno con dígito verificador) |
 
 ## Retención, almacenamiento y sincronización

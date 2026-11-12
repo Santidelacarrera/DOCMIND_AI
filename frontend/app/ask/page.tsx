@@ -15,7 +15,9 @@ type Citation = {
   chunk_index: number | null;
   excerpt: string;
 };
-type Answer = { answer: string; abstained: boolean; citations: Citation[] };
+type ConflictSource = { document_id: string; document: string; page: number; text: string };
+type Conflict = { kind: string; sources: ConflictSource[] };
+type Answer = { answer: string; abstained: boolean; citations: Citation[]; conflicts?: Conflict[] };
 
 export default function Ask() {
   const router = useRouter();
@@ -103,6 +105,29 @@ export default function Ask() {
                 ))}
               </ul>
             </>
+          )}
+          {(result.conflicts ?? []).length > 0 && (
+            <div role="alert">
+              <h3>Sources that may disagree</h3>
+              <p>
+                These passages give different dates, figures or a negation for what looks like the same
+                statement. Check both before relying on the answer.
+              </p>
+              <ul>
+                {(result.conflicts ?? []).map((conflict, i) => (
+                  <li key={i}>
+                    {conflict.sources.map((s) => (
+                      <blockquote key={`${s.document_id}-${s.page}`}>
+                        <Link href={`/documents/${s.document_id}`}>
+                          {s.document}, p.{s.page}
+                        </Link>
+                        : {s.text}
+                      </blockquote>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </section>
       )}

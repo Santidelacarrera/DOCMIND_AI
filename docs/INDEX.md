@@ -12,6 +12,7 @@ Qué está vigente y qué es histórico. Revisado el 2026-11-12. Si dos document
 | [DOCMIND_ARCHITECTURE_AUDIT.md](DOCMIND_ARCHITECTURE_AUDIT.md) | Auditoría de arquitectura de referencia |
 | [PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md) | Lo que falta para salir a producción, separando lo hecho de lo que requiere al propietario |
 | [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) | Límites conocidos del producto |
+| [UNIFICATION_PROGRESS.md](UNIFICATION_PROGRESS.md) | Unificación de ContextRAG dentro de DOCMIND (ADR-005): auditoría, matriz, entregas y pendientes |
 | [decisions/](decisions/) y [DECISIONS_2026-11-10.md](DECISIONS_2026-11-10.md) | ADR y decisiones vigentes |
 
 ## Uso y operación
@@ -24,7 +25,7 @@ Qué está vigente y qué es histórico. Revisado el 2026-11-12. Si dos document
 
 ## Calidad
 
-[EVALUATION.md](EVALUATION.md) y los informes en [evaluation/](evaluation/) (`baseline-report.*`, `rag-report*.*`).
+[EVALUATION.md](EVALUATION.md) y los informes en [evaluation/](evaluation/) (`baseline-report.*`, `rag-report*.*`, `hybrid-retrieval-2026-11-12.md`).
 
 ## Demo, piloto y negocio
 
