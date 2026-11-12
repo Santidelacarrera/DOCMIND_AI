@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from app.rag.text import ends_with_break
+from app.rag.text import ends_with_break, sentence_breaks, split_at
 
 MONTHS = {m: i for i, names in enumerate(
     ["enero january jan", "febrero february feb", "marzo march mar", "abril april apr", "mayo may", "junio june jun",
@@ -29,7 +29,6 @@ _DATES = [
     (re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b"), "iso"),
 ]
 _NUMBER = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d+))?(?:\s*(millones|millón|mil)\b)?", re.IGNORECASE)
-_SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
 _WORD = re.compile(r"[^\W_][\w\-]*", re.UNICODE)
 _STOP = frozenset(
     ["a", "an", "the", "of", "to", "in", "on", "for", "and", "or", "is", "are", "was", "were", "be", "been", "it", "its", "this", "that", "these", "those", "with", "as", "by", "at", "from", "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al", "y", "o", "en", "es", "son", "fue", "ser", "se", "su", "sus", "que", "con", "por", "para", "como", "lo"]
@@ -183,7 +182,7 @@ def detect(question: str, hits: Sequence[dict[str, Any]], *, per_source: int = 3
     refs: list[SourceRef] = []
     for hit in hits:
         scored = []
-        for sentence in (strip_heading(s.strip()) for s in _SENTENCE.split(str(hit.get("text", "")))):
+        for sentence in (strip_heading(s.strip()) for s in split_at(str(hit.get("text", "")), sentence_breaks(str(hit.get("text", "")), word_after=False))):
             overlap = len(wanted & set(_tokens(sentence)))
             if overlap and len(sentence) > 15:
                 scored.append((overlap, sentence))

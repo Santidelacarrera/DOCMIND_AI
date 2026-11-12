@@ -180,3 +180,18 @@ def test_text_helpers_stay_linear_on_hostile_input() -> None:
     missing_terms("¿Qué dice" + "\n" * 50_000 + "Halxanx?", ["texto"])
     generation.ExtractiveGenerator().complete("s", hostile + "\n\nQuestion: a")
     assert time.perf_counter() - started < 2.0
+
+
+def test_sentence_and_claim_parsing_stay_linear_on_hostile_input() -> None:
+    """CodeQL py/polynomial-redos on the helpers ported from ContextRAG (text.py, verification.py)."""
+    import time
+
+    from app.rag.text import split_sentences
+
+    started = time.perf_counter()
+    for hostile in ("." + " " * 60_000 + "!", "a" + "." * 60_000, '"' * 60_000, "x." + " " * 60_000 + "x"):
+        split_sentences(hostile)
+        verification.parse_claims(hostile)
+    assert time.perf_counter() - started < 3.0
+    assert [s for s, _, _ in split_sentences("El Dr. Pérez firmó. Valdivia S.A. es de 898 empleados. Fin.")] == [
+        "El Dr. Pérez firmó.", "Valdivia S.A. es de 898 empleados.", "Fin."]

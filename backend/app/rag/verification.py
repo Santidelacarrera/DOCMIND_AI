@@ -23,6 +23,7 @@ from app.rag.text import (
     content_tokens,
     is_abbreviation,
     protect_corporate_suffixes,
+    sentence_breaks,
     split_sentences,
     stem,
 )
@@ -217,7 +218,6 @@ class LexicalEntailment:
 
 _MARK = re.compile(r"\[(\d+)\]")
 _MARK_THEN_END = re.compile(r"([.!?])\s*((?:\[\d+\]\s*)+)")
-_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
 def parse_claims(answer: str) -> list[tuple[str, list[int]]]:
@@ -225,21 +225,22 @@ def parse_claims(answer: str) -> list[tuple[str, list[int]]]:
     normalised = _MARK_THEN_END.sub(lambda m: m.group(2).strip() + m.group(1) + " ", answer)
     claims = []
     segments, pos = [], 0
-    for m in _SPLIT.finditer(normalised):
-        if "\n" not in m.group() and _ends_with_abbreviation(normalised[pos : m.start()]):
+    for m_start, m_end in sentence_breaks(normalised, word_after=False):
+        gap = normalised[m_start:m_end]
+        if "\n" not in gap and _ends_with_abbreviation(normalised[pos:m_start]):
             continue  # abbreviation such as "Dr." or "e.g.": not a sentence end
-        if ("\n" not in m.group() and _ends_with_corporate_suffix(normalised[pos : m.start()])
-                and _continues_in_lower_case(normalised, m.end())):
+        if ("\n" not in gap and _ends_with_corporate_suffix(normalised[pos:m_start])
+                and _continues_in_lower_case(normalised, m_end)):
             continue  # "Valdivia S.A. tiene ...": a company form, and the sentence goes on
-        segments.append(normalised[pos : m.start()])
-        pos = m.end()
+        segments.append(normalised[pos:m_start])
+        pos = m_end
     segments.append(normalised[pos:])
     for seg in segments:
         seg = seg.strip()
         if not seg:
             continue
         cites = [int(x) for x in _MARK.findall(seg)]
-        text = re.sub(r"\s+([.!?])", r"\1", re.sub(r"\s+", " ", _MARK.sub("", seg))).strip()
+        text = re.sub(r" ([.!?])", r"\1", " ".join(_MARK.sub("", seg).split())).strip()
         if re.search(r"\w", text):
             claims.append((text, cites))
     return claims
