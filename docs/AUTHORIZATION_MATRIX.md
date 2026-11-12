@@ -17,9 +17,11 @@ permite a **cualquier miembro**, incluido un viewer, leer los totales de uso. Ve
 | POST | `/api/v1/auth/logout` | **ninguna** |
 | GET | `/api/v1/auth/me` | **ninguna** |
 | POST | `/api/v1/auth/register` | **ninguna** |
-| GET | `/api/v1/contextrag/events` | membership(org_id, user, db, Role.admin) |
-| GET | `/api/v1/contextrag/events/list` | membership(org_id, user, db, Role.admin) |
-| POST | `/api/v1/contextrag/events/{event_id}/cancel` | membership(org_id, user, db, Role.admin) |
+| GET | `/api/v1/conversations` | membership(org_id, user, db) |
+| POST | `/api/v1/conversations` | membership(org_id, user, db); require_project(db, org_id, user, payload.project_id) |
+| DELETE | `/api/v1/conversations/{conversation_id}` | membership(org_id, user, db) |
+| GET | `/api/v1/conversations/{conversation_id}` | membership(org_id, user, db) |
+| POST | `/api/v1/conversations/{conversation_id}/ask` | membership(org_id, user, db, scope="documents:read"); require_project(db, org_id, user, conv.project_id) |
 | GET | `/api/v1/documents` | accessible_project_ids(db, org_id, user); membership(org_id, user, db, scope="documents:read") |
 | POST | `/api/v1/documents` | membership(org_id, user, db, Role.member, scope="documents:write"); require_project(db, org_id, user, project_id, write=True) |
 | DELETE | `/api/v1/documents/{document_id}` | membership(org_id, user, db, Role.member, scope="documents:write"); require_document(db, org_id, user, document_id, write=True) |
@@ -30,6 +32,7 @@ permite a **cualquier miembro**, incluido un viewer, leer los totales de uso. Ve
 | POST | `/api/v1/documents/{document_id}/process` | membership(org_id, user, db, Role.member, scope="documents:write"); require_document(db, org_id, user, document_id, write=True) |
 | POST | `/api/v1/documents/{document_id}/review/approve` | membership(org_id, user, db, Role.member, scope="documents:write"); require_document(db, org_id, user, document_id, write=True) |
 | GET | `/api/v1/documents/{document_id}/status` | membership(org_id, user, db, scope="documents:read"); require_document(db, org_id, user, document_id) |
+| POST | `/api/v1/documents/{document_id}/versions` | membership(org_id, user, db, Role.member, scope="documents:write"); require_document(db, org_id, user, document_id, write=True) |
 | PATCH | `/api/v1/extraction-fields/{field_id}` | membership(org_id, user, db, Role.member, scope="documents:write"); require_document(db, org_id, user, row[1].document_id, write=True, not_found="FIELD_NOT_FOUND") |
 | GET | `/api/v1/invitations` | membership(org_id, user, db, Role.admin) |
 | POST | `/api/v1/invitations` | membership(org_id, user, db, Role.admin) |
@@ -52,7 +55,7 @@ permite a **cualquier miembro**, incluido un viewer, leer los totales de uso. Ve
 | POST | `/api/v1/schemas` | membership(org_id, user, db, Role.member) |
 | GET | `/api/v1/schemas/{schema_id}/versions` | membership(org_id, user, db, scope="schemas:read") |
 | POST | `/api/v1/schemas/{schema_id}/versions` | membership(org_id, user, db, Role.member) |
-| GET | `/api/v1/usage` | membership(org_id, user, db, scope="usage:read") |
+| GET | `/api/v1/usage` | membership(org_id, user, db, Role.admin, scope="usage:read") |
 | GET | `/api/v1/webhooks` | membership(org_id, user, db, Role.admin) |
 | POST | `/api/v1/webhooks` | membership(org_id, user, db, Role.admin) |
 | DELETE | `/api/v1/webhooks/{webhook_id}` | membership(org_id, user, db, Role.admin) |

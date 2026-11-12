@@ -452,7 +452,9 @@ class VectorDeletion(Base):
 
 
 class ContextRagEvent(Base):
-    """Outbox of changes that must reach ContextRAG_Engine (see docs/CONTEXTRAG_INTEGRATION.md).
+    """**Retired** (phase 2 of docs/CONTEXTRAG_SYNC_RETIREMENT_PLAN.md): nothing reads or writes this table any
+    more. The model is kept only so the table and its rows survive until phase 3 (backup, then drop), which
+    needs the owner's explicit authorization. Former role: outbox of changes for ContextRAG_Engine.
 
     Written in the same transaction as the DOCMIND state change it describes (processing completed,
     deleted, expired, purged), so a crash cannot lose the obligation. ``dedupe_key`` makes enqueueing

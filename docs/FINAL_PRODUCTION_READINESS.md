@@ -18,7 +18,7 @@ Este documento es el punto de continuidad: otra sesión puede retomar desde «Pr
 | Cifrado en un entorno real | Staging y gestor de secretos | Validación de clave ausente, incorrecta y entre clientes (probada en local) | `CONVERSATION_ENCRYPTION_KEY` en el gestor de secretos de staging | Pendiente |
 | RLS en staging | Staging | Activación según `RLS_DESIGN.md` y pruebas con varios clientes | El entorno | Pendiente |
 | Alertmanager | Destinatarios | Configuración, alerta de prueba controlada y documentación | **Quién recibe las alertas** y por qué canal | Pendiente |
-| Retirada de ContextRAG Sync | Autorización | **Fase 1 hecha** (reversible); fase 2 en la siguiente PR | Autorización explícita de la fase 3 (borrar la tabla) cuando toque | En curso |
+| Retirada de ContextRAG Sync | Autorización | **Fases 1 y 2 hechas** (PR #78 y rama `claude/contextrag-sync-phase2`); la tabla se conserva | Autorización explícita de la fase 3 (copia y borrado de la tabla) | Fases 1–2 hechas; la 3 espera autorización |
 | Producción | Staging validado | Procedimiento, reversión y revisión de riesgos | Autorización del despliegue | Pendiente |
 
 **Hecho en esta misión (rama `claude/real-validation-prep`):**

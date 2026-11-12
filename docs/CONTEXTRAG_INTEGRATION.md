@@ -1,4 +1,6 @@
-# Integración con ContextRAG_Engine
+# Integración con ContextRAG_Engine (HISTÓRICO)
+
+> **Retirada el 2026-11-12** (fases 1 y 2 de [CONTEXTRAG_SYNC_RETIREMENT_PLAN.md](CONTEXTRAG_SYNC_RETIREMENT_PLAN.md)). El código, las rutas, las tareas y la configuración descritos abajo ya no existen. Las capacidades de ContextRAG están dentro de DOCMIND (`backend/app/rag/`, ADR-005). Solo queda la tabla `contextrag_events`, hasta la fase 3. Se conserva este documento como registro.
 
 > **Cambio de dirección (2026-11-12, [ADR-005](decisions/ADR-005-contextrag-unification.md)):** las capacidades de ContextRAG se incorporan dentro de DOCMIND (`backend/app/rag/`) en vez de consumirse como servicio aparte. Lo descrito aquí (outbox hacia un ContextRAG externo) sigue funcionando, desactivado, hasta que la unificación termine. Progreso: [UNIFICATION_PROGRESS.md](UNIFICATION_PROGRESS.md).
 

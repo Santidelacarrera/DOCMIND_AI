@@ -212,7 +212,7 @@ Todo lo que se puede hacer sin el propietario está hecho. Lo que falta necesita
 | Credenciales de Vertex AI | Validar `ASK_MODE=generative` con un modelo real | `OWNER_SETUP.md` §1: proyecto, API, cuenta de servicio con `roles/aiplatform.user`, variables `VERTEX_*` |
 | `CONVERSATION_ENCRYPTION_KEY` en staging y producción | Conversaciones en esos entornos | §2: generarla en una máquina de confianza, guardarla en el gestor de secretos y copiarla aparte |
 | 30–50 documentos reales anonimizados y sus preguntas | Medir calidad real; decidir `RETRIEVAL_MODE`, `RERANK_MODEL` y `ASK_MODE` | §3: en `backend/eval_private/`, formato del corpus, comandos |
-| Autorización para retirar el outbox hacia ContextRAG externo | Quitar código y la tabla `contextrag_events` (migración destructiva) | Decisión explícita. **No se ha tocado.** |
+| Autorización para la fase 3 de la retirada de ContextRAG Sync | Borrar la tabla `contextrag_events` tras copiarla | Fases 1 y 2 **hechas** con autorización (2026-11-12); la fase 3 requiere otra autorización explícita |
 | Staging y activación de RLS | Validar el despliegue real | `docs/RLS_DESIGN.md` «Activación» y `docs/STAGING.md` |
 
 ## Criterios de aceptación (sección 23 del encargo) — revisión estricta del 2026-11-12

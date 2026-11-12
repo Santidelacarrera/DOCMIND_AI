@@ -37,8 +37,7 @@ Ver `.env.example` para la lista completa y los valores de desarrollo.
 2. `alembic upgrade head` con `DATABASE_URL` apuntando a la base. Verificado: sube, baja a `base` (queda solo `alembic_version`) y vuelve a subir (22 tablas).
 3. `uvicorn app.main:app --port 8000` y `celery -A app.worker.celery_app worker --concurrency=2`. Verificado.
 4. `cd frontend && npm ci && npm run build && npm run start -- -p 3000`. Build y `npm run start` verificados; el build se ejecutó en la fase anterior y el código de la interfaz no cambió después.
-5. ContextRAG como proceso aparte: `uvicorn --factory contextrag.api.server:app_factory --port 8100` con `CONTEXTRAG_KEYS_FILE`. Verificado con el ensayo en vivo.
-6. `python scripts/contextrag_live_check.py ...`. Verificado (sección de ContextRAG).
+5. *(Histórico)* ContextRAG como proceso aparte y `scripts/contextrag_live_check.py`. Retirados el 2026-11-12: las capacidades están dentro de DOCMIND (ADR-005, `CONTEXTRAG_SYNC_RETIREMENT_PLAN.md`).
 
 ### No verificado
 
@@ -58,7 +57,7 @@ Ver `.env.example` para la lista completa y los valores de desarrollo.
    **Verificado** el 2026-11-12 con la imagen de producción: el modelo multilingüe y `bge-reranker-v2-m3-int8` se cargan con `--network none`.
 3. API y workers.
 4. Una única instancia de beat (o el planificador de la plataforma).
-5. ContextRAG solo cuando `CONTEXTRAG_SYNC_ENABLED=true`. Su retirada está planificada, pendiente de autorización: `docs/CONTEXTRAG_SYNC_RETIREMENT_PLAN.md`.
+5. Ningún servicio ContextRAG: la sincronización está retirada (fases 1 y 2 de `docs/CONTEXTRAG_SYNC_RETIREMENT_PLAN.md`).
 
 Comprobación posterior (con datos ficticios, nunca de clientes): `python scripts/staging_smoke.py --base-url https://<staging> --lifecycle`, y para medir latencia `python scripts/ask_load_smoke.py --api https://<staging>`.
 

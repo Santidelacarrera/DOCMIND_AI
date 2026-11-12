@@ -21,7 +21,7 @@ Qué está vigente y qué es histórico. Revisado el 2026-11-12. Si dos document
 
 ## Diseño y seguridad
 
-[architecture.md](architecture.md) · [RLS_DESIGN.md](RLS_DESIGN.md) · [rls/](rls/) · [SECURITY.md](SECURITY.md) · [security/threat-model.md](security/threat-model.md) · [AUTHORIZATION_MATRIX.md](AUTHORIZATION_MATRIX.md) · [AUTHORIZATION_POLICY.md](AUTHORIZATION_POLICY.md) · [DOCUMENT_AUTHORIZATION.md](DOCUMENT_AUTHORIZATION.md) · [DATA_RETENTION.md](DATA_RETENTION.md) · [INGESTION.md](INGESTION.md) · [LOCAL_PROCESSING.md](LOCAL_PROCESSING.md) · [EXTERNAL_DEPENDENCIES.md](EXTERNAL_DEPENDENCIES.md) · [CASE_QUERY.md](CASE_QUERY.md) · [CONTEXTRAG_INTEGRATION.md](CONTEXTRAG_INTEGRATION.md)
+[architecture.md](architecture.md) · [RLS_DESIGN.md](RLS_DESIGN.md) · [rls/](rls/) · [SECURITY.md](SECURITY.md) · [security/threat-model.md](security/threat-model.md) · [AUTHORIZATION_MATRIX.md](AUTHORIZATION_MATRIX.md) · [AUTHORIZATION_POLICY.md](AUTHORIZATION_POLICY.md) · [DOCUMENT_AUTHORIZATION.md](DOCUMENT_AUTHORIZATION.md) · [DATA_RETENTION.md](DATA_RETENTION.md) · [INGESTION.md](INGESTION.md) · [LOCAL_PROCESSING.md](LOCAL_PROCESSING.md) · [EXTERNAL_DEPENDENCIES.md](EXTERNAL_DEPENDENCIES.md) · [CASE_QUERY.md](CASE_QUERY.md)
 
 ## Calidad
 
@@ -36,4 +36,5 @@ Qué está vigente y qué es histórico. Revisado el 2026-11-12. Si dos document
 | Documento | Superado por |
 |---|---|
 | [AUDIT_2026-10-26.md](AUDIT_2026-10-26.md), [AUDIT_PHASE2_2026-10-26.md](AUDIT_PHASE2_2026-10-26.md), [AUDIT_FINAL_2026-10-26.md](AUDIT_FINAL_2026-10-26.md), [AUDIT_PRODUCTION_2026-10-27.md](AUDIT_PRODUCTION_2026-10-27.md) | `DOCMIND_*.md` (2026-11-10 en adelante) |
+| [CONTEXTRAG_INTEGRATION.md](CONTEXTRAG_INTEGRATION.md) | ADR-005 y [CONTEXTRAG_SYNC_RETIREMENT_PLAN.md](CONTEXTRAG_SYNC_RETIREMENT_PLAN.md) (sincronización retirada) |
 | [DECISIONS_2026-10-30.md](DECISIONS_2026-10-30.md) | `DECISIONS_2026-11-10.md` y los ADR, salvo lo que estos no traten |
