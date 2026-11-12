@@ -21,7 +21,8 @@ main {
 }
 nav {
   display: flex;
-  gap: 24px;
+  flex-wrap: wrap; /* nine destinations: on a phone they wrap instead of widening the page */
+  gap: 12px 24px;
   align-items: center;
 }
 a {
@@ -158,6 +159,9 @@ textarea {
 }
 .panel li {
   display: flex;
+  flex-wrap: wrap; /* a long e-mail plus its controls wraps on a phone instead of overflowing */
+  gap: 8px;
+  overflow-wrap: anywhere;
   justify-content: space-between;
   border-top: 1px solid #302a50;
   padding: 12px 0;
@@ -230,6 +234,23 @@ textarea {
 @media (max-width: 650px) {
   .grid {
     grid-template-columns: 1fr;
+  }
+  main {
+    padding: 16px;
+  }
+  nav {
+    gap: 8px 16px;
+  }
+  .stats {
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  }
+  .panel {
+    margin: 32px auto;
+    padding: 16px;
+  }
+  .panel blockquote {
+    margin: 8px 0;
+    overflow-wrap: anywhere;
   }
   .hero {
     padding-top: 70px;

@@ -168,6 +168,32 @@ def _validated_upload(file: UploadFile) -> tuple[bytes, bool, int]:
     return content, is_docx, page_count
 
 
+def _check_page_quota(db: Session, org_id: uuid.UUID, page_count: int) -> None:
+    """402 when a FREE organization would exceed its monthly pages. Shared by new documents and new
+    versions (a version reserves its pages again: without this, versions bypassed the quota).
+
+    Locks the organization row so concurrent uploads cannot each observe the same remaining quota and
+    collectively exceed it."""
+    organization = db.scalar(
+        select(Organization).where(Organization.id == org_id).with_for_update()
+    )
+    if organization is None:
+        raise HTTPException(404, "ORGANIZATION_NOT_FOUND")
+    reserved_pages = int(
+        db.scalar(
+            select(func.coalesce(func.sum(UsageRecord.quantity), 0)).where(
+                UsageRecord.organization_id == org_id, UsageRecord.metric == "pages_reserved"
+            )
+        )
+        or 0
+    )
+    if (
+        organization.plan.value == "FREE"
+        and reserved_pages + page_count > settings().free_pages_per_month
+    ):
+        raise HTTPException(402, "QUOTA_EXCEEDED")
+
+
 @router.post("/api/v1/documents", status_code=status.HTTP_202_ACCEPTED, response_model=None)
 def upload_document(
     organization_id: str,
@@ -188,26 +214,7 @@ def upload_document(
         raise HTTPException(413, "FILE_TOO_LARGE")
     require_project(db, org_id, user, project_id, write=True)  # phase 3B: a grant with write access, or a key for it
     content, is_docx, page_count = _validated_upload(file)
-    # Lock the organization row so concurrent uploads cannot each observe the
-    # same remaining quota and collectively exceed it.
-    organization = db.scalar(
-        select(Organization).where(Organization.id == org_id).with_for_update()
-    )
-    if organization is None:
-        raise HTTPException(404, "ORGANIZATION_NOT_FOUND")
-    reserved_pages = int(
-        db.scalar(
-            select(func.coalesce(func.sum(UsageRecord.quantity), 0)).where(
-                UsageRecord.organization_id == org_id, UsageRecord.metric == "pages_reserved"
-            )
-        )
-        or 0
-    )
-    if (
-        organization.plan.value == "FREE"
-        and reserved_pages + page_count > settings().free_pages_per_month
-    ):
-        raise HTTPException(402, "QUOTA_EXCEEDED")
+    _check_page_quota(db, org_id, page_count)
     checksum = hashlib.sha256(content).hexdigest()
     existing = db.scalar(
         select(Document).where(
@@ -427,6 +434,7 @@ def upload_document_version(
     membership(org_id, user, db, Role.member, scope="documents:write")
     require_document(db, org_id, user, document_id, write=True)
     content, is_docx, page_count = _validated_upload(file)
+    _check_page_quota(db, org_id, page_count)
     item = db.scalar(
         select(Document)
         .where(Document.id == document_id, Document.organization_id == org_id, Document.deleted_at.is_(None))

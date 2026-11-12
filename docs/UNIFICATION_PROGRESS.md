@@ -2,7 +2,7 @@
 
 Registro principal de la unificación. Decisión de arquitectura: [ADR-005](decisions/ADR-005-contextrag-unification.md).
 
-**Fase actual:** G (documentación y cierre). Entregas 1–5 implementadas. La 1 está fusionada (PR #74) y las 2–4 también (PR #75, 9/9 comprobaciones en verde); la 5 está en la rama `claude/contextrag-unification-3`.
+**Fase actual:** cierre y preparación para producción (misión final, `docs/FINAL_PRODUCTION_READINESS.md`). Entregas 1–6 implementadas. La 1 está fusionada (PR #74) y las 2–4 también (PR #75, 9/9 comprobaciones en verde); la 5 también (PR #76); la 6 está en la rama `claude/final-readiness`.
 **Último punto verificado:** 2026-11-12. Suite backend completa en SQLite. Pruebas nuevas en PostgreSQL 17, con RLS aplicada y sin ella. Migración 0011 probada en ambos sentidos. Evaluación RAG en dos corpus, dos embedders, dos modos de respuesta y con o sin reranker. Stack Docker Compose completo: prueba de humo 28/28 y Playwright 11/11. Detalle en «Criterios de aceptación».
 
 ## Fase A — Auditoría
@@ -180,6 +180,23 @@ Sus pruebas (60 ficheros en `tests/`) **no se ejecutaron en esta sesión**: el c
 | PostgreSQL 17 con `TEST_RLS_ENFORCED=1`: reranking, evaluación (documentos reales), conversaciones, ciclo de vida, `test_rls_phase3`, `test_tenant_isolation` | **44 passed, 2 skipped** |
 | PostgreSQL 17 sin RLS aplicada: reranking, conversaciones, `test_rls_policies` | **64 passed** |
 
+## Entrega 6 — misión final de preparación (2026-11-12, rama `claude/final-readiness`)
+
+Detalle, mediciones y respuestas del informe en `docs/FINAL_PRODUCTION_READINESS.md`. Problemas encontrados y corregidos:
+
+1. **Crítico:** la imagen no instalaba `fastembed`, que es el embedder obligatorio en staging y producción. Se añadió el extra `embeddings`, el volumen `models` y `scripts/fetch_models.py`; comprobado con la imagen real y sin red.
+2. Las versiones nuevas no pasaban la cuota de páginas FREE: corregido y probado.
+3. Las conversaciones mostraban texto de fuentes borradas o ya no accesibles: ahora se redactan al leerlas y no se usan como memoria. Probado.
+4. Con PostgreSQL caído se devolvía 500: ahora 503 `DATABASE_UNAVAILABLE` con `Retry-After`. Probado.
+5. Desbordamientos en móvil: corregidos, con una prueba e2e a 375 px.
+6. `pip` de la imagen con avisos de seguridad: actualizado.
+
+Además:
+* Carga medida: `scripts/ask_load_smoke.py` es nuevo.
+* Registros revisados sin contenido ni secretos.
+* Plan de retirada de ContextRAG Sync **sin ejecutar** (`docs/CONTEXTRAG_SYNC_RETIREMENT_PLAN.md`).
+* Stages 2 y 3 (Vertex y documentos reales): **bloqueados**; no hay credenciales ni documentos en la máquina.
+
 ## Pendiente
 
 Todo lo que se puede hacer sin el propietario está hecho. Lo que falta necesita su intervención (ver «Bloqueos»). Lo único descartado tras reevaluarlo, con su motivo:
@@ -205,7 +222,7 @@ Estados: **VALIDADO** = implementado y con evidencia ejecutada y reproducible. *
 | # | Criterio | Estado | Evidencia verificable | Qué falta |
 |---|---|---|---|---|
 | 1 | Una sola plataforma DOCMIND | VALIDADO EN LOCAL / CI | Capacidades de ContextRAG en `backend/app/rag/`. Ninguna prueba ni flujo necesita ContextRAG. Stack Compose sin ContextRAG: humo 28/28 | El outbox antiguo hacia ContextRAG sigue en el código, **desactivado**, hasta tu autorización (criterio 6 de tu mensaje) |
-| 2 | Una sola interfaz | VALIDADO EN LOCAL / CI | Next.js: `/ask`, `/conversations`, documentos y versiones. Playwright 11/11 en local y job `e2e` en CI | — |
+| 2 | Una sola interfaz | VALIDADO EN LOCAL / CI | Next.js: `/ask`, `/conversations`, documentos y versiones. Playwright 11/11 (tres veces seguidas), incluida la prueba de móvil a 375 px, y job `e2e` en CI | — |
 | 3 | Arquitectura modular | VALIDADO | `docs/architecture.md` (tabla de módulos), ADR-001 y ADR-005. Un backend, un modelo documental | — |
 | 4 | Pipeline documental unificado | VALIDADO EN LOCAL / CI | Un solo pipeline (`ingestion/`, `worker.py`); `test_document_lifecycle_e2e`; humo con el stack completo | — |
 | 5 | Extracción documental | VALIDADO EN LOCAL / CI (sin LLM real) | Puerta F1 ≥ 0,89 en CI con el proveedor simulado; extracción en el humo | Extracción con Vertex real: BLOQUEADO (credenciales) |
@@ -222,14 +239,14 @@ Estados: **VALIDADO** = implementado y con evidencia ejecutada y reproducible. *
 | 16 | Consultas sobre colecciones | VALIDADO | `/ask` sobre todos los expedientes legibles (`accessible_project_ids`) | — |
 | 17 | Respuestas con citas | VALIDADO EN LOCAL / CI | `citation_accuracy` 1,0 con MiniLM; humo: documento, página, fragmento y extracto | Con documentos reales: BLOQUEADO |
 | 18 | Abstención | VALIDADO EN LOCAL / CI | `abstention_accuracy` 1,0 en los dos corpus (puertas de CI); humo: abstención y otra organización vacía | — |
-| 19 | Memoria conversacional segura | VALIDADO EN LOCAL / CI | `test_conversations` (7) en SQLite y PostgreSQL con RLS aplicada; humo; cifrado comprobado en PostgreSQL real; e2e de navegador | Clave real en staging/producción: BLOQUEADO (§2) |
+| 19 | Memoria conversacional segura | VALIDADO EN LOCAL / CI | `test_conversations` (7) y `test_readiness_security` (redacción de fuentes retiradas, persistencia tras cerrar sesión) en SQLite y PostgreSQL con RLS; humo; cifrado comprobado en PostgreSQL real; e2e de navegador | Clave real en staging/producción: BLOQUEADO (§2) |
 | 20 | Aislamiento multi-tenant | VALIDADO EN LOCAL / CI | Suite completa como `docmind_app` (job `backend-postgres-rls`); recorrido de todas las rutas (`test_tenant_isolation`); 0 fugas en todas las evaluaciones; humo 403/404 | Activar RLS en staging: BLOQUEADO |
 | 21 | Actualización documental consistente | VALIDADO EN LOCAL / CI | `/documents/{id}/versions` en API, humo y e2e de navegador | — |
 | 22 | Eliminación verificable | VALIDADO EN LOCAL / CI | Outbox con verificación; vectores contados a 0 en `test_document_lifecycle_e2e`; conversaciones borradas (404 y 0 filas) | — |
 | 23 | Evaluación RAG | VALIDADO (con un límite) | Dos corpus, recuperación densa o híbrida, respuesta extractiva o generativa, con o sin reranker; tres puertas en CI | Ragas (juez LLM) no portado; documentos reales: BLOQUEADO |
 | 24 | Observabilidad | VALIDADO EN CI | Métricas de recuperación, reranking y coste; 12 alertas con `promtool check` y `test rules` | Alertmanager conectado: tuyo (`PRODUCTION_CHECKLIST.md`) |
 | 25 | Pruebas automatizadas | VALIDADO | Suite backend completa, PostgreSQL con y sin RLS, e2e y CodeQL en CI | — |
-| 26 | Infraestructura reproducible | VALIDADO EN LOCAL | `docker compose up --build --wait` del stack completo y humo 28/28 en esta sesión; Compose de producción y copias de seguridad (ADR-004) | Despliegue en staging: BLOQUEADO |
+| 26 | Infraestructura reproducible | VALIDADO EN LOCAL | Stack completo levantado desde cero y humo 28/28; imagen de producción con modelos provisionados y verificados sin red (entrega 6, corrigió un fallo crítico); Compose de producción y copias de seguridad (ADR-004) | Despliegue en staging: BLOQUEADO |
 | 27 | Documentación completa | VALIDADO | README (diagrama de preguntas), `architecture.md`, `API.md`, `ENVIRONMENT.md`, ADR-005, `OWNER_SETUP.md` e informes de evaluación | — |
 
 **Resumen honesto:** los 27 criterios están implementados. Ninguno queda parcial tras la reevaluación del reranking. Ocho de ellos (5, 6, 9, 14, 17, 19, 20 y 26) tienen una parte que solo se puede validar con tus credenciales, tus documentos o un entorno de staging. Hasta entonces, su validación es local o de CI, no de producción.

@@ -79,8 +79,12 @@ Tres cosas desbloquean lo que falta validar de la unificación (`docs/UNIFICATIO
    La primera ejecución con `--embedder local` o `--rerank-model` descarga los modelos si `EMBEDDING_LOCAL_FILES_ONLY=false`. En producción se dejan en `EMBEDDING_CACHE_DIR` y se lee sin red.
 5. **Decidir** con los informes: activar `hybrid` o el reranker solo si mejoran `recall@1` o `citation_accuracy` **sin** empeorar `abstention_accuracy` ni aumentar fugas, y si la latencia añadida es aceptable. `cross_tenant_leaks` e `injection_documents_used` deben ser 0 siempre. Registrar la decisión en `docs/UNIFICATION_PROGRESS.md` y en la nota del proyecto.
 
-## 4. Lo que requiere autorización explícita (no se hará sin ella)
+## 4. Modelos locales en staging y producción
 
-* **Retirar la sincronización con ContextRAG externo** (`contextrag_sync.py`, tareas de beat, tabla `contextrag_events`, ruta de administración). Implica una migración que borra una tabla. Hasta que se autorice, todo sigue como está: desactivado por defecto y con sus pruebas pasando.
+No requiere credenciales, pero es imprescindible: sin el modelo de embeddings, la API no puede indexar ni responder. Ver `docs/DEPLOYMENT.md`, «Orden de despliegue», paso 2 (`scripts/fetch_models.py`).
+
+## 5. Lo que requiere autorización explícita (no se hará sin ella)
+
+* **Retirar la sincronización con ContextRAG externo.** Plan por fases, con riesgos, copia previa y reversión: `docs/CONTEXTRAG_SYNC_RETIREMENT_PLAN.md`. Cada fase se autoriza por separado. Hasta entonces todo sigue como está: desactivado por defecto y con sus pruebas pasando.
 * **Activar RLS en staging/producción** (pasos en `docs/RLS_DESIGN.md`, «Activación»).
 * **Cualquier despliegue público.**

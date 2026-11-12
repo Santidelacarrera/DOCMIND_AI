@@ -50,9 +50,17 @@ Ver `.env.example` para la lista completa y los valores de desarrollo.
 ### Orden de despliegue
 
 1. Migraciones: `alembic upgrade head`, una sola vez, antes de arrancar réplicas.
-2. API y workers.
-3. Una única instancia de beat (o el planificador de la plataforma).
-4. ContextRAG solo cuando `CONTEXTRAG_SYNC_ENABLED=true`.
+2. **Modelos locales** (una vez, y de nuevo al cambiar `EMBEDDING_MODEL` o `RERANK_MODEL`). La imagen incluye `fastembed` pero no los ficheros del modelo, que van al volumen `models` montado en `/opt/models` (solo lectura en `api` y `worker`):
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm      -e EMBEDDING_LOCAL_FILES_ONLY=false -v docmind_models:/opt/models:rw      api python scripts/fetch_models.py
+   ```
+   El script descarga el modelo (público, sin credenciales) y lo vuelve a cargar sin red. Si sale con un código distinto de 0, no hay que arrancar: sin el modelo, la API no puede indexar ni responder.
+   **Verificado** el 2026-11-12 con la imagen de producción: el modelo multilingüe y `bge-reranker-v2-m3-int8` se cargan con `--network none`.
+3. API y workers.
+4. Una única instancia de beat (o el planificador de la plataforma).
+5. ContextRAG solo cuando `CONTEXTRAG_SYNC_ENABLED=true`. Su retirada está planificada, pendiente de autorización: `docs/CONTEXTRAG_SYNC_RETIREMENT_PLAN.md`.
+
+Comprobación posterior (con datos ficticios, nunca de clientes): `python scripts/staging_smoke.py --base-url https://<staging> --lifecycle`, y para medir latencia `python scripts/ask_load_smoke.py --api https://<staging>`.
 
 ### Backups y restauración
 
