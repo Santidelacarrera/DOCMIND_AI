@@ -10,7 +10,9 @@ from fastapi import (
     Response,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
+from sqlalchemy.exc import DisconnectionError, OperationalError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -35,6 +37,16 @@ app = FastAPI(
     openapi_url=None if _production else "/openapi.json",
 )
 configure_tracing(app)
+
+
+@app.exception_handler(OperationalError)
+@app.exception_handler(DisconnectionError)
+async def _database_unavailable(request: Request, exc: Exception) -> JSONResponse:
+    """PostgreSQL unreachable or the connection dropped: a retryable 503 with a stable code, not a 500.
+    /ready then fails too, so the orchestrator stops routing traffic here until the database is back.
+    Nothing is half-written: every request runs in one transaction that never committed."""
+    logger.error("database unavailable", extra={"error": type(exc).__name__, "path": request.url.path})
+    return JSONResponse({"detail": "DATABASE_UNAVAILABLE"}, status_code=503, headers={"Retry-After": "5"})
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in _config.cors_origins.split(",") if o.strip()],

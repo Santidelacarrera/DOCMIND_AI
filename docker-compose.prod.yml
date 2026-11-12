@@ -9,7 +9,8 @@
 services:
   api:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
-    volumes: []
+    # Local ONNX models (embeddings, optional reranker), provisioned once with scripts/fetch_models.py.
+    volumes: [models:/opt/models:ro]
     restart: unless-stopped
     read_only: true
     tmpfs: [/tmp]
@@ -26,7 +27,7 @@ services:
     networks: [edge, backend]
   worker:
     command: celery -A app.worker.celery_app worker --loglevel=INFO --concurrency=2
-    volumes: [documents:/data/documents]
+    volumes: [documents:/data/documents, models:/opt/models:ro]
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -112,3 +113,4 @@ networks:
 
 volumes:
   backups: {}
+  models: {}

@@ -22,8 +22,8 @@ from app import api_support, conversations
 from app.api_support import audit
 from app.core import settings
 from app.db import get_db
-from app.models import Conversation, ConversationMessage, User, utcnow
-from app.project_access import require_project
+from app.models import Conversation, ConversationMessage, Document, User, utcnow
+from app.project_access import accessible_project_ids, require_project
 from app.rate_limit import enforce
 from app.routers.ask import AskInput, _answer_body, answer_in_scope
 from app.security import ApiPrincipal, current_user, membership
@@ -60,7 +60,34 @@ def _owned(db: Session, org_id: uuid.UUID, user: User, conversation_id: str) -> 
     return conv
 
 
-def _turns(db: Session, conv: Conversation) -> list[dict[str, Any]]:
+WITHDRAWN = "[Contenido retirado: la fuente fue eliminada o ya no tienes acceso a ella.]"
+
+
+def _readable_documents(db: Session, conv: Conversation, user: User, ids: set[str]) -> set[str]:
+    """Of ``ids``, the documents that still exist and that ``user`` may read now (same rules as /ask)."""
+    uuids = set()
+    for value in ids:
+        try:
+            uuids.add(uuid.UUID(value))
+        except ValueError:
+            continue
+    if not uuids:
+        return set()
+    visible = accessible_project_ids(db, conv.organization_id, user)
+    rows = db.scalars(
+        select(Document.id).where(
+            Document.id.in_(uuids), Document.organization_id == conv.organization_id,
+            Document.deleted_at.is_(None), Document.project_id.in_(visible),
+        )
+    ).all()
+    return {str(r) for r in rows}
+
+
+def _turns(db: Session, conv: Conversation, user: User) -> list[dict[str, Any]]:
+    """Decrypted turns, in order. An answer that quoted a document the user can no longer read (deleted,
+    expired, or access revoked) is shown as withdrawn: its text and citations are removed on every read,
+    and it is not used as memory either. The ciphertext itself goes with the conversation (deletion or
+    CONVERSATION_RETENTION_DAYS)."""
     rows = db.scalars(
         select(ConversationMessage).where(ConversationMessage.conversation_id == conv.id).order_by(ConversationMessage.seq)
     ).all()
@@ -71,6 +98,13 @@ def _turns(db: Session, conv: Conversation) -> list[dict[str, Any]]:
         except conversations.ConversationIntegrityError:
             raise HTTPException(500, "CONVERSATION_INTEGRITY") from None
         out.append({"seq": row.seq, "role": row.role, "created_at": row.created_at.isoformat(), **content})
+    cited = {str(c.get("document_id")) for t in out for c in t.get("citations") or []}
+    if cited:
+        readable = _readable_documents(db, conv, user, cited)
+        for turn in out:
+            sources = {str(c.get("document_id")) for c in turn.get("citations") or []}
+            if sources - readable:
+                turn.update(text=WITHDRAWN, citations=[], conflicts=[], withdrawn=True)
     return out
 
 
@@ -130,7 +164,7 @@ def get_conversation(
     membership(org_id, user, db)
     conv = _owned(db, org_id, user, conversation_id)
     _require_enabled()
-    turns = _turns(db, conv)
+    turns = _turns(db, conv, user)
     return {**_summary(conv, len(turns)), "turns": turns}
 
 
@@ -147,10 +181,11 @@ def ask_in_conversation(
     _require_enabled()
     if conv.project_id is not None:
         require_project(db, org_id, user, conv.project_id)  # access may have been revoked since
-    earlier = _turns(db, conv)
+    earlier = _turns(db, conv, user)
     keep = settings().conversation_memory_turns * 2
     memory = "\n".join(
-        f"{t['role']}: {t.get('text', '')}" for t in (earlier[-keep:] if keep else []) if not t.get("abstained")
+        f"{t['role']}: {t.get('text', '')}" for t in (earlier[-keep:] if keep else [])
+        if not t.get("abstained") and not t.get("withdrawn")
     ) or None
     result = answer_in_scope(db, org_id, user, payload.question, payload.top_k, conv.project_id, memory)
     body = _answer_body(result)
