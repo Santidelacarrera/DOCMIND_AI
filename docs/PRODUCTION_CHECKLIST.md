@@ -1,6 +1,6 @@
 # Lista de salida a producción
 
-Estado a 2026-10-31. Lo marcado **[hecho]** está en el repositorio y verificado en CI; lo marcado **[tuyo]** requiere una cuenta, un secreto o una decisión que no puede tomar un asistente.
+Estado a 2026-11-12 (revisado tras RLS fases 1–2, recuperación de vectores y división de la API). Lo marcado **[hecho]** está en el repositorio y verificado en CI; lo marcado **[tuyo]** requiere una cuenta, un secreto o una decisión que no puede tomar un asistente.
 
 ## 1. Datos y LLM
 
@@ -32,7 +32,8 @@ Cómo validar sin mostrar valores: `docs/STAGING.md`, sección «Avoiding split 
 
 ## 4. Copias de seguridad y monitorización
 
-* **[tuyo]** Copias automáticas de PostgreSQL (diarias, retención ≥ 14 días, restauración probada una vez) y versionado del almacenamiento de objetos.
+* **[hecho]** Procedimiento de copia y restauración de PostgreSQL probado en local (`docs/DEPLOYMENT.md`), y reconstrucción del índice vectorial sin LLM (`backend/scripts/reindex_vectors.py`, ≈ 31 min por 10 000 documentos y proceso).
+* **[tuyo]** Programar las copias automáticas en el proveedor (diarias, retención ≥ 14 días) y el versionado del almacenamiento de objetos.
 * **[hecho]** Métricas Prometheus y trazas OpenTelemetry (`docs/OBSERVABILITY.md`). **[tuyo]** Conectar alertas: tasa de 5xx, trabajos fallidos, cola creciente, gasto del LLM.
 * **[tuyo]** Con la capa de pago de Gemini, fijar un tope de gasto en la consola de Google.
 
@@ -42,9 +43,9 @@ Cómo validar sin mostrar valores: `docs/STAGING.md`, sección «Avoiding split 
 python backend/scripts/staging_smoke.py --base-url https://staging.example.com
 ```
 
-Registra dos organizaciones, sube una factura sintética, espera el procesamiento, lee la extracción, comprueba el control de exportación y que la segunda organización no ve el documento. Debe terminar con `smoke test passed`. No se ha ejecutado contra un despliegue real todavía.
+Registra dos organizaciones, sube una factura sintética, espera el procesamiento, lee la extracción, comprueba el control de exportación y que la segunda organización no ve el documento; con `--ask` además pregunta en lenguaje natural y exige una cita. Debe terminar con `smoke test passed`. **[hecho]** contra el stack Docker local; **[tuyo]** contra staging real.
 
 ## 6. Pendiente de implementación
 
-* **Row-Level Security** (`docs/RLS_DESIGN.md`): decidido (SECURITY DEFINER, por fases) y **no implementado**. El aislamiento actual depende de la aplicación y de sus pruebas negativas (`test_cross_org_negative.py`). El diseño prohíbe activaciones parciales y exige probarlo sobre PostgreSQL 17 con el rol `docmind_app`, así que no se hace sin un entorno donde probarlo.
+* **Row-Level Security** (`docs/RLS_DESIGN.md`): fases 1–2 **[hecho]** (migración `0009`, 20 políticas, contexto por transacción, 47 pruebas como rol sin privilegios en PostgreSQL 17, en CI). Las políticas aún no se fuerzan (`FORCE`) porque la conexión de la app es propietaria de las tablas; la fase 3 (8 puntos inventariados) se activa solo tras probarla en staging. Hasta entonces el aislamiento efectivo es el de la aplicación más sus pruebas negativas.
 * **Licencia:** propietaria (`LICENSE`); falta la revisión de un abogado y confirmar el titular definitivo antes de vender.
