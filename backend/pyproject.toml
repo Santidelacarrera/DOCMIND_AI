@@ -20,7 +20,7 @@ qdrant = ["qdrant-client>=1.20.0,<2"]
 ner = ["spacy>=3.8.18,<4"]  # then: python -m spacy download <PII_SPACY_MODEL>
 embeddings = ["fastembed>=0.9.1,<1"]  # local ONNX embeddings
 vertex = ["google-auth[requests]>=2.40,<3"]  # LLM_PROVIDER=vertex (Application Default Credentials)
-dev = ["python-docx>=1.1,<2", "qdrant-client>=1.20.0,<2", "httpx>=0.28.1", "moto[s3]>=5.1,<6", "mypy>=1.13", "pytest>=9.2.0", "pytest-cov>=5", "ruff>=0.17.2", "types-openpyxl", "types-jsonschema", "pip-audit>=2.7", "bandit>=1.8"]
+dev = ["python-docx>=1.1,<2", "qdrant-client>=1.20.0,<2", "httpx>=0.28.1", "moto[s3]>=5.1,<6", "mypy>=1.13", "pytest>=9.2.0", "pytest-cov>=5", "ruff>=0.17.2", "types-openpyxl", "types-jsonschema", "pip-audit>=2.7", "bandit>=1.9.4"]
 [build-system]
 requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
