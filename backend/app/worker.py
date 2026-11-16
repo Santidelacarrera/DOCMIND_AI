@@ -841,6 +841,7 @@ def dispatch_webhooks(self, organization_id: str, event: str, payload: dict[str,
 def _dispatch_webhooks(organization_id: str, event: str, payload: dict[str, object], attempt: int) -> int:
     delivered = 0
     with SessionLocal.begin() as db:
+        rls.set_context(db, organization_id)
         doc_project_id: str | None = str(payload["project_id"]) if payload.get("project_id") else None
         if doc_project_id is None and payload.get("document_id"):
             try:

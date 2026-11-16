@@ -321,11 +321,11 @@ def test_granular_permissions_delete_scope_protected_docs_creator_grant_and_proj
     monkeypatch.setattr(worker, "deliver_webhook_request", fake_deliver)
     up_other = owner.upload(other_proj, digital_pdf([["Other project doc"]]), "other.pdf")
     doc_other_id = up_other.json()["document_id"]
-    worker._dispatch_webhooks(org, "document.completed", {"document_id": doc_other_id}, 1)
+    worker.dispatch_webhooks.run(org, "document.completed", {"document_id": doc_other_id})  # type: ignore[attr-defined]
     assert delivered_urls == []  # filtered out because doc belongs to other_proj
 
     client.post(f"/api/v1/documents/{doc_id}/restore?organization_id={org}", headers=owner.headers)
-    worker._dispatch_webhooks(org, "document.completed", {"document_id": doc_id}, 1)
+    worker.dispatch_webhooks.run(org, "document.completed", {"document_id": doc_id})  # type: ignore[attr-defined]
     assert delivered_urls == ["https://example.com/hook-p1"]
 
 
