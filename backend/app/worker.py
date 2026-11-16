@@ -11,10 +11,10 @@ from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import CursorResult, and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from app import rls
+from app import intelligence, rls
 from app.core import settings
 from app.db import SessionLocal, SystemSessionLocal
-from app.ingestion.docx import DOCX_MIME
+from app.ingestion import formats
 from app.logging_config import configure_logging
 from app.metrics import (
     DOCUMENTS_PROCESSED_TOTAL,
@@ -41,11 +41,12 @@ from app.models import (
     as_aware_utc,
     utcnow,
 )
-from app.ocr import TesseractProvider, needs_ocr
+from app.ocr import TesseractProvider, needs_ocr, pages_needing_ocr
 from app.processing import (
     ProcessingError,
     estimate_cost,
     estimate_tokens,
+    extract_any_pages,
     extract_docx_pages,
     extract_pdf_pages,
     extraction_envelope,
@@ -333,27 +334,41 @@ class _Computed:
     schema_version_id: uuid.UUID | None
     usage: dict[str, Any]
     evidence: dict[str, Evidence]
+    tables_detected: int = 0
+    format_name: str = "pdf"
 
 
 def _compute(claim: _Claim, log: _StepLog) -> _Computed:
     """Phase 2 (no open transaction): the slow, failure-prone work."""
     log.start("text_extraction")
     content = _read_object(claim)
-    is_docx = claim.mime_type == DOCX_MIME
-    pages_text = extract_docx_pages(content) if is_docx else extract_pdf_pages(content)
+    fmt = formats.format_from_mime(claim.mime_type)
+    ocr_used = False
+    ocr_confidences: list[float | None] = []
+    ocr_low_words: list[set[str]] = []
+    tables_detected = 0
+    pending_ocr_images: list[Any] = []
+
+    if fmt == "docx":
+        pages_text = extract_docx_pages(content)
+    elif fmt == "pdf":
+        pages_text = extract_pdf_pages(content)
+    else:
+        extracted = extract_any_pages(content, claim.mime_type)
+        pages_text = list(extracted.pages)
+        tables_detected = int(extracted.tables_detected)
+        pending_ocr_images = list(extracted.ocr_images)
+
     pages = len(pages_text)
     text = "\n".join(pages_text)[: settings().max_pdf_text_chars]
     log.finish()
 
-    ocr_used = False
-    ocr_confidences: list[float | None] = []
-    ocr_low_words: list[set[str]] = []
-    if not is_docx and needs_ocr(text, pages):
+    if pending_ocr_images:
         _set_status(claim.job_id, JobStatus.ocr_processing)
         log.start("ocr")
         try:
             ocr = TesseractProvider()
-            ocr_pages = ocr.extract_pages(content)
+            ocr_pages = ocr.extract_images(pending_ocr_images)
             ocr_confidences = list(getattr(ocr, "last_confidences", []))
             ocr_low_words = list(getattr(ocr, "last_low_words", []))
         except SoftTimeLimitExceeded:
@@ -361,9 +376,56 @@ def _compute(claim: _Claim, log: _StepLog) -> _Computed:
         except Exception:
             raise ProcessingError("OCR_FAILED") from None
         ocr_used = True
-        pages_text = [ocr_pages[i] if i < len(ocr_pages) else "" for i in range(pages)]
-        text = "\n".join(pages_text)
+        pages_text = [ocr_pages[i] if i < len(ocr_pages) else "" for i in range(max(pages, len(ocr_pages)))]
+        text = "\n".join(pages_text)[: settings().max_pdf_text_chars]
         log.finish()
+    elif fmt == "pdf":
+        mixed_pages = pages_needing_ocr(pages_text)
+        if needs_ocr(text, pages):
+            _set_status(claim.job_id, JobStatus.ocr_processing)
+            log.start("ocr")
+            try:
+                ocr = TesseractProvider()
+                ocr_pages = ocr.extract_pages(content)
+                ocr_confidences = list(getattr(ocr, "last_confidences", []))
+                ocr_low_words = list(getattr(ocr, "last_low_words", []))
+            except SoftTimeLimitExceeded:
+                raise
+            except Exception:
+                raise ProcessingError("OCR_FAILED") from None
+            ocr_used = True
+            pages_text = [ocr_pages[i] if i < len(ocr_pages) else "" for i in range(pages)]
+            text = "\n".join(pages_text)[: settings().max_pdf_text_chars]
+            log.finish()
+        elif mixed_pages and len(mixed_pages) < pages:
+            _set_status(claim.job_id, JobStatus.ocr_processing)
+            log.start("ocr")
+            try:
+                ocr = TesseractProvider()
+                ocr_pages = ocr.extract_pages(content, page_numbers=mixed_pages)
+                part_conf = list(getattr(ocr, "last_confidences", []))
+                part_low = list(getattr(ocr, "last_low_words", []))
+            except SoftTimeLimitExceeded:
+                raise
+            except Exception:
+                raise ProcessingError("OCR_FAILED") from None
+            ocr_used = True
+            ocr_confidences = [None] * pages
+            ocr_low_words = [set() for _ in range(pages)]
+            for idx, page_no in enumerate(mixed_pages):
+                if 1 <= page_no <= pages and idx < len(ocr_pages):
+                    pages_text[page_no - 1] = ocr_pages[idx]
+                    if idx < len(part_conf):
+                        ocr_confidences[page_no - 1] = part_conf[idx]
+                    if idx < len(part_low):
+                        ocr_low_words[page_no - 1] = part_low[idx]
+            text = "\n".join(pages_text)[: settings().max_pdf_text_chars]
+            log.finish()
+
+    if fmt == "pdf":
+        pages_text = formats.strip_running_headers_footers(pages_text)
+        tables_detected = formats.count_pdf_tables(pages_text)
+        text = "\n".join(pages_text)[: settings().max_pdf_text_chars]
 
     _set_status(claim.job_id, JobStatus.extracting)
     with SessionLocal() as db:
@@ -414,7 +476,10 @@ def _compute(claim: _Claim, log: _StepLog) -> _Computed:
             "completion_tokens": estimate_tokens(str(result)),
             "estimated": True,
         }
-    return _Computed(pages_text, ocr_used, ocr_confidences, result, fields, confidence_by_field, issues, schema_version_id, usage, evidence)
+    return _Computed(
+        pages_text, ocr_used, ocr_confidences, result, fields, confidence_by_field, issues,
+        schema_version_id, usage, evidence, tables_detected=tables_detected, format_name=fmt,
+    )
 
 
 def _commit_success(claim: _Claim, computed: _Computed, log: _StepLog) -> bool:
@@ -445,6 +510,18 @@ def _commit_success(claim: _Claim, computed: _Computed, log: _StepLog) -> bool:
             return False
         pages = len(computed.pages_text)
         document.page_count = pages
+        document.tables_detected = computed.tables_detected
+        auto_category, auto_tags = intelligence.classify_document(
+            document.filename,
+            computed.pages_text,
+            format_name=computed.format_name,
+            ocr_used=computed.ocr_used,
+            tables_detected=computed.tables_detected,
+        )
+        if not document.category:
+            document.category = auto_category
+        existing_tags = list(document.tags or [])
+        document.tags = sorted(set(existing_tags) | set(auto_tags))[:16]
         db.execute(delete(DocumentPage).where(DocumentPage.document_id == document.id))
         for number, page_text in enumerate(computed.pages_text, start=1):
             db.add(
@@ -508,6 +585,16 @@ def _commit_success(claim: _Claim, computed: _Computed, log: _StepLog) -> bool:
             )
         db.add(UsageRecord(organization_id=job.organization_id, metric="documents_processed", quantity=1, document_id=document.id))
         db.add(UsageRecord(organization_id=job.organization_id, metric="pages_processed", quantity=pages, document_id=document.id))
+        total_tokens = int(prompt_tokens or 0) + int(completion_tokens or 0)
+        if total_tokens > 0 and provider in ("openai", "gemini", "vertex"):
+            db.add(UsageRecord(organization_id=job.organization_id, metric="ai_tokens_used", quantity=total_tokens, document_id=document.id))
+        if run.estimated_cost and run.estimated_cost > 0:
+            db.add(UsageRecord(
+                organization_id=job.organization_id,
+                metric="ai_cost_microusd",
+                quantity=max(1, round(run.estimated_cost * 1_000_000)),
+                document_id=document.id,
+            ))
         # Same transaction: the outbox row exists if and only if the new content is committed.
         _persist_steps(db, job.id, log, None)
         return True
@@ -754,6 +841,20 @@ def dispatch_webhooks(self, organization_id: str, event: str, payload: dict[str,
 def _dispatch_webhooks(organization_id: str, event: str, payload: dict[str, object], attempt: int) -> int:
     delivered = 0
     with SessionLocal.begin() as db:
+        doc_project_id: str | None = str(payload["project_id"]) if payload.get("project_id") else None
+        if doc_project_id is None and payload.get("document_id"):
+            try:
+                doc_uuid = uuid.UUID(str(payload["document_id"]))
+                found_pid = db.scalar(
+                    select(Document.project_id).where(
+                        Document.id == doc_uuid,
+                        Document.organization_id == uuid.UUID(organization_id),
+                    )
+                )
+                if found_pid is not None:
+                    doc_project_id = str(found_pid)
+            except ValueError:
+                doc_project_id = None
         webhooks = db.scalars(
             select(Webhook).where(
                 Webhook.organization_id == uuid.UUID(organization_id), Webhook.active.is_(True)
@@ -761,6 +862,10 @@ def _dispatch_webhooks(organization_id: str, event: str, payload: dict[str, obje
         ).all()
         for webhook in webhooks:
             if event not in (webhook.events or []):
+                continue
+            if webhook.project_ids is not None and (
+                not doc_project_id or doc_project_id not in webhook.project_ids
+            ):
                 continue
             success, status_code, error = deliver_webhook_request(webhook.id, webhook.url, event, payload)
             WEBHOOK_DELIVERIES_TOTAL.labels(str(success)).inc()

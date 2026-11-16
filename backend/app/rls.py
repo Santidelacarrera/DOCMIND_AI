@@ -34,7 +34,7 @@ _USER = "NULLIF(current_setting('app.user_id', true), '')::uuid"
 
 # Tables that carry organization_id directly.
 TENANT_TABLES = (
-    "api_keys", "audit_logs", "contextrag_events", "documents", "extraction_runs", "extraction_schemas",
+    "api_keys", "audit_logs", "documents", "extraction_runs", "extraction_schemas",
     "invitations", "organization_members", "processing_jobs", "projects", "usage_records",
     "vector_deletions", "webhooks",
 )
@@ -49,9 +49,15 @@ CHILD_TABLES = {
     "webhook_deliveries": ("webhook_id", "webhooks"),
 }
 POLICY = "docmind_tenant_isolation"
-# Tables created after 0009 (migration 0011_conversations). Kept apart so 0009 never names a table
-# that does not exist yet when it runs; ``all_policy_statements`` covers every table.
+# Tables created after 0009 (migration 0011_conversations & 0012_saas_plans_intelligence).
+# Kept apart so 0009 never names a table that does not exist yet when it runs.
 TENANT_TABLES_0011 = ("conversations", "conversation_messages")
+TENANT_TABLES_0012 = (
+    "organization_subscriptions",
+    "query_history",
+    "billing_transactions",
+    "billing_webhook_events",
+)
 
 
 def policy_statements(
@@ -80,7 +86,11 @@ def policy_statements(
 
 def all_policy_statements() -> list[str]:
     """Every table's policy: 0009's and those of later migrations (used to build a schema at once)."""
-    return [*policy_statements(), *policy_statements(TENANT_TABLES_0011, {})]
+    return [
+        *policy_statements(),
+        *policy_statements(TENANT_TABLES_0011, {}),
+        *policy_statements(TENANT_TABLES_0012, {}),
+    ]
 
 
 # Phase 3. Lookups made before the organization is known. Each takes one unique, secret or

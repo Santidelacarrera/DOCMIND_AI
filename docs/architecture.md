@@ -18,8 +18,9 @@ Modular monolith (ADR-001, ADR-005): one backend, one document model, one pipeli
 | Module | Responsibility |
 |---|---|
 | `routers/` | HTTP API; the only authorization boundary |
-| `ingestion/` | Sanitising, text/OCR, PII masking, page-bounded chunks, embeddings, Qdrant store, extractive answers |
-| `rag/` | BM25, rank fusion, claim verification, named-term gate, conflicts, verified generation (from ContextRAG_Engine) |
+| `ingestion/` | Sanitising, multi-format extraction (PDF/DOCX/TXT/MD/CSV/XLSX/PPTX/images) & OCR, PII masking, page-bounded chunks, embeddings, Qdrant store, extractive answers |
+| `rag/` | BM25, rank fusion, claim verification, named-term gate, conflicts, safety guard, alias resolution, verified generation (from ContextRAG_Engine) |
+| `intelligence.py`, `plans.py` | Document classification, entities, summaries, comparisons, and multi-tier SaaS plans, metering, and quotas |
 | `conversations.py`, `routers/conversations.py` | Encrypted, private conversations |
 | `worker.py`, `vector_index.py`, `retention.py`, `reconcile.py` | Asynchronous processing, indexing, deletion outbox, retention |
 | `rls.py`, `security.py`, `project_access.py` | Tenancy: PostgreSQL RLS, authentication, case-level authorization |

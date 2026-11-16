@@ -61,3 +61,15 @@ Lo que queda, todo del propietario:
 2. Proyecto de Vertex AI y medición con 30–50 documentos reales anonimizados.
 3. Cuenta S3/KMS real (o base y bucket gestionados con sus copias) y conectar las alertas a Alertmanager.
 4. Revisión jurídica de la licencia.
+
+## Actualización 2026-11-16 — Cierre técnico y comercial SaaS
+
+Hecho en código y validado:
+1. **Procesamiento multiformato y OCR por página**: soporte validado para PDF (digital, escaneado y mixto), DOCX, TXT, MD, CSV, XLSX, PPTX e imágenes (`formats.py`, `ocr.py`), con guardas contra zip-bombs, NUL bytes y macros/contenido activo OOXML.
+2. **Unificación completa ContextRAG**: portados `rag/safety.py` y `rag/aliases.py`; creado helper de respaldo verificable para Fase 3 (`scripts/contextrag_phase3_retire.py`, sin `DROP TABLE` hasta autorización).
+3. **Inteligencia documental (`/intelligence`)**: plantillas (`invoice`, `dte_cl`, `contract`, `policy`, `receipt`), clasificación/tags automáticos, extracción determinista de entidades con cita, resúmenes por documento/proyecto, comparación multi-documento (JSON/CSV/XLSX) e historial `/ask` con redacción automática al borrar fuentes.
+4. **Modelo comercial SaaS y pasarelas de pago (`/billing`)**: 5 planes (`FREE`, `STARTER`, `PROFESSIONAL`, `BUSINESS`, `ENTERPRISE`), `PLANS_CONFIG_JSON`, cuotas `402 QUOTA_EXCEEDED`, adaptadores `StripeAdapter`, `MercadoPagoAdapter`, `TransbankAdapter` y `SandboxPaymentAdapter`, máquina de 7 estados normalizados, dunning/morosidad y webhooks firmados HMAC con protección anti-replay e idempotencia (`BILLING_INTEGRATION.md`).
+5. **Permisos granulares (`GRANULAR_PERMISSIONS.md`)**: alcance `documents:delete`, protección `Document.protected` con confirmación y `restore`, auto-concesión `write` al miembro creador de proyecto y filtrado de webhooks por `project_ids`.
+6. **Operación y seguridad**: rotación planificada con doble clave en conversaciones (`CONVERSATION_PREVIOUS_ENCRYPTION_KEY`), `fetch_models.py` con verificación de espacio y manifiesto SHA-256, `pg_backup.sh` con firma `.sha256` y plantilla `alertmanager.yml` parametrizada.
+
+Lo que queda (100 % dependiente de credenciales, datos, decisiones comerciales o revisión jurídica del propietario): ver [`FINAL_READINESS_REPORT.md`](FINAL_READINESS_REPORT.md).

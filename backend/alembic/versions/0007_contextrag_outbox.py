@@ -1,12 +1,12 @@
-"""ContextRAG outbox (contextrag_events)
+"""ContextRAG outbox (contextrag_events) -- historical migration preserved in chain.
 
 Revision ID: 0007_contextrag_outbox
 Revises: 0006_field_evidence
 """
 
-import app.models  # noqa: F401 -- registers metadata
+import sqlalchemy as sa
+
 from alembic import op
-from app.db import Base
 
 revision = "0007_contextrag_outbox"
 down_revision = "0006_field_evidence"
@@ -15,8 +15,31 @@ depends_on = None
 
 
 def upgrade() -> None:
-    Base.metadata.create_all(bind=op.get_bind(), tables=[Base.metadata.tables["contextrag_events"]])
+    bind = op.get_bind()
+    if "contextrag_events" in sa.inspect(bind).get_table_names():
+        return
+    op.create_table(
+        "contextrag_events",
+        sa.Column("id", sa.UUID(), primary_key=True),
+        sa.Column("organization_id", sa.UUID(), sa.ForeignKey("organizations.id"), nullable=False, index=True),
+        sa.Column("document_id", sa.UUID(), nullable=False, index=True),
+        sa.Column("kind", sa.String(16), nullable=False),
+        sa.Column("dedupe_key", sa.String(160), nullable=False),
+        sa.Column("status", sa.String(16), nullable=False, index=True),
+        sa.Column("attempts", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("next_attempt_at", sa.DateTime(timezone=True), nullable=False, index=True),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("claim_token", sa.String(36), nullable=True),
+        sa.Column("done_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("last_error", sa.String(80), nullable=True),
+        sa.Column("correlation_id", sa.String(64), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.UniqueConstraint("dedupe_key", name="uq_contextrag_event_dedupe"),
+    )
 
 
 def downgrade() -> None:
-    op.drop_table("contextrag_events")
+    bind = op.get_bind()
+    if "contextrag_events" in sa.inspect(bind).get_table_names():
+        op.drop_table("contextrag_events")

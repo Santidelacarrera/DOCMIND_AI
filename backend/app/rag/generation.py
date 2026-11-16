@@ -21,6 +21,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from app.rag.safety import has_active_content, safe_attribute
 from app.rag.text import content_tokens, split_sentences
 from app.rag.verification import ClaimVerdict, verify
 
@@ -99,7 +100,7 @@ def build_prompt(question: str, passages: Sequence[Passage], memory: str | None 
 
     def fence(p: Passage) -> str:
         body = _PASSAGE_TAG.sub(lambda m: f"<{m.group(1)}\u200bpassage", p.text)
-        source = _UNSAFE_ATTRIBUTE.sub(" ", str(p.hit.get("source_name") or ""))[:120]
+        source = safe_attribute(str(p.hit.get("source_name") or ""), limit=120)
         page = int(p.hit.get("page") or 0)
         return f'<passage index="{p.index}" source="{source}" page="{page}">\n{body}\n</passage>'
 
@@ -122,7 +123,11 @@ def generate_verified(
     if not raw or raw.startswith(NO_ANSWER):
         return GeneratedAnswer("", tuple(passages), ())
     verdicts = verify(raw, [p.text for p in passages], threshold=threshold)
-    kept = [f"{v.claim} {''.join(f'[{i}]' for i in v.citations)}" for v in verdicts if v.supported]
+    kept = [
+        f"{v.claim} {''.join(f'[{i}]' for i in v.citations)}"
+        for v in verdicts
+        if v.supported and not has_active_content(v.claim)
+    ]
     if len(kept) < len(verdicts):
         # Counts only: the generated text may echo document content and is never logged.
         logger.info("generated claims dropped", extra={"claims": len(verdicts), "dropped": len(verdicts) - len(kept)})

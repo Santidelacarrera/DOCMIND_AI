@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from fastapi import (
     APIRouter,
@@ -14,13 +14,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import api_support, request_context, vector_index
+from app import api_support, plans, request_context, vector_index
 from app.api_support import audit
 from app.core import settings
 from app.db import get_db
 from app.models import (
     AuditLog,
     Document,
+    QueryHistory,
     User,
 )
 from app.project_access import accessible_project_ids, as_strings, require_project
@@ -41,6 +42,7 @@ router = APIRouter()
 class AskInput(BaseModel):
     question: str = Field(min_length=3, max_length=500)
     top_k: int = Field(default=4, ge=1, le=8)
+    document_ids: list[uuid.UUID] | None = Field(default=None, max_length=25)
 
 
 def _answer(pipeline: Any, **kwargs: Any) -> Any:
@@ -127,6 +129,23 @@ def ask(
     membership(org_id, user, db, scope="documents:read")
     if not vector_index.enabled():
         raise HTTPException(503, "VECTOR_INDEX_DISABLED")
+    plans.check_query_quota(db, org_id)
+
+    visible = accessible_project_ids(db, org_id, user)
+    scoped_doc_ids: list[str] | None = None
+    if payload.document_ids is not None:
+        if payload.document_ids and visible:
+            found_ids = db.scalars(
+                select(Document.id).where(
+                    Document.id.in_(payload.document_ids),
+                    Document.organization_id == org_id,
+                    Document.deleted_at.is_(None),
+                    Document.project_id.in_(visible),
+                )
+            ).all()
+            scoped_doc_ids = [str(d) for d in found_ids]
+        else:
+            scoped_doc_ids = []
 
     def is_live(document_id: str) -> bool:
         try:
@@ -144,21 +163,39 @@ def ask(
             is not None
         )
 
+    pipeline = vector_index.get_pipeline()
     # Phase 3B: only the projects the caller may read. Vectors without a project (legacy, not yet
     # backfilled) match no list, so they are excluded instead of being answered without an owner.
     result = _answer(
-        vector_index.get_pipeline(),
+        pipeline,
         tenant_id=str(org_id),
         question=payload.question,
         top_k=payload.top_k,
         is_live=is_live,
-        project_ids=as_strings(accessible_project_ids(db, org_id, user)),
+        project_ids=as_strings(visible),
+        document_ids=scoped_doc_ids,
         min_coverage=settings().ask_min_evidence_coverage,
         min_similarity=settings().ask_min_semantic_similarity,
     )
+    body = _answer_body(result)
+    masked_q = pipeline.mask_query(tenant_id=str(org_id), question=payload.question)
+    db.add(
+        QueryHistory(
+            organization_id=org_id,
+            user_id=user.id if isinstance(user, User) else None,
+            project_id=None,
+            question=masked_q[:500],
+            answer_preview=str(body["answer"])[:1000],
+            abstained=bool(body["abstained"]),
+            mode=str(body["mode"]),
+            citations=cast(list[dict[str, Any]], body["citations"]),
+            document_ids=scoped_doc_ids or [],
+        )
+    )
+    plans.record_query_usage(db, org_id)
     audit(db, "document.ask", "organization", str(org_id), user, org_id)
     db.commit()
-    return _answer_body(result)
+    return body
 
 
 @router.post("/api/v1/projects/{project_id}/ask")
@@ -193,6 +230,22 @@ def project_ask(
     require_project(db, org_id, user, project_uuid)
     if not vector_index.enabled():
         raise HTTPException(503, "VECTOR_INDEX_DISABLED")
+    plans.check_query_quota(db, org_id)
+
+    scoped_doc_ids: list[str] | None = None
+    if payload.document_ids is not None:
+        if payload.document_ids:
+            found_ids = db.scalars(
+                select(Document.id).where(
+                    Document.id.in_(payload.document_ids),
+                    Document.organization_id == org_id,
+                    Document.project_id == project_uuid,
+                    Document.deleted_at.is_(None),
+                )
+            ).all()
+            scoped_doc_ids = [str(d) for d in found_ids]
+        else:
+            scoped_doc_ids = []
 
     def is_live(document_id: str) -> bool:
         try:
@@ -212,16 +265,34 @@ def project_ask(
         )
 
     request_id = request_context.get()
+    pipeline = vector_index.get_pipeline()
     result = _answer(
-        vector_index.get_pipeline(),
+        pipeline,
         tenant_id=str(org_id),
         question=payload.question,
         top_k=payload.top_k,
         is_live=is_live,
         project_id=str(project_uuid),
+        document_ids=scoped_doc_ids,
         min_coverage=settings().ask_min_evidence_coverage,
         min_similarity=settings().ask_min_semantic_similarity,
     )
+    body = _answer_body(result)
+    masked_q = pipeline.mask_query(tenant_id=str(org_id), question=payload.question)
+    db.add(
+        QueryHistory(
+            organization_id=org_id,
+            user_id=user.id if isinstance(user, User) else None,
+            project_id=project_uuid,
+            question=masked_q[:500],
+            answer_preview=str(body["answer"])[:1000],
+            abstained=bool(body["abstained"]),
+            mode=str(body["mode"]),
+            citations=cast(list[dict[str, Any]], body["citations"]),
+            document_ids=scoped_doc_ids or [],
+        )
+    )
+    plans.record_query_usage(db, org_id)
     # Same transaction as the response: the audit record exists if and only if the answer was given.
     db.add(
         AuditLog(
@@ -244,7 +315,63 @@ def project_ask(
             "abstained": result.abstained,
         },
     )
-    return _answer_body(result)
+    return body
+
+
+@router.get("/api/v1/ask/history")
+def ask_history(
+    organization_id: str,
+    project_id: uuid.UUID | None = None,
+    limit: int = 30,
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    """Recent /ask queries in the caller's accessible projects, hiding withdrawn sources."""
+    org_id = api_support.organization_id(organization_id)
+    membership(org_id, user, db, scope="documents:read")
+    visible = set(accessible_project_ids(db, org_id, user))
+    if not visible:
+        return []
+    query = select(QueryHistory).where(QueryHistory.organization_id == org_id)
+    if isinstance(user, User):
+        query = query.where((QueryHistory.user_id == user.id) | QueryHistory.user_id.is_(None))
+    if project_id is not None:
+        if project_id not in visible:
+            return []
+        query = query.where(QueryHistory.project_id == project_id)
+    rows = db.scalars(
+        query.order_by(QueryHistory.created_at.desc()).limit(max(1, min(limit, 100)))
+    ).all()
+    live_docs = {
+        str(d)
+        for d in db.scalars(
+            select(Document.id).where(
+                Document.organization_id == org_id,
+                Document.deleted_at.is_(None),
+                Document.project_id.in_(visible),
+            )
+        ).all()
+    }
+    out: list[dict[str, object]] = []
+    for item in rows:
+        if item.project_id is not None and item.project_id not in visible:
+            continue
+        cited_ids = {str(c.get("document_id")) for c in (item.citations or [])}
+        withdrawn = bool(cited_ids - live_docs)
+        out.append(
+            {
+                "id": str(item.id),
+                "project_id": str(item.project_id) if item.project_id else None,
+                "question": item.question,
+                "answer_preview": "[Contenido retirado: fuente eliminada o sin acceso.]" if withdrawn else item.answer_preview,
+                "abstained": item.abstained,
+                "mode": item.mode,
+                "citations": [] if withdrawn else list(item.citations or []),
+                "withdrawn": withdrawn,
+                "created_at": item.created_at,
+            }
+        )
+    return out
 
 
 def answer_in_scope(

@@ -34,19 +34,32 @@ class ConversationIntegrityError(RuntimeError):
     code = "CONVERSATION_INTEGRITY"
 
 
-def _key(organization_id: uuid.UUID) -> bytes:
-    secret = settings().conversation_encryption_key
-    if secret is None or not secret.get_secret_value():
+def _derive(raw_secret: str, organization_id: uuid.UUID) -> bytes:
+    if len(raw_secret.strip()) < 16:
         raise ConversationsDisabled()
     return HKDF(
         algorithm=hashes.SHA256(), length=32, salt=b"docmind-conversations-v1",
         info=str(organization_id).encode(),
-    ).derive(secret.get_secret_value().encode())
+    ).derive(raw_secret.encode())
+
+
+def _key(organization_id: uuid.UUID) -> bytes:
+    secret = settings().conversation_encryption_key
+    if secret is None or not secret.get_secret_value():
+        raise ConversationsDisabled()
+    return _derive(secret.get_secret_value(), organization_id)
+
+
+def _previous_key(organization_id: uuid.UUID) -> bytes | None:
+    prev = settings().conversation_previous_encryption_key
+    if prev is None or not prev.get_secret_value():
+        return None
+    return _derive(prev.get_secret_value(), organization_id)
 
 
 def enabled() -> bool:
     secret = settings().conversation_encryption_key
-    return secret is not None and bool(secret.get_secret_value())
+    return secret is not None and len(secret.get_secret_value().strip()) >= 16
 
 
 def _aad(conversation_id: uuid.UUID, seq: int, role: str) -> bytes:
@@ -62,11 +75,30 @@ def seal(organization_id: uuid.UUID, conversation_id: uuid.UUID, seq: int, role:
 def open_turn(organization_id: uuid.UUID, conversation_id: uuid.UUID, seq: int, role: str, payload: bytes) -> dict[str, Any]:
     if len(payload) <= NONCE:
         raise ConversationIntegrityError()
+    aad = _aad(conversation_id, seq, role)
+    body: bytes | None = None
     try:
-        body = AESGCM(_key(organization_id)).decrypt(payload[:NONCE], payload[NONCE:], _aad(conversation_id, seq, role))
+        body = AESGCM(_key(organization_id)).decrypt(payload[:NONCE], payload[NONCE:], aad)
+    except InvalidTag:
+        prev = _previous_key(organization_id)
+        if prev is None:
+            raise ConversationIntegrityError() from None
+        try:
+            body = AESGCM(prev).decrypt(payload[:NONCE], payload[NONCE:], aad)
+        except InvalidTag:
+            raise ConversationIntegrityError() from None
+    try:
         value = json.loads(body)
-    except (InvalidTag, ValueError):
+    except ValueError:
         raise ConversationIntegrityError() from None
     if not isinstance(value, dict):
         raise ConversationIntegrityError()
     return value
+
+
+def reencrypt_turn(
+    organization_id: uuid.UUID, conversation_id: uuid.UUID, seq: int, role: str, payload: bytes
+) -> bytes:
+    """Open a turn (using primary or previous key) and re-seal it with the current primary key."""
+    content = open_turn(organization_id, conversation_id, seq, role, payload)
+    return seal(organization_id, conversation_id, seq, role, content)

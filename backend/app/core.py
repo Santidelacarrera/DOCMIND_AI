@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     max_pdf_text_chars: int = 500_000
     max_ocr_pages: int = 25
     ocr_timeout_seconds: int = 60
+    ocr_languages: str = "eng"
     processing_timeout_seconds: int = 300
     stuck_job_seconds: int = 900
     # A QUEUED job older than this has most likely lost its broker message (Redis flush,
@@ -154,8 +155,19 @@ class Settings(BaseSettings):
     # Conversations (ADR-005 delivery 3). Turns are AES-GCM encrypted with a per-organization key derived
     # from this secret; without it conversations are disabled (503), never stored in clear text.
     conversation_encryption_key: SecretStr | None = None
+    conversation_previous_encryption_key: SecretStr | None = None
     conversation_retention_days: int = Field(default=90, ge=1, le=3650)
     conversation_memory_turns: int = Field(default=3, ge=0, le=20)  # earlier turns given to the generator
+
+    @field_validator("ocr_languages")
+    @classmethod
+    def _validate_ocr_languages(cls, value: str) -> str:
+        import re
+
+        cleaned = value.strip() or "eng"
+        if not re.fullmatch(r"[a-z]{3}(?:\+[a-z]{3})*", cleaned):
+            raise ValueError("OCR_LANGUAGES must be 3-letter Tesseract codes separated by '+'")
+        return cleaned
 
     @field_validator("ask_min_semantic_similarity", mode="before")
     @classmethod
@@ -176,6 +188,16 @@ class Settings(BaseSettings):
     storage_reconcile_delete: bool = False
     storage_reconcile_max_delete_fraction: float = 0.5
     free_pages_per_month: int = 20
+    plans_config_json: str | None = None
+    billing_provider: Literal["sandbox", "stripe", "mercadopago", "transbank"] = "sandbox"
+    billing_live_enabled: bool = False
+    billing_webhook_secret: SecretStr | None = None
+    billing_webhook_tolerance_seconds: int = Field(default=300, ge=30, le=3600)
+    stripe_secret_key: SecretStr | None = None
+    mercadopago_access_token: SecretStr | None = None
+    transbank_api_key: SecretStr | None = None
+    require_explicit_delete_scope: bool = False
+    project_creator_auto_grant: bool = True
     rate_limit_login: int = 10
     rate_limit_register: int = 5
     rate_limit_upload: int = 20
@@ -276,6 +298,17 @@ class Settings(BaseSettings):
                     raise ValueError(
                         "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required for S3 storage in staging/production"
                     )
+            if self.billing_live_enabled:
+                if self.billing_provider == "sandbox":
+                    raise ValueError("BILLING_LIVE_ENABLED=true cannot use BILLING_PROVIDER=sandbox")
+                if not self.billing_webhook_secret or not self.billing_webhook_secret.get_secret_value():
+                    raise ValueError("BILLING_WEBHOOK_SECRET is required when BILLING_LIVE_ENABLED=true")
+                if self.billing_provider == "stripe" and not self.stripe_secret_key:
+                    raise ValueError("STRIPE_SECRET_KEY is required when BILLING_PROVIDER=stripe")
+                if self.billing_provider == "mercadopago" and not self.mercadopago_access_token:
+                    raise ValueError("MERCADOPAGO_ACCESS_TOKEN is required when BILLING_PROVIDER=mercadopago")
+                if self.billing_provider == "transbank" and not self.transbank_api_key:
+                    raise ValueError("TRANSBANK_API_KEY is required when BILLING_PROVIDER=transbank")
         return self
 
     @property

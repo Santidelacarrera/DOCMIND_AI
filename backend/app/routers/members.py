@@ -18,7 +18,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import api_support, rls
+from app import api_support, plans, rls
 from app.api_support import audit
 from app.core import settings
 from app.db import get_db
@@ -115,6 +115,7 @@ def add_member(
         )
     ):
         raise HTTPException(409, "ALREADY_MEMBER")
+    plans.check_user_seat_quota(db, org_id)
     member = OrganizationMember(organization_id=org_id, user_id=target.id, role=role)
     db.add(member)
     audit(db, "member.add", "user", str(target.id), user, org_id)
@@ -224,6 +225,7 @@ def create_invitation(
     )
     if pending:
         raise HTTPException(409, "INVITATION_ALREADY_PENDING")
+    plans.check_user_seat_quota(db, org_id)
     token = token_urlsafe(32)
     invitation = Invitation(
         organization_id=org_id,

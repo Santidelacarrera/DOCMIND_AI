@@ -17,7 +17,7 @@ test("main pages fit a phone screen without horizontal scrolling", async ({ page
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
-  for (const path of ["/dashboard", "/documents", "/ask", "/conversations", "/members", "/schemas"]) {
+  for (const path of ["/dashboard", "/documents", "/ask", "/conversations", "/intelligence", "/members", "/schemas", "/billing"]) {
     await page.goto(path);
     await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
     // Lists load after the first paint (and some pages poll, so the network never goes idle): give the

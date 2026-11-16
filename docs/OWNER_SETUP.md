@@ -46,7 +46,7 @@ Tres cosas desbloquean lo que falta validar de la unificación (`docs/UNIFICATIO
    ```
 2. **Guardarla en el gestor de secretos** del entorno (Google Secret Manager, el de la plataforma de despliegue o un `.env` de producción fuera del repositorio con permisos 600) como `CONVERSATION_ENCRYPTION_KEY`. Una clave distinta por entorno (staging y producción).
 3. **Copia de seguridad de la clave**, separada de las copias de la base de datos: sin ella, las copias de `conversation_messages` son ilegibles, y esa es la intención.
-4. **No hay rotación automática.** Cambiar la clave deja ilegibles las conversaciones anteriores (la API responde 500 `CONVERSATION_INTEGRITY` al abrirlas). Para rotarla hay que borrar antes las conversaciones o aceptar perderlas. La rotación con doble clave queda como trabajo futuro (`DOCMIND_TECHNICAL_DEBT.md`).
+4. **Rotación planificada con doble clave (`CONVERSATION_PREVIOUS_ENCRYPTION_KEY`).** Soportada en `app/conversations.py`: al rotar, colocar la clave nueva en `CONVERSATION_ENCRYPTION_KEY` y la anterior en `CONVERSATION_PREVIOUS_ENCRYPTION_KEY`; `open_turn` abrirá con cualquiera de las dos y `reencrypt_turn` permite recifrar los turnos históricos en sitio antes de retirar la clave antigua.
 5. **Retención:** `CONVERSATION_RETENTION_DAYS` (90 por defecto) debe coincidir con la política de datos acordada con el cliente.
 
 ## 3. Evaluación con documentos reales

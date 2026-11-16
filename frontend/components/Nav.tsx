@@ -21,6 +21,9 @@ export default function Nav({ current }: { current?: string }) {
       <Link href="/conversations" aria-current={current === "conversations" ? "page" : undefined}>
         Conversations
       </Link>
+      <Link href="/intelligence" aria-current={current === "intelligence" ? "page" : undefined}>
+        Compare
+      </Link>
       <Link href="/schemas" aria-current={current === "schemas" ? "page" : undefined}>
         Schemas
       </Link>
@@ -29,6 +32,9 @@ export default function Nav({ current }: { current?: string }) {
       </Link>
       <Link href="/webhooks" aria-current={current === "webhooks" ? "page" : undefined}>
         Webhooks
+      </Link>
+      <Link href="/billing" aria-current={current === "billing" ? "page" : undefined}>
+        Billing
       </Link>
       <button type="button" className="linkbutton" onClick={logout}>
         Sign out

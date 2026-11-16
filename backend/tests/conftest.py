@@ -148,14 +148,18 @@ class FakeOCR:
     which aren't installed in every test environment, for every test that may run
     ``worker.process_document`` against one."""
 
-    def extract_pages(self, content: bytes) -> list[str]:
+    def extract_pages(self, content: bytes, page_numbers: list[int] | None = None) -> list[str]:
         from io import BytesIO
 
         from pypdf import PdfReader
 
+        count = len(page_numbers) if page_numbers is not None else len(PdfReader(BytesIO(content)).pages)
         # Contains the values MockLLMProvider returns, so a clean happy path has real evidence;
         # tests of unsupported values override this (see test_provenance.py).
-        return [OCR_TEXT] * len(PdfReader(BytesIO(content)).pages)
+        return [OCR_TEXT] * count
+
+    def extract_images(self, images: list[bytes]) -> list[str]:
+        return [OCR_TEXT] * len(images)
 
 
 @pytest.fixture(autouse=True)

@@ -26,6 +26,7 @@ from app.rag import conflicts as conflict_detection
 from app.rag import lexical
 from app.rag import rerank as reranking
 from app.rag.fusion import reciprocal_rank_fusion
+from app.rag.safety import has_active_content
 
 ABSTENTION = "No encontré información sobre eso en los documentos disponibles."
 _STOP = frozenset(
@@ -124,7 +125,7 @@ def _best_sentences(
     scored: list[tuple[float, int, str, dict[str, Any]]] = []
     for rank, hit in enumerate(hits):
         for sentence in (s.strip() for s in _SENTENCE.split(str(hit.get("text", "")))):
-            if len(sentence) <= 15:
+            if len(sentence) <= 15 or has_active_content(sentence):
                 continue
             overlap = sum(weight[t] for t in wanted & terms(sentence))
             if overlap:
@@ -171,7 +172,7 @@ def _best_sentences_semantic(
         (sentence, rank, hit)
         for rank, hit in enumerate(hits)
         for sentence in (s.strip() for s in _SENTENCE.split(str(hit.get("text", ""))))
-        if len(sentence) > 15
+        if len(sentence) > 15 and not has_active_content(sentence)
     ]
     if not candidates:
         return []
@@ -205,6 +206,7 @@ def answer(
     is_live: Callable[[str], bool] | None = None,
     project_id: str | None = None,
     project_ids: Sequence[str] | None = None,
+    document_ids: Sequence[str] | None = None,
     min_coverage: float = 0.5,
     min_similarity: float | None = None,
     mode: str | None = None,
@@ -248,7 +250,8 @@ def answer(
     question = question.strip()
     hits, vector = _retrieve(
         pipeline, tenant_id=tenant_id, question=question, top_k=top_k, min_score=min_score,
-        is_live=is_live, project_id=project_id, project_ids=project_ids, mode=mode, reranker=reranker,
+        is_live=is_live, project_id=project_id, project_ids=project_ids, document_ids=document_ids,
+        mode=mode, reranker=reranker,
     )
     if answer_mode == "generative":
         return _generative(
@@ -362,6 +365,7 @@ def retrieve(
     is_live: Callable[[str], bool] | None = None,
     project_id: str | None = None,
     project_ids: Sequence[str] | None = None,
+    document_ids: Sequence[str] | None = None,
     mode: str | None = None,
     reranker: Any = "configured",
 ) -> list[dict[str, Any]]:
@@ -377,7 +381,8 @@ def retrieve(
     """
     return _retrieve(
         pipeline, tenant_id=tenant_id, question=question, top_k=top_k, min_score=min_score,
-        is_live=is_live, project_id=project_id, project_ids=project_ids, mode=mode, reranker=reranker,
+        is_live=is_live, project_id=project_id, project_ids=project_ids, document_ids=document_ids,
+        mode=mode, reranker=reranker,
     )[0]
 
 
@@ -391,6 +396,7 @@ def _retrieve(
     is_live: Callable[[str], bool] | None,
     project_id: str | None,
     project_ids: Sequence[str] | None,
+    document_ids: Sequence[str] | None = None,
     mode: str | None = None,
     reranker: Any = "configured",
 ) -> tuple[list[dict[str, Any]], list[float] | None]:
@@ -407,8 +413,10 @@ def _retrieve(
     project = parse_tenant(project_id) if project_id is not None else None
     allowed = {parse_tenant(p) for p in project_ids} if project_ids is not None else None
     scope = sorted(allowed) if allowed is not None else None
+    allowed_docs = {parse_tenant(d) for d in document_ids} if document_ids is not None else None
+    doc_scope = sorted(allowed_docs) if allowed_docs is not None else None
     question = question.strip()
-    if not terms(question) or (allowed is not None and not allowed):
+    if not terms(question) or (allowed is not None and not allowed) or (allowed_docs is not None and not allowed_docs):
         return [], None
     started = time.perf_counter()
     vector = pipeline.query_vector(tenant_id=tenant, question=question)
@@ -416,12 +424,15 @@ def _retrieve(
     limit = top_k if mode == "dense" else max(top_k, cfg.retrieval_candidates)
     if active is not None:
         limit = max(limit, cfg.rerank_candidates)  # the cross-encoder needs candidates to reorder
-    candidates = pipeline.store.search(tenant, vector, limit=limit, project_id=project, project_ids=scope)
+    candidates = pipeline.store.search(
+        tenant, vector, limit=limit, project_id=project, project_ids=scope, document_ids=doc_scope,
+    )
     if mode == "hybrid":
         lexical_hits = lexical.search(
             pipeline.store, tenant, tokens(pipeline.mask_query(tenant_id=tenant, question=question)), tokens,
             limit=cfg.retrieval_candidates, ttl=cfg.retrieval_lexical_cache_seconds,
             max_chunks=cfg.retrieval_lexical_max_chunks, project_id=project, project_ids=scope,
+            document_ids=doc_scope,
         )
         candidates = _fuse(pipeline, tenant, vector, candidates, lexical_hits, cfg.retrieval_rrf_k)
     hits = [
@@ -429,6 +440,7 @@ def _retrieve(
         if h.get("score", 0.0) >= min_score and h.get("tenant_id") == tenant
         and (project is None or h.get("project_id") == project)
         and (allowed is None or h.get("project_id") in allowed)
+        and (allowed_docs is None or str(h.get("document_id")) in allowed_docs)
         and (is_live is None or is_live(str(h.get("document_id"))))
     ]
     # Reranking only reorders hits that already passed every check above; it cannot add one.

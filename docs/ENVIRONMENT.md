@@ -18,7 +18,8 @@ La referencia completa, con valores por defecto seguros para desarrollo, es [`.e
 
 | Variable | Qué hace |
 |---|---|
-| `MAX_UPLOAD_BYTES`, `MAX_PDF_PAGES`, `MAX_OCR_PAGES` | Límites de subida y de OCR |
+| `MAX_UPLOAD_BYTES`, `MAX_PDF_PAGES`, `MAX_OCR_PAGES`, `OCR_LANGUAGES` | Límites de subida, OCR e idiomas Tesseract (`eng`, `spa+eng`) |
+| `PLANS_CONFIG_JSON` | JSON opcional para personalizar cuotas, precios de referencia o funciones por plan SaaS |
 | `LLM_PROVIDER` | `mock` (desarrollo), `openai`, `gemini` (capa gratuita: solo datos sintéticos), `vertex` (Gemini en Vertex AI, de pago, para documentos reales) |
 | `VERTEX_PROJECT`, `VERTEX_LOCATION`, `VERTEX_MODEL` | Proyecto de Google Cloud, región (`southamerica-east1` deja los datos en São Paulo; `global` usa el endpoint global) y modelo (vacío = `GEMINI_MODEL`). Credenciales: Application Default Credentials de una cuenta de servicio, nunca una clave en `.env` |
 | `GEMINI_INPUT_PRICE_PER_1M`, `GEMINI_OUTPUT_PRICE_PER_1M` | Precios vigentes, también para `vertex`: alimentan `estimated_cost` y la métrica `docmind_llm_estimated_cost_total` |
@@ -49,10 +50,15 @@ La referencia completa, con valores por defecto seguros para desarrollo, es [`.e
 | `ASK_GENERATION_THRESHOLD` | Umbral de verificación de cada frase generada (0,95). Con el verificador léxico, solo 1,0 pasa |
 | `ASK_CONTEXT_CHARS` | Máximo de caracteres de fragmentos enviados al modelo (6000) |
 | `ASK_GENERATION_MAX_TOKENS` | Máximo de tokens de la respuesta generada (600) |
-| `CONVERSATION_ENCRYPTION_KEY` | Secreto del que se deriva la clave AES-256-GCM de cada organización (HKDF). Sin él, las conversaciones están desactivadas (503). Cambiarlo deja ilegibles las conversaciones existentes |
+| `CONVERSATION_ENCRYPTION_KEY` | Secreto del que se deriva la clave AES-256-GCM de cada organización (HKDF). Sin él, las conversaciones están desactivadas (503). |
+| `CONVERSATION_PREVIOUS_ENCRYPTION_KEY` | Clave anterior durante una rotación planificada: `open_turn` intenta abrir primero con la clave actual y luego con esta; `reencrypt_turn` permite recifrar en sitio |
 | `CONVERSATION_RETENTION_DAYS` | Una conversación sin actividad durante estos días se borra (90) |
 | `CONVERSATION_MEMORY_TURNS` | Turnos previos que se pasan al modelo como contexto no citable en modo generativo (3) |
 | `PII_MASKING_KEY`, `PII_DETECTORS` | Enmascarado de PII antes de indexar (incluye RUT chileno con dígito verificador) |
+| `OCR_LANGUAGES` | Idiomas Tesseract separados por `+` de 3 letras (ej. `eng+spa`) |
+| `PLANS_CONFIG_JSON` | JSON opcional para sobrescribir límites y precios del catálogo de planes (`FREE`, `STARTER`, `PROFESSIONAL`, `BUSINESS`, `ENTERPRISE`) |
+| `BILLING_PROVIDER`, `BILLING_LIVE_ENABLED`, `BILLING_WEBHOOK_SECRET` | Pasarela comercial (`sandbox`, `stripe`, `mercadopago`, `transbank`), interruptor de cobros reales (`false` por defecto) y secreto HMAC de webhooks ([BILLING_INTEGRATION.md](BILLING_INTEGRATION.md)) |
+| `REQUIRE_EXPLICIT_DELETE_SCOPE`, `PROJECT_CREATOR_AUTO_GRANT` | Exigir `documents:delete` en claves API para borrar documentos (`false` por defecto) y auto-conceder escritura al miembro creador de un proyecto (`true` por defecto; [GRANULAR_PERMISSIONS.md](GRANULAR_PERMISSIONS.md)) |
 
 ## Retención, almacenamiento y sincronización
 

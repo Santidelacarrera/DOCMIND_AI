@@ -22,7 +22,7 @@ from tests.conftest import make_pdf
 
 # Endpoints that are not tenant-scoped by design.
 PUBLIC_OR_USER_LEVEL = {
-    "/health", "/ready", "/metrics",
+    "/health", "/ready", "/metrics", "/api/v1/plans", "/api/v1/billing/webhooks/{provider}",
     "/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/logout", "/api/v1/auth/me",
     "/api/v1/organizations", "/api/v1/invitations/accept",
 }
@@ -34,9 +34,21 @@ BODIES: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/api-keys"): ["documents:read"],
     ("POST", "/api/v1/webhooks"): {"url": "https://example.com/hook", "events": ["document.completed"]},
     ("PATCH", "/api/v1/extraction-fields/{field_id}"): "hacked",
+    ("PATCH", "/api/v1/documents/{document_id}/metadata"): {"category": "contract", "tags": ["test"]},
+    ("POST", "/api/v1/documents/{document_id}/summarize"): {"max_sentences": 3},
+    ("POST", "/api/v1/projects/{project_id}/summarize"): {"max_sentences": 3},
+    ("POST", "/api/v1/documents/compare"): {
+        "document_ids": [str(uuid.uuid4()), str(uuid.uuid4())],
+        "topic": "audit",
+    },
     ("POST", "/api/v1/ask"): {"question": "vacaciones del personal"},
     ("POST", "/api/v1/conversations"): {"project_id": None},
     ("POST", "/api/v1/conversations/{conversation_id}/ask"): {"question": "outsider attempt to read"},
+    ("PATCH", "/api/v1/billing/subscription"): {"plan": "STARTER"},
+    ("POST", "/api/v1/billing/checkout-preview"): {"target_plan": "STARTER", "billing_cycle": "monthly"},
+    ("POST", "/api/v1/billing/checkout"): {"target_plan": "STARTER", "billing_cycle": "monthly"},
+    ("POST", "/api/v1/billing/subscription/cancel"): {"immediate": False},
+    ("POST", "/api/v1/billing/refund"): {"transaction_id": str(uuid.uuid4())},
 }
 EXTRA_QUERY = {
     ("POST", "/api/v1/members"): "&email=x@example.com&role=MEMBER",

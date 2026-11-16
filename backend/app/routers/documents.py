@@ -22,12 +22,13 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from pypdf import PdfReader
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import api_support, vector_index
+from app import api_support, plans, vector_index
 from app.antivirus import antivirus
 from app.api_support import (
     MAX_FIELD_VALUE_BYTES,
@@ -39,7 +40,8 @@ from app.api_support import (
 )
 from app.core import settings
 from app.db import get_db
-from app.ingestion.docx import DOCX_MIME, looks_like_docx
+from app.ingestion import formats
+from app.ingestion.docx import DOCX_MIME
 from app.models import (
     Document,
     DocumentPage,
@@ -49,7 +51,6 @@ from app.models import (
     ExtractionSchema,
     ExtractionSchemaVersion,
     JobStatus,
-    Organization,
     ProcessingJob,
     Role,
     RunStatus,
@@ -57,7 +58,7 @@ from app.models import (
     User,
     utcnow,
 )
-from app.processing import ProcessingError, extract_docx_pages
+from app.processing import ProcessingError, extract_any_pages, extract_docx_pages
 from app.project_access import accessible_project_ids, require_document, require_project
 from app.rate_limit import enforce
 from app.retention import delete_objects, scrub_derived_text
@@ -65,6 +66,7 @@ from app.security import (
     ApiPrincipal,
     current_user,
     membership,
+    require_user,
 )
 from app.storage import StorageAccessError, owned_key, storage
 from app.worker import process_document, process_vector_deletions
@@ -129,25 +131,24 @@ def _kick_vector_deletions() -> None:
         logger.warning("could not enqueue vector deletion run; beat will pick it up")
 
 
-def _validated_upload(file: UploadFile) -> tuple[bytes, bool, int]:
+def _validated_upload(file: UploadFile) -> tuple[bytes, str, str, int]:
     """Read and check an uploaded file: size, type by name and magic bytes, page count, antivirus.
-    Returns ``(content, is_docx, page_count)``. Shared by new documents and new versions."""
+    Returns ``(content, mime_type, extension, page_count)``. Shared by new documents and new versions."""
     content = file.file.read(settings().max_upload_bytes + 1)
     if len(content) > settings().max_upload_bytes:
         raise HTTPException(413, "FILE_TOO_LARGE")
-    name = (file.filename or "").lower()
-    if name.endswith(".pdf") and content.startswith(b"%PDF-"):
-        is_docx = False
-    elif name.endswith(".docx") and looks_like_docx(content):
-        is_docx = True  # legacy .doc and macro-enabled .docm are not accepted
-    else:
-        raise HTTPException(415, "UNSUPPORTED_FILE_TYPE")
-    if is_docx:
+    try:
+        spec = formats.detect_format(file.filename, content)
+    except formats.UnsafeFormat as exc:
+        code = 415 if exc.code == "UNSUPPORTED_FILE_TYPE" else 422
+        raise HTTPException(code, exc.code) from None
+
+    if spec.format_name == "docx":
         try:
             page_count = len(extract_docx_pages(content))
         except ProcessingError as exc:
             raise HTTPException(422, exc.code) from None
-    else:
+    elif spec.format_name == "pdf":
         try:
             reader = PdfReader(io.BytesIO(content))
             if reader.is_encrypted:
@@ -157,6 +158,13 @@ def _validated_upload(file: UploadFile) -> tuple[bytes, bool, int]:
             raise
         except Exception:
             raise HTTPException(422, "DOCUMENT_INVALID") from None
+    else:
+        try:
+            extracted = extract_any_pages(content, spec.mime_type)
+            page_count = len(extracted.ocr_images) if extracted.ocr_images else len(extracted.pages)
+        except ProcessingError as exc:
+            raise HTTPException(422, exc.code) from None
+
     if page_count < 1:
         raise HTTPException(422, "DOCUMENT_INVALID")
     if page_count > settings().max_pdf_pages:
@@ -165,33 +173,12 @@ def _validated_upload(file: UploadFile) -> tuple[bytes, bool, int]:
         antivirus().scan(content)
     except RuntimeError as exc:
         raise HTTPException(503 if str(exc) == "ANTIVIRUS_UNAVAILABLE" else 422, str(exc)) from None
-    return content, is_docx, page_count
+    return content, spec.mime_type, spec.extension, page_count
 
 
-def _check_page_quota(db: Session, org_id: uuid.UUID, page_count: int) -> None:
-    """402 when a FREE organization would exceed its monthly pages. Shared by new documents and new
-    versions (a version reserves its pages again: without this, versions bypassed the quota).
-
-    Locks the organization row so concurrent uploads cannot each observe the same remaining quota and
-    collectively exceed it."""
-    organization = db.scalar(
-        select(Organization).where(Organization.id == org_id).with_for_update()
-    )
-    if organization is None:
-        raise HTTPException(404, "ORGANIZATION_NOT_FOUND")
-    reserved_pages = int(
-        db.scalar(
-            select(func.coalesce(func.sum(UsageRecord.quantity), 0)).where(
-                UsageRecord.organization_id == org_id, UsageRecord.metric == "pages_reserved"
-            )
-        )
-        or 0
-    )
-    if (
-        organization.plan.value == "FREE"
-        and reserved_pages + page_count > settings().free_pages_per_month
-    ):
-        raise HTTPException(402, "QUOTA_EXCEEDED")
+def _check_page_quota(db: Session, org_id: uuid.UUID, page_count: int, *, file_bytes: int = 0) -> None:
+    """Backward-compatible wrapper around SaaS plan quota enforcement."""
+    plans.check_upload_quota(db, org_id, file_bytes=file_bytes, page_count=page_count, is_new_document=True)
 
 
 @router.post("/api/v1/documents", status_code=status.HTTP_202_ACCEPTED, response_model=None)
@@ -213,8 +200,8 @@ def upload_document(
     if declared and declared.isdigit() and int(declared) > settings().max_upload_bytes + 65_536:
         raise HTTPException(413, "FILE_TOO_LARGE")
     require_project(db, org_id, user, project_id, write=True)  # phase 3B: a grant with write access, or a key for it
-    content, is_docx, page_count = _validated_upload(file)
-    _check_page_quota(db, org_id, page_count)
+    content, mime, ext, page_count = _validated_upload(file)
+    plans.check_upload_quota(db, org_id, file_bytes=len(content), page_count=page_count, is_new_document=True)
     checksum = hashlib.sha256(content).hexdigest()
     existing = db.scalar(
         select(Document).where(
@@ -225,8 +212,7 @@ def upload_document(
     )
     if existing:
         return _duplicate_response(existing)
-    mime = DOCX_MIME if is_docx else "application/pdf"
-    key = owned_key(org_id, f"{org_id}/{uuid.uuid4()}.{'docx' if is_docx else 'pdf'}")
+    key = owned_key(org_id, f"{org_id}/{uuid.uuid4()}{ext}")
     storage.put(key, content)
     try:
         document = Document(
@@ -235,6 +221,7 @@ def upload_document(
             filename=sanitize_filename(file.filename),
             storage_key=key,
             mime_type=mime,
+            size_bytes=len(content),
             checksum=checksum,
             page_count=page_count,
         )
@@ -288,6 +275,10 @@ def list_documents(
     status: JobStatus | None = Query(
         default=None, description="Only documents whose latest job is in this state, e.g. FAILED"
     ),
+    project_id: uuid.UUID | None = Query(default=None),
+    category: str | None = Query(default=None, max_length=64),
+    tag: str | None = Query(default=None, max_length=64),
+    q: str | None = Query(default=None, max_length=200),
     user: User | ApiPrincipal = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> list[dict[str, object]]:
@@ -297,6 +288,10 @@ def list_documents(
     visible = accessible_project_ids(db, org_id, user)
     if not visible:
         return []
+    if project_id is not None:
+        if project_id not in visible:
+            return []
+        visible = [project_id]
     # Latest job per document in one query (avoids N+1).
     latest = (
         select(ProcessingJob.document_id, func.max(ProcessingJob.attempt).label("attempt"))
@@ -320,19 +315,41 @@ def list_documents(
     )
     if status is not None:
         query = query.where(ProcessingJob.status == status)
+    if category is not None and category.strip():
+        query = query.where(Document.category == category.strip().lower())
+    if q is not None and q.strip():
+        term = f"%{q.strip()}%"
+        page_match = exists(
+            select(DocumentPage.id).where(
+                DocumentPage.document_id == Document.id,
+                DocumentPage.text.ilike(term),
+            )
+        )
+        query = query.where(or_(Document.filename.ilike(term), Document.category.ilike(term), page_match))
     rows = db.execute(query.order_by(Document.created_at.desc()).limit(100)).all()
-    return [
-        {
-            "id": str(d.id),
-            "filename": d.filename,
-            "pages": d.page_count,
-            "status": job_status.value if job_status else None,
-            "failure_code": failure_code,
-            "created_at": d.created_at,
-            "project_id": str(d.project_id),
-        }
-        for d, job_status, failure_code in rows
-    ]
+    clean_tag = tag.strip().lower() if tag and tag.strip() else None
+    out: list[dict[str, object]] = []
+    for d, job_status, failure_code in rows:
+        doc_tags = [str(t) for t in (d.tags or [])]
+        if clean_tag and clean_tag not in [t.lower() for t in doc_tags]:
+            continue
+        out.append(
+            {
+                "id": str(d.id),
+                "filename": d.filename,
+                "mime_type": d.mime_type,
+                "size_bytes": d.size_bytes,
+                "pages": d.page_count,
+                "category": d.category,
+                "tags": doc_tags,
+                "tables_detected": d.tables_detected,
+                "status": job_status.value if job_status else None,
+                "failure_code": failure_code,
+                "created_at": d.created_at,
+                "project_id": str(d.project_id),
+            }
+        )
+    return out
 
 
 @router.post("/api/v1/documents/{document_id}/process", status_code=status.HTTP_202_ACCEPTED)
@@ -433,8 +450,8 @@ def upload_document_version(
     org_id = api_support.organization_id(organization_id)
     membership(org_id, user, db, Role.member, scope="documents:write")
     require_document(db, org_id, user, document_id, write=True)
-    content, is_docx, page_count = _validated_upload(file)
-    _check_page_quota(db, org_id, page_count)
+    content, mime, ext, page_count = _validated_upload(file)
+    plans.check_upload_quota(db, org_id, file_bytes=len(content), page_count=page_count, is_new_document=False)
     item = db.scalar(
         select(Document)
         .where(Document.id == document_id, Document.organization_id == org_id, Document.deleted_at.is_(None))
@@ -454,14 +471,15 @@ def upload_document_version(
     checksum = hashlib.sha256(content).hexdigest()
     if checksum == item.checksum:
         return {"document_id": str(item.id), "status": "unchanged"}
-    key = owned_key(org_id, f"{org_id}/{uuid.uuid4()}.{'docx' if is_docx else 'pdf'}")
+    key = owned_key(org_id, f"{org_id}/{uuid.uuid4()}{ext}")
     storage.put(key, content)
     try:
         prior_attempt = db.scalar(
             select(func.coalesce(func.max(ProcessingJob.attempt), 0)).where(ProcessingJob.document_id == item.id)
         )
         item.storage_key, item.checksum, item.page_count = key, checksum, page_count
-        item.mime_type = DOCX_MIME if is_docx else "application/pdf"
+        item.mime_type = mime
+        item.size_bytes = len(content)
         item.filename = sanitize_filename(file.filename)
         item.indexed_at = None
         last_version = db.scalar(
@@ -531,9 +549,86 @@ def document(
     return {
         "id": str(item.id),
         "filename": item.filename,
+        "mime_type": item.mime_type,
+        "size_bytes": item.size_bytes,
         "pages": item.page_count,
+        "category": item.category,
+        "tags": list(item.tags or []),
+        "tables_detected": item.tables_detected,
+        "protected": bool(item.protected),
         "project_id": str(item.project_id),
         "created_at": item.created_at,
+    }
+
+
+@router.get("/api/v1/documents/{document_id}/preview")
+def document_preview(
+    document_id: uuid.UUID,
+    organization_id: str,
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Extracted page text and OCR confidence for safe in-app preview across all formats."""
+    org_id = api_support.organization_id(organization_id)
+    membership(org_id, user, db, scope="documents:read")
+    item = require_document(db, org_id, user, document_id)
+    pages = db.scalars(
+        select(DocumentPage)
+        .where(DocumentPage.document_id == item.id)
+        .order_by(DocumentPage.page_number.asc())
+    ).all()
+    return {
+        "document_id": str(item.id),
+        "filename": item.filename,
+        "mime_type": item.mime_type,
+        "category": item.category,
+        "tags": list(item.tags or []),
+        "tables_detected": item.tables_detected,
+        "pages": [
+            {
+                "page_number": p.page_number,
+                "text": p.text or "",
+                "ocr_used": p.ocr_used,
+                "ocr_confidence": p.ocr_confidence,
+            }
+            for p in pages
+        ],
+    }
+
+
+class DocumentMetadataInput(BaseModel):
+    category: str | None = Field(default=None, max_length=64)
+    tags: list[str] | None = Field(default=None, max_length=20)
+    protected: bool | None = None
+
+
+@router.patch("/api/v1/documents/{document_id}/metadata")
+def update_document_metadata(
+    document_id: uuid.UUID,
+    organization_id: str,
+    payload: DocumentMetadataInput,
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    org_id = api_support.organization_id(organization_id)
+    member = membership(org_id, user, db, Role.member, scope="documents:write")
+    item = require_document(db, org_id, user, document_id, write=True)
+    if payload.protected is not None:
+        if isinstance(user, ApiPrincipal) or member is None or member.role not in (Role.owner, Role.admin):
+            raise HTTPException(403, "FORBIDDEN")
+        item.protected = bool(payload.protected)
+    if payload.category is not None:
+        item.category = payload.category.strip().lower()[:64] or None
+    if payload.tags is not None:
+        cleaned = sorted({t.strip().lower()[:40] for t in payload.tags if t.strip()})[:20]
+        item.tags = cleaned
+    audit(db, "document.metadata", "document", str(item.id), user, org_id)
+    db.commit()
+    return {
+        "id": str(item.id),
+        "category": item.category,
+        "tags": list(item.tags or []),
+        "protected": bool(item.protected),
     }
 
 
@@ -541,6 +636,7 @@ def document(
 def delete_document(
     document_id: uuid.UUID,
     organization_id: str,
+    confirm: bool = Query(default=False),
     user: User | ApiPrincipal = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> Response:
@@ -548,7 +644,12 @@ def delete_document(
     derived records (extraction values, jobs) are hard-deleted by the retention job
     after ``retention_deleted_days`` (see docs/DATA_RETENTION.md)."""
     org_id = api_support.organization_id(organization_id)
-    membership(org_id, user, db, Role.member, scope="documents:write")
+    delete_scopes: str | tuple[str, ...] = (
+        "documents:delete"
+        if settings().require_explicit_delete_scope
+        else ("documents:delete", "documents:write")
+    )
+    member = membership(org_id, user, db, Role.member, scope=delete_scopes)
     require_document(db, org_id, user, document_id, write=True)  # phase 3C: project write access
     item = db.scalar(
         select(Document)
@@ -561,6 +662,11 @@ def delete_document(
     )
     if not item:
         raise HTTPException(404, "DOCUMENT_NOT_FOUND")
+    if item.protected:
+        if isinstance(user, ApiPrincipal) or member is None or member.role not in (Role.owner, Role.admin):
+            raise HTTPException(409, "DOCUMENT_PROTECTED")
+        if not confirm:
+            raise HTTPException(409, "DOCUMENT_PROTECTED_CONFIRM_REQUIRED")
     keys = {item.storage_key} | set(
         db.scalars(
             select(DocumentVersion.storage_key).where(DocumentVersion.document_id == item.id)
@@ -576,6 +682,33 @@ def delete_document(
         # The record is already gone; the orphaned object is reconciled by operations.
         logger.warning("storage cleanup incomplete for deleted document %s", document_id)
     return Response(status_code=204)
+
+
+@router.post("/api/v1/documents/{document_id}/restore")
+def restore_document(
+    document_id: uuid.UUID,
+    organization_id: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Restore a soft-deleted document shell within the retention grace window (admin/owner only)."""
+    org_id = api_support.organization_id(organization_id)
+    membership(org_id, user, db, Role.admin)
+    item = db.scalar(
+        select(Document)
+        .where(
+            Document.id == document_id,
+            Document.organization_id == org_id,
+            Document.deleted_at.is_not(None),
+        )
+        .with_for_update()
+    )
+    if item is None:
+        raise HTTPException(404, "DOCUMENT_NOT_FOUND")
+    item.deleted_at = None
+    audit(db, "document.restore", "document", str(item.id), user, org_id)
+    db.commit()
+    return {"id": str(item.id), "restored": True, "filename": item.filename}
 
 
 @router.get("/api/v1/documents/{document_id}/download")

@@ -1,13 +1,13 @@
-"""Orchestration: PDF bytes -> masked, tenant-bound vectors in the store."""
+"""Orchestration: document bytes -> masked, tenant-bound vectors in the store."""
 
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from app.core import settings
-from app.ingestion import chunking, docx, pdf, pii, text, vectorstore
+from app.ingestion import chunking, docx, formats, pdf, pii, text, vectorstore
 from app.ingestion.embeddings import EgressPolicy, Embedder
-from app.ocr import TesseractProvider, needs_ocr
+from app.ocr import TesseractProvider, needs_ocr, pages_needing_ocr
 from app.processing import ProcessingError, extract_pdf_pages
 
 logger = logging.getLogger("docmind.ingestion")
@@ -35,6 +35,7 @@ class IngestionReport:
     pii: dict[str, int] = field(default_factory=dict)
     suspicious_chunks: int = 0
     stripped: dict[str, list[str]] = field(default_factory=dict)  # what the sanitiser removed
+    tables_detected: int = 0
 
 
 @dataclass
@@ -84,6 +85,7 @@ class IngestionPipeline:
         except ProcessingError as exc:
             raise IngestionRefused(exc.code) from None
         report.pages = len(pages)
+        mixed_pages = pages_needing_ocr(pages)
         if needs_ocr("\n".join(pages), len(pages)):
             try:
                 ocr = TesseractProvider().extract_pages(clean)
@@ -91,11 +93,43 @@ class IngestionPipeline:
                 raise IngestionRefused("OCR_FAILED") from None
             pages = [ocr[i] if i < len(ocr) else "" for i in range(len(pages))]
             report.ocr_used = True
+        elif mixed_pages and len(mixed_pages) < len(pages):
+            try:
+                ocr = TesseractProvider().extract_pages(clean, page_numbers=mixed_pages)
+            except Exception:
+                raise IngestionRefused("OCR_FAILED") from None
+            for idx, page_no in enumerate(mixed_pages):
+                if 1 <= page_no <= len(pages) and idx < len(ocr):
+                    pages[page_no - 1] = ocr[idx]
+            report.ocr_used = True
+        pages = formats.strip_running_headers_footers(pages)
+        report.tables_detected = formats.count_pdf_tables(pages)
         return pages
 
-    def _prepare(self, content: bytes, report: IngestionReport) -> list[str]:
-        """Steps 1-3: structural sanitisation and text, for PDF and Word."""
+    def _detect_mime(self, content: bytes, source_name: str, mime_type: str | None) -> str:
+        if mime_type:
+            return mime_type
+        if source_name:
+            try:
+                return formats.detect_format(source_name, content).mime_type
+            except formats.UnsafeFormat:
+                pass
         if docx.looks_like_docx(content):
+            return docx.DOCX_MIME
+        if content.startswith(b"%PDF-"):
+            return "application/pdf"
+        if content.startswith(b"\x89PNG\r\n\x1a\n"):
+            return formats.PNG_MIME
+        if content.startswith(b"\xff\xd8\xff"):
+            return formats.JPEG_MIME
+        return "application/pdf"
+
+    def _prepare(
+        self, content: bytes, report: IngestionReport, *, source_name: str = "", mime_type: str | None = None
+    ) -> list[str]:
+        """Steps 1-3: structural sanitisation and per-page text across all supported formats."""
+        resolved_mime = self._detect_mime(content, source_name, mime_type)
+        if resolved_mime == docx.DOCX_MIME:
             report.format = "docx"
             try:
                 result = docx.extract_docx(content, reject_active_content=self.reject_active_content)
@@ -104,6 +138,32 @@ class IngestionPipeline:
             report.stripped = docx.describe(result.findings)
             report.page_basis, report.pages = result.page_basis, len(result.pages)
             return result.pages
+        if resolved_mime != "application/pdf":
+            cfg = settings()
+            try:
+                extracted = formats.extract_structured_document(
+                    content,
+                    mime_type=resolved_mime,
+                    reject_active_content=self.reject_active_content,
+                    max_chars=cfg.max_pdf_text_chars,
+                    max_ocr_pages=cfg.max_ocr_pages,
+                )
+            except formats.UnsafeFormat as exc:
+                raise IngestionRefused(exc.code) from None
+            report.format = extracted.format_name
+            report.page_basis = extracted.page_basis
+            report.tables_detected = extracted.tables_detected
+            report.stripped = extracted.stripped
+            if extracted.ocr_images:
+                try:
+                    pages = TesseractProvider().extract_images(extracted.ocr_images)
+                except Exception:
+                    raise IngestionRefused("OCR_FAILED") from None
+                report.ocr_used = True
+                report.pages = len(pages)
+                return pages
+            report.pages = len(extracted.pages)
+            return extracted.pages
         try:
             clean, findings = pdf.sanitize_pdf(content, reject_active_content=self.reject_active_content)
         except pdf.UnsafeDocument as exc:
@@ -114,14 +174,14 @@ class IngestionPipeline:
 
     def ingest(
         self, *, tenant_id: str, document_id: str, content: bytes, source_name: str = "",
-        project_id: str | None = None,
+        project_id: str | None = None, mime_type: str | None = None,
     ) -> IngestionReport:
         tenant = chunking.parse_tenant(tenant_id)  # raises before any work is done
         document = chunking.parse_tenant(document_id)
         report = IngestionReport(tenant, document)
 
         # 1-3. sanitise (no active content, no metadata survives) and extract text per page
-        pages = self._prepare(content, report)
+        pages = self._prepare(content, report, source_name=source_name, mime_type=mime_type)
 
         # 4. PII masking *before* chunking, so no chunk boundary can split an identifier
         masker = self._masker(tenant)

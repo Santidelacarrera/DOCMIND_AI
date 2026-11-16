@@ -3,6 +3,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Nav from "../../../components/Nav";
 import { API_URL, api, csrfHeaders } from "../../../lib/api";
+
 type Trust = "human_reviewed" | "automatic_evidenced" | "automatic_unverified";
 type Evidence = {
   status: "exact" | "normalized" | "not_found" | "not_applicable" | "unavailable";
@@ -22,13 +23,25 @@ type Field = {
   trust: Trust;
   evidence: Evidence;
 };
-// What a reader may conclude, in words (never a colour alone). The backend decides the trust level;
-// this page only presents it.
+type PreviewPage = {
+  page_number: number;
+  text: string;
+  ocr_used: boolean;
+  ocr_confidence: number | null;
+};
+type EntityEntry = { value: string; page: number; snippet: string };
+type SummaryResult = {
+  summary: string;
+  abstained: boolean;
+  bullet_points: { page: number; text: string }[];
+};
+
 const TRUST_TEXT: Record<Trust, string> = {
   human_reviewed: "Confirmed or corrected by a person",
   automatic_evidenced: "Found in the document text",
   automatic_unverified: "Not verified automatically",
 };
+
 function evidenceNote(evidence: Evidence): string {
   if (evidence.status === "not_found") {
     return "The value could not be found in the document text. Check it against the original.";
@@ -40,9 +53,9 @@ function evidenceNote(evidence: Evidence): string {
   }
   return "No source location is available for this value.";
 }
+
 type ValidationIssue = { field: string | null; rule: string; message: string };
 type Review = { status: "not_required" | "pending" | "approved"; pending_fields: string[] };
-// Why a person changed a value; stored with the correction and shown in exports.
 const REASONS: [string, string][] = [
   ["wrong_value", "Model value was wrong"],
   ["missing_value", "Model missed the value"],
@@ -51,6 +64,7 @@ const REASONS: [string, string][] = [
   ["format", "Formatting / normalisation"],
   ["other", "Other"],
 ];
+
 export default function DocumentDetail() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -66,6 +80,14 @@ export default function DocumentDetail() {
   const [failed, setFailed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [filename, setFilename] = useState("");
+  const [mimeType, setMimeType] = useState("");
+  const [category, setCategory] = useState("");
+  const [tagsText, setTagsText] = useState("");
+  const [pagesPreview, setPagesPreview] = useState<PreviewPage[]>([]);
+  const [tab, setTab] = useState<"fields" | "entities" | "summary">("fields");
+  const [entities, setEntities] = useState<Record<string, EntityEntry[]> | null>(null);
+  const [summary, setSummary] = useState<SummaryResult | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -80,11 +102,23 @@ export default function DocumentDetail() {
         setMessage("No workspace is available.");
         return;
       }
-      setOrg(list[0].id);
-      const info = await api(`/api/v1/documents/${params.id}?organization_id=${list[0].id}`);
-      if (info.ok && !cancelled) setFilename(((await info.json()) as { filename?: string }).filename ?? "");
+      const orgId = list[0].id;
+      setOrg(orgId);
+      const info = await api(`/api/v1/documents/${params.id}?organization_id=${orgId}`);
+      if (info.ok && !cancelled) {
+        const meta = (await info.json()) as {
+          filename?: string;
+          mime_type?: string;
+          category?: string | null;
+          tags?: string[];
+        };
+        setFilename(meta.filename ?? "");
+        setMimeType(meta.mime_type ?? "");
+        setCategory(meta.category ?? "");
+        setTagsText((meta.tags ?? []).join(", "));
+      }
       const data = await api(
-        `/api/v1/documents/${params.id}/extraction?organization_id=${list[0].id}`,
+        `/api/v1/documents/${params.id}/extraction?organization_id=${orgId}`,
       );
       if (data.ok) {
         if (cancelled) return;
@@ -94,24 +128,28 @@ export default function DocumentDetail() {
         setValidationIssues(payload.validation_issues ?? []);
         setReview(payload.review ?? { status: "not_required", pending_fields: [] });
         setMessage("");
+        const prev = await api(`/api/v1/documents/${params.id}/preview?organization_id=${orgId}`);
+        if (prev.ok && !cancelled) {
+          setPagesPreview(((await prev.json()) as { pages: PreviewPage[] }).pages);
+        }
       } else {
         const status = await api(
-          `/api/v1/documents/${params.id}/status?organization_id=${list[0].id}`,
+          `/api/v1/documents/${params.id}/status?organization_id=${orgId}`,
         );
         if (cancelled) return;
         if (!status.ok) {
           setMessage("Document not found or not available.");
           return;
         }
-        const info = (await status.json()) as { status: string };
-        if (info?.status === "FAILED") {
+        const st = (await status.json()) as { status: string };
+        if (st?.status === "FAILED") {
           setFailed(true);
           setMessage("Processing failed. You can retry it.");
           return;
         }
         setFailed(false);
         setMessage(
-          `Processing (${info.status.toLowerCase().replace("_", " ")})… this page updates automatically.`,
+          `Processing (${st.status.toLowerCase().replace("_", " ")})… this page updates automatically.`,
         );
         timer = setTimeout(load, 1500);
       }
@@ -122,6 +160,7 @@ export default function DocumentDetail() {
       if (timer) clearTimeout(timer);
     };
   }, [params.id, router, reloadKey]);
+
   async function save(field: Field) {
     if (!org) return;
     let value: unknown = draft;
@@ -146,6 +185,7 @@ export default function DocumentDetail() {
       setEditing(null);
     } else setMessage("Could not save the field.");
   }
+
   async function approve() {
     if (!org) return;
     const res = await api(
@@ -160,6 +200,7 @@ export default function DocumentDetail() {
       setMessage(`${(body.pending_fields ?? []).length} flagged field(s) still need a decision before approval.`);
     } else setMessage("Could not approve the review.");
   }
+
   async function retry() {
     if (!org) return;
     const res = await api(
@@ -192,6 +233,37 @@ export default function DocumentDetail() {
     }
   }
 
+  async function saveMetadata() {
+    if (!org) return;
+    const tags = tagsText
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const res = await api(`/api/v1/documents/${params.id}/metadata?organization_id=${org}`, {
+      method: "PATCH",
+      body: JSON.stringify({ category: category || null, tags }),
+    });
+    if (res.ok) setMessage("Metadata updated.");
+    else setMessage("Could not update metadata.");
+  }
+
+  async function loadEntities() {
+    setTab("entities");
+    if (!org || entities) return;
+    const res = await api(`/api/v1/documents/${params.id}/entities?organization_id=${org}`);
+    if (res.ok) setEntities(((await res.json()) as { entities: Record<string, EntityEntry[]> }).entities);
+  }
+
+  async function runSummary() {
+    setTab("summary");
+    if (!org || summary) return;
+    const res = await api(`/api/v1/documents/${params.id}/summarize?organization_id=${org}`, {
+      method: "POST",
+      body: JSON.stringify({ max_sentences: 5 }),
+    });
+    if (res.ok) setSummary((await res.json()) as SummaryResult);
+  }
+
   function download(format: string) {
     if (org)
       window.open(
@@ -200,36 +272,64 @@ export default function DocumentDetail() {
         "noopener,noreferrer",
       );
   }
-  const isWord = /\.docx$/i.test(filename);
+
+  const isPdf = mimeType === "application/pdf" || /\.pdf$/i.test(filename);
+  const isImage = /^image\/(png|jpeg|webp)$/i.test(mimeType) || /\.(png|jpe?g|webp)$/i.test(filename);
+
   return (
     <main>
       <Nav current="documents" />
       <div className="detail">
         <section className="viewer">
           <div className="viewerbar">
-            <span>{isWord ? "Original Word document" : "Original PDF"}</span>
+            <span>{filename || "Document"}</span>
             {org && (
-              <a
-                href={`${API_URL}/api/v1/documents/${params.id}/download?organization_id=${org}`}
-              >
+              <a href={`${API_URL}/api/v1/documents/${params.id}/download?organization_id=${org}`}>
                 Download
               </a>
             )}
           </div>
-          {org && isWord ? (
-            <p className="panel">
-              Word documents cannot be previewed here. Download the original to read it; each extracted value on the
-              right names the page it came from.
-            </p>
-          ) : org ? (
+          {org && isPdf ? (
             <iframe
               title="PDF document"
               src={`${API_URL}/api/v1/documents/${params.id}/download?organization_id=${org}&inline=true`}
             />
+          ) : org && isImage ? (
+            <div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                className="preview-img"
+                alt={filename}
+                src={`${API_URL}/api/v1/documents/${params.id}/download?organization_id=${org}&inline=true`}
+              />
+              {pagesPreview.length > 0 && (
+                <div className="page-preview">
+                  <strong>OCR text</strong>
+                  {pagesPreview.map((p) => (
+                    <pre key={p.page_number}>{p.text || "(no text recognized)"}</pre>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : pagesPreview.length > 0 ? (
+            <div className="page-preview">
+              {pagesPreview.map((p) => (
+                <div key={p.page_number}>
+                  <small>
+                    Page / Section {p.page_number}
+                    {p.ocr_used && p.ocr_confidence !== null
+                      ? ` · OCR ${Math.round(p.ocr_confidence * 100)}%`
+                      : ""}
+                  </small>
+                  <pre>{p.text}</pre>
+                </div>
+              ))}
+            </div>
           ) : (
-            <p>{message}</p>
+            <p className="panel">Download the original to inspect this file.</p>
           )}
         </section>
+
         <section className="results">
           <div className="viewerbar">
             <strong>Extracted data</strong>
@@ -239,117 +339,211 @@ export default function DocumentDetail() {
               <button onClick={() => download("xlsx")}>XLSX</button>
             </span>
           </div>
+          <div className="tabs">
+            <button
+              type="button"
+              className={tab === "fields" ? "active" : ""}
+              onClick={() => setTab("fields")}
+            >
+              Fields
+            </button>
+            <button
+              type="button"
+              className={tab === "entities" ? "active" : ""}
+              onClick={() => void loadEntities()}
+            >
+              Entities
+            </button>
+            <button
+              type="button"
+              className={tab === "summary" ? "active" : ""}
+              onClick={() => void runSummary()}
+            >
+              Summary
+            </button>
+          </div>
           {message && <p role="status">{message}</p>}
           {failed && <button onClick={retry}>Retry processing</button>}
-          <label>
-            Upload a new version (PDF or Word)
-            <input
-              type="file"
-              accept=".pdf,.docx"
-              onChange={(e) => void uploadVersion(e.target.files?.[0])}
-            />
-          </label>
-          {review.status === "approved" && <p role="status">Reviewed and approved.</p>}
-          {requiresReview && review.status !== "approved" && (
-            <div role="alert" className="field">
-              <strong>Needs review</strong>
-              {review.pending_fields.length > 0 && (
-                <small>
-                  {review.pending_fields.length} field{review.pending_fields.length === 1 ? "" : "s"} still to check
-                </small>
-              )}
-              <button onClick={approve} disabled={review.pending_fields.length > 0}>
-                Approve review
-              </button>
-              <ul>
-                {validationIssues.map((issue, index) => (
-                  <li key={index}>
-                    {issue.field ? `${issue.field}: ` : ""}
-                    {issue.message}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {fields.length > 0 && (
-            <p>
-              <small>
-                Confidence values are scores reported by the extraction model. They are not calibrated probabilities:
-                use the source location, not the percentage, to decide whether a value is right.
-              </small>
-            </p>
-          )}
-          {fields.map((field) => {
-            const lowConfidence = field.needs_review;
-            const corrected =
-              field.manually_verified &&
-              JSON.stringify(field.value) !== JSON.stringify(field.original_value);
-            return (
-            <article className={`field${lowConfidence ? " low-confidence" : ""}`} key={field.id}>
-              <label>{field.name}</label>
-              {editing === field.id ? (
-                <>
+
+          {tab === "fields" && (
+            <>
+              <div className="field">
+                <label>
+                  Category &amp; tags
                   <input
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
+                    value={category}
+                    placeholder="contract, invoice…"
+                    onChange={(e) => setCategory(e.target.value)}
                   />
-                  <select
-                    aria-label="Reason for the change"
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value)}
-                  >
-                    {REASONS.map(([code, label]) => (
-                      <option key={code} value={code}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                  <button onClick={() => save(field)}>Save</button>
-                  <button onClick={() => setEditing(null)}>Cancel</button>
-                </>
-              ) : (
-                <>
-                  <strong>{String(field.value ?? "—")}</strong>
-                  <small>{TRUST_TEXT[field.trust] ?? "Verification status unknown"}</small>
-                  <small>{evidenceNote(field.evidence)}</small>
-                  {field.evidence.snippet && (
-                    <blockquote>
-                      <small>{field.evidence.snippet}</small>
-                    </blockquote>
-                  )}
-                  {field.evidence.status === "not_found" && field.value !== null && (
-                    <small role="status">Not found in the document text</small>
-                  )}
-                  <small>
-                    {field.confidence !== null
-                      ? `Model score ${Math.round(field.confidence * 100)}% (not calibrated)`
-                      : "No model score"}
-                    {lowConfidence ? " · Needs review" : ""}
-                    {field.manually_verified ? " · Verified manually" : ""}
-                  </small>
-                  {corrected && (
+                  <input
+                    value={tagsText}
+                    placeholder="tag1, tag2"
+                    onChange={(e) => setTagsText(e.target.value)}
+                  />
+                </label>
+                <button type="button" onClick={() => void saveMetadata()}>
+                  Save tags
+                </button>
+              </div>
+              <label className="field">
+                Upload a new version
+                <input
+                  type="file"
+                  accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.pptx,.png,.jpg,.jpeg,.webp,.tif,.tiff"
+                  onChange={(e) => void uploadVersion(e.target.files?.[0])}
+                />
+              </label>
+              {review.status === "approved" && <p role="status">Reviewed and approved.</p>}
+              {requiresReview && review.status !== "approved" && (
+                <div role="alert" className="field">
+                  <strong>Needs review</strong>
+                  {review.pending_fields.length > 0 && (
                     <small>
-                      Model said: {String(field.original_value ?? "—")}
-                      {field.correction_reason ? ` · reason: ${field.correction_reason.replace("_", " ")}` : ""}
+                      {review.pending_fields.length} field
+                      {review.pending_fields.length === 1 ? "" : "s"} still to check
                     </small>
                   )}
-                  <button
-                    onClick={() => {
-                      setEditing(field.id);
-                      setDraft(
-                        typeof field.value === "string"
-                          ? field.value
-                          : JSON.stringify(field.value),
-                      );
-                    }}
-                  >
-                    Edit
+                  <button onClick={approve} disabled={review.pending_fields.length > 0}>
+                    Approve review
                   </button>
+                  <ul>
+                    {validationIssues.map((issue, index) => (
+                      <li key={index}>
+                        {issue.field ? `${issue.field}: ` : ""}
+                        {issue.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {fields.length > 0 && (
+                <p>
+                  <small>
+                    Confidence values are scores reported by the extraction model. They are not
+                    calibrated probabilities: use the source location, not the percentage, to decide
+                    whether a value is right.
+                  </small>
+                </p>
+              )}
+              {fields.map((field) => {
+                const lowConfidence = field.needs_review;
+                const corrected =
+                  field.manually_verified &&
+                  JSON.stringify(field.value) !== JSON.stringify(field.original_value);
+                return (
+                  <article
+                    className={`field${lowConfidence ? " low-confidence" : ""}`}
+                    key={field.id}
+                  >
+                    <label>{field.name}</label>
+                    {editing === field.id ? (
+                      <>
+                        <input value={draft} onChange={(e) => setDraft(e.target.value)} />
+                        <select
+                          aria-label="Reason for the change"
+                          value={reason}
+                          onChange={(e) => setReason(e.target.value)}
+                        >
+                          {REASONS.map(([code, label]) => (
+                            <option key={code} value={code}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                        <button onClick={() => save(field)}>Save</button>
+                        <button onClick={() => setEditing(null)}>Cancel</button>
+                      </>
+                    ) : (
+                      <>
+                        <strong>{String(field.value ?? "—")}</strong>
+                        <small>{TRUST_TEXT[field.trust] ?? "Verification status unknown"}</small>
+                        <small>{evidenceNote(field.evidence)}</small>
+                        {field.evidence.snippet && (
+                          <blockquote>
+                            <small>{field.evidence.snippet}</small>
+                          </blockquote>
+                        )}
+                        {field.evidence.status === "not_found" && field.value !== null && (
+                          <small role="status">Not found in the document text</small>
+                        )}
+                        <small>
+                          {field.confidence !== null
+                            ? `Model score ${Math.round(field.confidence * 100)}% (not calibrated)`
+                            : "No model score"}
+                          {lowConfidence ? " · Needs review" : ""}
+                          {field.manually_verified ? " · Verified manually" : ""}
+                        </small>
+                        {corrected && (
+                          <small>
+                            Model said: {String(field.original_value ?? "—")}
+                            {field.correction_reason
+                              ? ` · reason: ${field.correction_reason.replace("_", " ")}`
+                              : ""}
+                          </small>
+                        )}
+                        <button
+                          onClick={() => {
+                            setEditing(field.id);
+                            setDraft(
+                              typeof field.value === "string"
+                                ? field.value
+                                : JSON.stringify(field.value),
+                            );
+                          }}
+                        >
+                          Edit
+                        </button>
+                      </>
+                    )}
+                  </article>
+                );
+              })}
+            </>
+          )}
+
+          {tab === "entities" && (
+            <div className="field">
+              {!entities ? (
+                <p>Loading entities…</p>
+              ) : (
+                Object.entries(entities).map(([kind, list]) => (
+                  <div key={kind}>
+                    <strong>{kind}</strong>
+                    {list.length ? (
+                      <ul>
+                        {list.map((e, i) => (
+                          <li key={i}>
+                            <span>{e.value}</span>
+                            <small>p.{e.page}</small>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p>None detected.</p>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {tab === "summary" && (
+            <div className="field">
+              {!summary ? (
+                <p>Generating grounded summary…</p>
+              ) : (
+                <>
+                  <p>{summary.summary}</p>
+                  {summary.bullet_points.map((b, i) => (
+                    <blockquote key={i}>
+                      <small>p.{b.page}: </small>
+                      {b.text}
+                    </blockquote>
+                  ))}
                 </>
               )}
-            </article>
-            );
-          })}
+            </div>
+          )}
         </section>
       </div>
     </main>

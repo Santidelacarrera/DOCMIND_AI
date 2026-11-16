@@ -1,11 +1,13 @@
 # Índice de documentación
 
-Qué está vigente y qué es histórico. Revisado el 2026-11-12. Si dos documentos se contradicen, manda el de la sección «Estado actual».
+Qué está vigente y qué es histórico. Revisado el 2026-11-16. Si dos documentos se contradicen, manda el de la sección «Estado actual».
 
 ## Estado actual
 
 | Documento | Para qué |
 |---|---|
+| [FINAL_READINESS_REPORT.md](FINAL_READINESS_REPORT.md) | Informe ejecutivo final de preparación técnica, comercial y estado por bloque (2026-11-16) |
+| [FINAL_REPOSITORY_AUDIT.md](FINAL_REPOSITORY_AUDIT.md) | Auditoría integral del repositorio, diff funcional, dependencias y rutas (2026-11-16) |
 | [DOCMIND_IMPLEMENTATION_STATUS.md](DOCMIND_IMPLEMENTATION_STATUS.md) | Qué está implementado y validado |
 | [DOCMIND_TECHNICAL_DEBT.md](DOCMIND_TECHNICAL_DEBT.md) | Deuda abierta y saldada, con evidencia |
 | [DOCMIND_ROADMAP.md](DOCMIND_ROADMAP.md) | Siguiente trabajo por prioridad y lo bloqueado por el propietario |
@@ -17,19 +19,19 @@ Qué está vigente y qué es histórico. Revisado el 2026-11-12. Si dos document
 
 ## Uso y operación
 
-[INSTALLATION.md](INSTALLATION.md) · [ENVIRONMENT.md](ENVIRONMENT.md) · [DEVELOPMENT.md](DEVELOPMENT.md) · [TESTING.md](TESTING.md) · [TROUBLESHOOTING.md](TROUBLESHOOTING.md) · [DEPLOYMENT.md](DEPLOYMENT.md) · [STAGING.md](STAGING.md) · [OPERATIONS.md](OPERATIONS.md) · [OBSERVABILITY.md](OBSERVABILITY.md) (alertas en `deploy/prometheus/`) · [RELIABILITY.md](RELIABILITY.md) · [API.md](API.md)
+[INSTALLATION.md](INSTALLATION.md) · [ENVIRONMENT.md](ENVIRONMENT.md) · [DEVELOPMENT.md](DEVELOPMENT.md) · [TESTING.md](TESTING.md) · [TROUBLESHOOTING.md](TROUBLESHOOTING.md) · [DEPLOYMENT.md](DEPLOYMENT.md) · [PRODUCTION_DEPLOYMENT_GUIDE.md](PRODUCTION_DEPLOYMENT_GUIDE.md) · [S3_KMS_PRODUCTION_SETUP.md](S3_KMS_PRODUCTION_SETUP.md) · [LLM_PRODUCTION_SETUP.md](LLM_PRODUCTION_SETUP.md) · [BACKUP_AND_RESTORE.md](BACKUP_AND_RESTORE.md) · [STAGING.md](STAGING.md) · [OPERATIONS.md](OPERATIONS.md) · [OBSERVABILITY.md](OBSERVABILITY.md) (alertas en `deploy/prometheus/`) · [RELIABILITY.md](RELIABILITY.md) · [API.md](API.md)
 
 ## Diseño y seguridad
 
-[architecture.md](architecture.md) · [RLS_DESIGN.md](RLS_DESIGN.md) · [rls/](rls/) · [SECURITY.md](SECURITY.md) · [security/threat-model.md](security/threat-model.md) · [AUTHORIZATION_MATRIX.md](AUTHORIZATION_MATRIX.md) · [AUTHORIZATION_POLICY.md](AUTHORIZATION_POLICY.md) · [DOCUMENT_AUTHORIZATION.md](DOCUMENT_AUTHORIZATION.md) · [DATA_RETENTION.md](DATA_RETENTION.md) · [INGESTION.md](INGESTION.md) · [LOCAL_PROCESSING.md](LOCAL_PROCESSING.md) · [EXTERNAL_DEPENDENCIES.md](EXTERNAL_DEPENDENCIES.md) · [CASE_QUERY.md](CASE_QUERY.md)
+[architecture.md](architecture.md) · [RLS_DESIGN.md](RLS_DESIGN.md) · [RLS_VALIDATION_REPORT.md](RLS_VALIDATION_REPORT.md) · [rls/](rls/) · [SECURITY.md](SECURITY.md) · [SECURITY_FINAL_REPORT.md](SECURITY_FINAL_REPORT.md) · [GRANULAR_PERMISSIONS.md](GRANULAR_PERMISSIONS.md) · [security/threat-model.md](security/threat-model.md) · [AUTHORIZATION_MATRIX.md](AUTHORIZATION_MATRIX.md) · [AUTHORIZATION_POLICY.md](AUTHORIZATION_POLICY.md) · [DOCUMENT_AUTHORIZATION.md](DOCUMENT_AUTHORIZATION.md) · [DATA_RETENTION.md](DATA_RETENTION.md) · [INGESTION.md](INGESTION.md) · [LOCAL_PROCESSING.md](LOCAL_PROCESSING.md) · [EXTERNAL_DEPENDENCIES.md](EXTERNAL_DEPENDENCIES.md) · [CASE_QUERY.md](CASE_QUERY.md)
 
 ## Calidad
 
-[EVALUATION.md](EVALUATION.md) y los informes en [evaluation/](evaluation/) (`baseline-report.*`, `rag-report*.*`, `hybrid-retrieval-2026-11-12.md`).
+[EVALUATION.md](EVALUATION.md) · [RAG_EVALUATION_REPORT.md](RAG_EVALUATION_REPORT.md) y los informes en [evaluation/](evaluation/) (`baseline-report.*`, `rag-report*.*`, `hybrid-retrieval-2026-11-12.md`).
 
 ## Demo, piloto y negocio
 
-[DEMO_EMPRESARIAL.md](DEMO_EMPRESARIAL.md) (guion vigente) · [DEMO.md](DEMO.md) · [PILOT.md](PILOT.md) · [LICENSING.md](LICENSING.md) · [NOTA_PROYECTO.md](NOTA_PROYECTO.md) · [empresa.md](empresa.md)
+[COMMERCIAL_MODEL.md](COMMERCIAL_MODEL.md) · [BILLING_INTEGRATION.md](BILLING_INTEGRATION.md) · [DEMO_EMPRESARIAL.md](DEMO_EMPRESARIAL.md) (guion vigente) · [DEMO.md](DEMO.md) · [PILOT.md](PILOT.md) · [LICENSING.md](LICENSING.md) · [NOTA_PROYECTO.md](NOTA_PROYECTO.md) · [empresa.md](empresa.md)
 
 ## Histórico (no reflejan el estado actual)
 

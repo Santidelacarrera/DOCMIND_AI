@@ -35,6 +35,7 @@ from app.models import (
     ExtractionRun,
     ProcessingJob,
     ProcessingStep,
+    QueryHistory,
     UsageRecord,
     utcnow,
 )
@@ -143,6 +144,7 @@ def purge_expired(now: datetime | None = None) -> dict[str, int]:
             db.execute(delete(ConversationMessage).where(ConversationMessage.conversation_id == conv.id))
             db.delete(conv)
         summary["conversations"] = len(stale)
+        db.execute(delete(QueryHistory).where(QueryHistory.created_at < conversation_cutoff))
 
     RETENTION_PURGED_TOTAL.labels("documents").inc(summary["purged"])
     RETENTION_PURGED_TOTAL.labels("conversations").inc(summary["conversations"])

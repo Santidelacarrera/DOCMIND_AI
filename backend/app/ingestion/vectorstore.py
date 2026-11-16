@@ -73,7 +73,7 @@ class VectorStore(Protocol):
     def search(
         self, tenant_id: str, vector: Sequence[float], limit: int = 5, *,
         include_suspicious: bool = False, project_id: str | None = None,
-        project_ids: Sequence[str] | None = None,
+        project_ids: Sequence[str] | None = None, document_ids: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]: ...
     def set_document_project(self, tenant_id: str, document_id: str, project_id: str) -> None: ...
     def count_without_project(self, tenant_id: str) -> int: ...
@@ -135,14 +135,19 @@ class QdrantStore:
 
     @staticmethod
     def tenant_filter(
-        tenant_id: str, *, document_id: str | None = None, project_id: str | None = None,
-        project_ids: Sequence[str] | None = None, include_suspicious: bool = True,
+        tenant_id: str, *, document_id: str | None = None, document_ids: Sequence[str] | None = None,
+        project_id: str | None = None, project_ids: Sequence[str] | None = None,
+        include_suspicious: bool = True,
     ) -> Any:
         from qdrant_client import models
 
         must: list[Any] = [models.FieldCondition(key=TENANT_KEY, match=models.MatchValue(value=parse_tenant(tenant_id)))]
         if document_id:
             must.append(models.FieldCondition(key="document_id", match=models.MatchValue(value=document_id)))
+        if document_ids is not None:
+            must.append(models.FieldCondition(
+                key="document_id", match=models.MatchAny(any=[parse_tenant(d) for d in document_ids]),
+            ))
         if project_id:
             # A point without this key (legacy, or indexed without a project) cannot match.
             must.append(models.FieldCondition(key=PROJECT_KEY, match=models.MatchValue(value=parse_tenant(project_id))))
@@ -182,16 +187,17 @@ class QdrantStore:
     def search(
         self, tenant_id: str, vector: Sequence[float], limit: int = 5, *,
         include_suspicious: bool = False, project_id: str | None = None,
-        project_ids: Sequence[str] | None = None,
+        project_ids: Sequence[str] | None = None, document_ids: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
-        if project_ids is not None and not project_ids:
-            return []  # the caller may read no project: nothing can match, so do not query at all
+        if (project_ids is not None and not project_ids) or (document_ids is not None and not document_ids):
+            return []  # the caller may read no project/document: nothing can match, so do not query at all
         # The project condition is part of the vector query itself, so Qdrant never scores or
         # returns another project's chunks; nothing is filtered afterwards.
         hits = self._c.query_points(
             self._collection, query=list(vector), limit=limit, with_payload=True,
             query_filter=self.tenant_filter(
-                tenant_id, project_id=project_id, project_ids=project_ids, include_suspicious=include_suspicious,
+                tenant_id, project_id=project_id, project_ids=project_ids,
+                document_ids=document_ids, include_suspicious=include_suspicious,
             ),
         ).points
         return [{"score": h.score, **(h.payload or {})} for h in hits]

@@ -41,9 +41,10 @@ A product of **Nexus Security & AI Lab**. Local processing, cost $0 by default.
 
 ## What it does
 
-DocMind AI turns PDF and Word (`.docx`) documents (invoices, contracts, policies, forms…) into reviewable, exportable data and into answers that cite their sources — all of it processable locally ([docs/LOCAL_PROCESSING.md](docs/LOCAL_PROCESSING.md)).
+DocMind AI turns PDF, Word (`.docx`), TXT, Markdown, CSV, Excel (`.xlsx`), PowerPoint (`.pptx`) and scanned images into reviewable, exportable data, entity intelligence, multi-document comparisons and answers that cite their sources — all of it processable locally ([docs/LOCAL_PROCESSING.md](docs/LOCAL_PROCESSING.md)).
 
-- **Multi-tenant by construction** — organizations, roles (owner/admin/member/viewer), projects, scoped API keys, usage quotas and audit logs.
+- **Multi-tenant & commercial SaaS by construction** — organizations, roles (owner/admin/member/viewer), projects with auto-grant for project creators, scoped API keys (`documents:read`, `documents:write`, `documents:delete`, `schemas:read`, `exports:read`, `usage:read`), configurable 5-tier SaaS plans (`PLANS_CONFIG_JSON`), payment gateway adapters (Stripe, Mercado Pago, Transbank, Sandbox), usage quotas and audit logs ([docs/COMMERCIAL_MODEL.md](docs/COMMERCIAL_MODEL.md), [docs/BILLING_INTEGRATION.md](docs/BILLING_INTEGRATION.md), [docs/GRANULAR_PERMISSIONS.md](docs/GRANULAR_PERMISSIONS.md)).
+- **Document intelligence** — schema templates (including Chilean DTE `dte_cl`), automatic classification and tagging, source-cited entity extraction, document and project summaries, and multi-document comparison & contradiction reports exportable to JSON, CSV and XLSX.
 - **Safe ingestion** — magic-byte, size, page-count and parse validation, optional ClamAV scanning, checksum de-duplication, opaque storage keys.
 - **Asynchronous pipeline** — Celery workers with idempotent jobs, retries, time limits and automatic stuck-job recovery.
 - **Text first, OCR when needed** — `pypdf` extraction with Tesseract fallback for scans.

@@ -50,12 +50,18 @@ def create_project(
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
     org_id = api_support.organization_id(organization_id)
-    membership(org_id, user, db, Role.member)
+    member = membership(org_id, user, db, Role.member)
     project = Project(organization_id=org_id, name=name.strip(), description=description)
     if not project.name:
         raise HTTPException(422, "Project name is required")
     db.add(project)
     db.flush()
+    if (
+        settings().project_creator_auto_grant
+        and member is not None
+        and member.role not in (Role.owner, Role.admin)
+    ):
+        db.add(ProjectMember(project_id=project.id, user_id=user.id, access="write"))
     audit(db, "project.create", "project", str(project.id), user, org_id)
     db.commit()
     return {"id": str(project.id), "name": project.name}

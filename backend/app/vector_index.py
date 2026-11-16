@@ -142,7 +142,7 @@ def _index_document(organization_id: str, document_id: str) -> str:
         doc = db.get(Document, doc_id)
         if doc is None or doc.deleted_at is not None or doc.organization_id != org:
             return "skipped"
-        key, filename, project = doc.storage_key, doc.filename, str(doc.project_id)
+        key, filename, project, mime_type = doc.storage_key, doc.filename, str(doc.project_id), doc.mime_type
     try:
         content = storage.get(owned_key(org, key))
     except (StorageAccessError, FileNotFoundError):
@@ -154,7 +154,8 @@ def _index_document(organization_id: str, document_id: str) -> str:
         # changed document would otherwise keep stale chunks next to the new ones.
         pipeline.store.delete_document(str(org), str(doc_id))
         pipeline.ingest(
-            tenant_id=str(org), document_id=str(doc_id), content=content, source_name=filename, project_id=project,
+            tenant_id=str(org), document_id=str(doc_id), content=content, source_name=filename,
+            project_id=project, mime_type=mime_type,
         )
     except (IngestionRefused, TenantError, EmbeddingModelMismatch) as exc:  # permanent: no retry
         code = getattr(exc, "code", None) or str(exc)

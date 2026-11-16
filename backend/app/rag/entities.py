@@ -110,5 +110,20 @@ def absent_terms(terms: Iterable[str], evidence: Iterable[str]) -> list[str]:
 
 
 def missing_terms(question: str, evidence: Iterable[str]) -> list[str]:
-    """Named terms of the question with no trace in the evidence."""
-    return absent_terms(named_terms(question), evidence)
+    """Named terms of the question with no trace in the evidence (accounting for documented aliases)."""
+    evidence_list = list(evidence)
+    missing = absent_terms(named_terms(question), evidence_list)
+    if not missing:
+        return []
+    from app.rag.aliases import extract_alias_declarations, resolve
+
+    decls = [d for text in evidence_list for d in extract_alias_declarations(text)]
+    if not decls:
+        return missing
+    resolved: list[str] = []
+    for term in missing:
+        res = resolve(term, decls)
+        if res.outcome == "alias" and not absent_terms(res.canonicals, evidence_list):
+            continue
+        resolved.append(term)
+    return resolved

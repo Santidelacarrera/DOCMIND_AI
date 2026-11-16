@@ -68,14 +68,20 @@ class S3StorageProvider:
 
     def __init__(self) -> None:
         import boto3
+        from botocore.config import Config
 
         config = settings()
         self.bucket = config.s3_bucket
         self.kms_key_id = config.s3_kms_key_id
-        self.client = boto3.client("s3", endpoint_url=config.s3_endpoint_url, region_name=config.s3_region)
+        self.client = boto3.client(
+            "s3",
+            endpoint_url=config.s3_endpoint_url,
+            region_name=config.s3_region,
+            config=Config(retries={"max_attempts": 3, "mode": "standard"}, signature_version="s3v4"),
+        )
 
     def put(self, key: str, content: bytes) -> None:
-        params = {"Bucket": self.bucket, "Key": key, "Body": content}
+        params: dict[str, object] = {"Bucket": self.bucket, "Key": key, "Body": content}
         if self.kms_key_id:
             params.update(ServerSideEncryption="aws:kms", SSEKMSKeyId=self.kms_key_id)
         self.client.put_object(**params)
@@ -100,6 +106,24 @@ class S3StorageProvider:
         for page in self.client.get_paginator("list_objects_v2").paginate(Bucket=self.bucket):
             for item in page.get("Contents", []):
                 yield item["Key"], item["LastModified"]
+
+    def head_metadata(self, key: str) -> dict[str, object]:
+        from botocore.exceptions import ClientError
+
+        try:
+            resp = self.client.head_object(Bucket=self.bucket, Key=key)
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404", "NotFound"):
+                raise FileNotFoundError(key) from None
+            raise
+        return {
+            "key": key,
+            "size_bytes": int(resp.get("ContentLength", 0)),
+            "etag": str(resp.get("ETag", "")).strip('"'),
+            "server_side_encryption": resp.get("ServerSideEncryption"),
+            "sse_kms_key_id": resp.get("SSEKMSKeyId"),
+            "version_id": resp.get("VersionId"),
+        }
 
 
 def build_storage() -> StorageProvider:

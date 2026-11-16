@@ -384,6 +384,23 @@ def extract_docx_pages(content: bytes) -> list[str]:
     return [page[:limit] for page in result.pages]
 
 
+def extract_any_pages(content: bytes, mime_type: str) -> "Any":
+    """Extract any supported non-PDF/non-DOCX format into :class:`ExtractedContent`."""
+    from app.ingestion.formats import UnsafeFormat, extract_structured_document
+
+    cfg = settings()
+    try:
+        return extract_structured_document(
+            content,
+            mime_type=mime_type,
+            reject_active_content=cfg.ingest_reject_active_content,
+            max_chars=cfg.max_pdf_text_chars,
+            max_ocr_pages=cfg.max_ocr_pages,
+        )
+    except UnsafeFormat as exc:
+        raise ProcessingError(exc.code) from None
+
+
 def extract_pdf_text(content: bytes) -> tuple[str, int]:
     pages = extract_pdf_pages(content)
     return "\n".join(pages)[: settings().max_pdf_text_chars], len(pages)

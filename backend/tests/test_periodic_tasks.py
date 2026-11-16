@@ -8,12 +8,12 @@ import uuid
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import select
+import sqlalchemy as sa
 
 from app import worker
 from app.core import settings
-from app.db import SessionLocal
-from app.models import ContextRagEvent, JobStatus, ProcessingJob, utcnow
+from app.db import SessionLocal, engine
+from app.models import JobStatus, ProcessingJob, utcnow
 from tests.conftest import make_pdf
 
 EXPECTED = {
@@ -88,5 +88,4 @@ def test_with_the_sync_retired_documents_are_processed_and_no_event_is_written(r
     worker.process_document.run(upload["job_id"])  # type: ignore[attr-defined]
     assert acct.client.delete(f"/api/v1/documents/{upload['document_id']}?organization_id={acct.org}",
                               headers=acct.headers).status_code == 204
-    with SessionLocal() as db:
-        assert db.scalars(select(ContextRagEvent)).all() == []
+    assert "contextrag_events" not in sa.inspect(engine).get_table_names()

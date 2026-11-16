@@ -29,6 +29,7 @@ ALLOWED_SCOPES = frozenset(
     {
         "documents:read",
         "documents:write",
+        "documents:delete",
         "schemas:read",
         "exports:read",
         "usage:read",
@@ -120,12 +121,14 @@ def membership(
     user: User | ApiPrincipal,
     db: Session,
     minimum: Role = Role.viewer,
-    scope: str | None = None,
+    scope: str | tuple[str, ...] | None = None,
 ) -> OrganizationMember | None:
     if isinstance(user, ApiPrincipal):
         if user.organization_id != org_id:
             raise HTTPException(403, "FORBIDDEN")
-        if not scope or scope not in (user.key.scopes or []):
+        allowed_scopes = (scope,) if isinstance(scope, str) else (scope or ())
+        key_scopes = set(user.key.scopes or [])
+        if not allowed_scopes or not (key_scopes & set(allowed_scopes)):
             raise HTTPException(403, "INSUFFICIENT_SCOPE")
         rls.set_context(db, org_id)
         return None

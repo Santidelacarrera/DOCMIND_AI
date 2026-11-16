@@ -15,8 +15,12 @@ from fastapi.routing import APIRoute
 from app import main
 
 OUT = Path(__file__).resolve().parents[2] / "docs" / "AUTHORIZATION_MATRIX.md"
-CHECK = re.compile(r"(?:membership|require_document|require_project|accessible_project_ids)\([^)]*\)")
+CHECK = re.compile(
+    r"(?:membership|require_document|require_project|accessible_project_ids|verify_and_parse_webhook)\([^)]*\)"
+)
 NO_CHECK_BY_DESIGN = {
+    "/api/v1/plans",
+    "/api/v1/billing/webhooks/{provider}",
     "/api/v1/auth/login",
     "/api/v1/auth/register",
     "/api/v1/auth/logout",

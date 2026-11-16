@@ -1,0 +1,35 @@
+# Alertmanager configuration template (parameterized via environment variables).
+# No recipient is hardcoded or invented; substitute variables before starting Alertmanager:
+#   envsubst < deploy/prometheus/alertmanager.yml > /etc/alertmanager/alertmanager.yml
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: "${ALERTMANAGER_SMTP_SMARTHOST}"
+  smtp_from: "${ALERTMANAGER_SMTP_FROM}"
+  smtp_auth_username: "${ALERTMANAGER_SMTP_USER}"
+  smtp_auth_password: "${ALERTMANAGER_SMTP_PASSWORD}"
+  smtp_require_tls: true
+
+route:
+  group_by: ["alertname", "service"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: "ops-primary"
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: "ops-critical"
+      repeat_interval: 1h
+
+receivers:
+  - name: "ops-primary"
+    email_configs:
+      - to: "${ALERTMANAGER_EMAIL_TO}"
+        send_resolved: true
+  - name: "ops-critical"
+    email_configs:
+      - to: "${ALERTMANAGER_EMAIL_TO}"
+        send_resolved: true
+    webhook_configs:
+      - url: "${ALERTMANAGER_WEBHOOK_URL}"
+        send_resolved: true

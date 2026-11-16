@@ -76,18 +76,25 @@ def search(
     max_chunks: int,
     project_id: str | None = None,
     project_ids: Sequence[str] | None = None,
+    document_ids: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Chunk payloads best first (``bm25`` score added), limited to the given scope.
 
     Scope rules are those of dense search: ``project_id`` one case, ``project_ids`` a list (empty means
     nothing), neither the whole tenant. A chunk without a project never matches a scoped query.
     """
-    if limit <= 0 or not query_tokens or (project_ids is not None and not project_ids):
+    if (
+        limit <= 0
+        or not query_tokens
+        or (project_ids is not None and not project_ids)
+        or (document_ids is not None and not document_ids)
+    ):
         return []
     corpus = _corpus(store, tenant, tokenize, ttl, max_chunks)
     if corpus is None:
         return []
     allowed = set(project_ids) if project_ids is not None else None
+    allowed_docs = set(document_ids) if document_ids is not None else None
     out: list[dict[str, Any]] = []
     for position, score in corpus.index.search(query_tokens, corpus.index.size):
         chunk = corpus.chunks[position]
@@ -96,6 +103,8 @@ def search(
         if project_id is not None and chunk.get("project_id") != project_id:
             continue
         if allowed is not None and chunk.get("project_id") not in allowed:
+            continue
+        if allowed_docs is not None and str(chunk.get("document_id")) not in allowed_docs:
             continue
         out.append({**chunk, "bm25": round(score, 4)})
         if len(out) == limit:

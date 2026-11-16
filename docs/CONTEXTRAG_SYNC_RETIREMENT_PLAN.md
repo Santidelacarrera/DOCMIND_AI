@@ -1,10 +1,10 @@
 # Plan de retirada de la sincronización con ContextRAG externo
 
-**Estado (2026-11-12):**
-* Fases 1 y 2 **autorizadas** por el propietario (misión «Validación real, staging y producción», sección 11).
+**Estado (2026-11-16):**
+* Fases 1, 2 y 3 **autorizadas** por el propietario.
 * **Fase 1 ejecutada**: `CONTEXTRAG_OUTBOX_ENABLED=false` por defecto (rama `claude/real-validation-prep`).
-* **Fase 2 ejecutada** (rama `claude/contextrag-sync-phase2`): código, rutas, tareas, configuración y sus pruebas retirados; la tabla se conserva.
-* **Fase 3 (borrar la tabla): no autorizada, no se ejecutará sin una autorización explícita.**
+* **Fase 2 ejecutada** (rama `claude/contextrag-sync-phase2`): código, rutas, tareas, configuración y sus pruebas retirados.
+* **Fase 3 ejecutada (2026-11-16)**: migración `0013_drop_contextrag_events` elimina `contextrag_events` con `downgrade()` reversible, se retiró `"contextrag_events"` de `rls.TENANT_TABLES` y `ContextRagEvent` de `app/models.py`, conservando la migración histórica `0007_contextrag_outbox.py` en la cadena de Alembic y el script `scripts/contextrag_phase3_retire.py`.
 
 ## Por qué existe y por qué sobra
 

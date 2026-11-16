@@ -16,14 +16,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import api_support
+from app import api_support, plans
 from app.api_support import Name, audit
 from app.core import settings
 from app.db import get_db
 from app.models import (
     ApiKey,
     AuditLog,
+    Document,
     Organization,
+    ProcessingJob,
     Project,
     Role,
     UsageRecord,
@@ -135,11 +137,52 @@ def usage(
     organization = db.get(Organization, org_id)
     if organization is None:
         raise HTTPException(404, "ORGANIZATION_NOT_FOUND")
+    snapshot = plans.usage_snapshot(db, organization)
     return {
-        "plan": organization.plan.value,
+        "plan": snapshot["plan"]["code"],
         "metrics": {metric: quantity for metric, quantity in rows},
         "free_pages_limit": settings().free_pages_per_month,
+        "period": snapshot["period"],
+        "limits": snapshot["plan"],
+        "consumption": snapshot["consumption"],
+        "alerts": snapshot["alerts"],
+        "totals": snapshot["totals"],
     }
+
+
+@router.get("/api/v1/jobs")
+def list_jobs(
+    organization_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    user: User | ApiPrincipal = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    """Recent processing jobs and failures for operational visibility."""
+    org_id = api_support.organization_id(organization_id)
+    membership(org_id, user, db, Role.admin, scope="usage:read")
+    rows = db.execute(
+        select(ProcessingJob, Document.filename)
+        .join(Document, Document.id == ProcessingJob.document_id)
+        .where(ProcessingJob.organization_id == org_id, Document.deleted_at.is_(None))
+        .order_by(ProcessingJob.created_at.desc())
+        .limit(limit)
+    ).all()
+    return [
+        {
+            "job_id": str(job.id),
+            "document_id": str(job.document_id),
+            "filename": filename,
+            "status": job.status.value,
+            "attempt": job.attempt,
+            "retry_count": job.retry_count,
+            "failure_code": job.failure_code,
+            "failure_message": job.failure_message,
+            "created_at": job.created_at,
+            "started_at": job.started_at,
+            "completed_at": job.completed_at,
+        }
+        for job, filename in rows
+    ]
 
 
 
@@ -169,6 +212,7 @@ class WebhookInput(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
     description: str | None = Field(default=None, max_length=160)
     events: list[str] = Field(default_factory=lambda: ["document.completed"])
+    project_ids: list[uuid.UUID] | None = None
 
 
 ALLOWED_WEBHOOK_EVENTS = frozenset({"document.completed", "document.failed"})
@@ -180,6 +224,7 @@ def _webhook_view(webhook: Webhook) -> dict[str, object]:
         "url": webhook.url,
         "description": webhook.description,
         "events": webhook.events,
+        "project_ids": webhook.project_ids,
         "active": webhook.active,
         "last_delivery_at": webhook.last_delivery_at,
         "last_delivery_status": webhook.last_delivery_status,
@@ -198,6 +243,14 @@ def create_webhook(
     membership(org_id, user, db, Role.admin)
     if not payload.events or set(payload.events) - ALLOWED_WEBHOOK_EVENTS:
         raise HTTPException(422, "INVALID_WEBHOOK_EVENT")
+    scoped_projects: list[str] | None = None
+    if payload.project_ids is not None:
+        if not payload.project_ids:
+            raise HTTPException(422, "EMPTY_PROJECT_SCOPE")
+        for pid in set(payload.project_ids):
+            if not db.scalar(select(Project.id).where(Project.id == pid, Project.organization_id == org_id)):
+                raise HTTPException(404, "PROJECT_NOT_FOUND")
+        scoped_projects = sorted(str(pid) for pid in set(payload.project_ids))
     try:
         validate_webhook_url(
             payload.url, allow_insecure=settings().environment.lower() == "development"
@@ -209,6 +262,7 @@ def create_webhook(
         url=payload.url,
         description=payload.description,
         events=sorted(set(payload.events)),
+        project_ids=scoped_projects,
         created_by=user.id,
     )
     db.add(webhook)

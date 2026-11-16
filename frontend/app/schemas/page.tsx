@@ -16,6 +16,12 @@ type Version = {
   prompt_instructions: string | null;
   created_at: string;
 };
+type Template = {
+  id: string;
+  name: string;
+  description: string;
+  json_schema: Record<string, unknown>;
+};
 const example = JSON.stringify(
   {
     type: "object",
@@ -34,6 +40,7 @@ export default function Schemas() {
   const router = useRouter();
   const [org, setOrg] = useState("");
   const [items, setItems] = useState<Schema[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
   const [name, setName] = useState("");
   const [schema, setSchema] = useState(example);
   const [message, setMessage] = useState("");
@@ -49,8 +56,12 @@ export default function Schemas() {
     const first = ((await orgs.json()) as { id: string }[])[0];
     if (!first) return;
     setOrg(first.id);
-    const res = await api(`/api/v1/schemas?organization_id=${first.id}`);
+    const [res, tplRes] = await Promise.all([
+      api(`/api/v1/schemas?organization_id=${first.id}`),
+      api(`/api/v1/schemas/templates?organization_id=${first.id}`),
+    ]);
     if (res.ok) setItems(await res.json());
+    if (tplRes.ok) setTemplates(await tplRes.json());
   }, [router]);
   useEffect(() => {
     void Promise.resolve().then(load);
@@ -115,6 +126,24 @@ export default function Schemas() {
           ever had, so in-flight jobs always keep extracting against the
           version they started with.
         </p>
+        {templates.length > 0 && (
+          <div className="toolbar">
+            <span>Load template:</span>
+            {templates.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className="linkbutton"
+                onClick={() => {
+                  setName(t.name);
+                  setSchema(JSON.stringify(t.json_schema, null, 2));
+                }}
+              >
+                {t.name}
+              </button>
+            ))}
+          </div>
+        )}
         <form onSubmit={submit}>
           <label>
             Name

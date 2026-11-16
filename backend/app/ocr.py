@@ -1,4 +1,4 @@
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.core import settings
 
@@ -10,36 +10,68 @@ class OCRProvider(Protocol):
 class TesseractProvider:
     """Tesseract via pytesseract.
 
-    After :meth:`extract_pages`, ``last_confidences`` holds the mean word confidence of each
-    page in [0, 1] (``None`` for a page with no recognisable words) and ``last_low_words`` the
-    normalised words of each page read below ``OCR_WORD_REVIEW_THRESHOLD``. Both are attributes
-    so ``extract_pages`` keeps the simple ``list[str]`` contract.
+    After :meth:`extract_pages` or :meth:`extract_images`, ``last_confidences`` holds the mean
+    word confidence of each page in [0, 1] (``None`` for a page with no recognisable words) and
+    ``last_low_words`` the normalised words of each page read below
+    ``OCR_WORD_REVIEW_THRESHOLD``. Both are attributes so ``extract_pages`` keeps the simple
+    ``list[str]`` contract.
     """
 
     def __init__(self) -> None:
         self.last_confidences: list[float | None] = []
         self.last_low_words: list[set[str]] = []
 
-    def extract_pages(self, content: bytes) -> list[str]:
+    def extract_images(self, images: list[Any]) -> list[str]:
         import pytesseract
-        from pdf2image import convert_from_bytes
 
-        images = convert_from_bytes(
-            content, dpi=200, first_page=1, last_page=settings().max_ocr_pages,
-            timeout=settings().ocr_timeout_seconds,
-        )
+        cfg = settings()
         texts: list[str] = []
         self.last_confidences = []
         self.last_low_words = []
-        for image in images:
+        for image in images[: cfg.max_ocr_pages]:
             data = pytesseract.image_to_data(
-                image, output_type=pytesseract.Output.DICT, timeout=settings().ocr_timeout_seconds
+                image,
+                lang=cfg.ocr_languages,
+                output_type=pytesseract.Output.DICT,
+                timeout=cfg.ocr_timeout_seconds,
             )
             text, confidence = assemble(data)
             texts.append(text)
             self.last_confidences.append(confidence)
-            self.last_low_words.append(low_confidence_words(data, settings().ocr_word_review_threshold))
+            self.last_low_words.append(low_confidence_words(data, cfg.ocr_word_review_threshold))
         return texts
+
+    def extract_pages(self, content: bytes, page_numbers: list[int] | None = None) -> list[str]:
+        from pdf2image import convert_from_bytes
+
+        cfg = settings()
+        if page_numbers is None:
+            images = convert_from_bytes(
+                content,
+                dpi=200,
+                first_page=1,
+                last_page=cfg.max_ocr_pages,
+                timeout=cfg.ocr_timeout_seconds,
+            )
+            return self.extract_images(images)
+
+        target_pages = [p for p in page_numbers if 1 <= p <= cfg.max_ocr_pages][: cfg.max_ocr_pages]
+        if not target_pages:
+            self.last_confidences = []
+            self.last_low_words = []
+            return []
+        images = []
+        for p in target_pages:
+            rendered = convert_from_bytes(
+                content,
+                dpi=200,
+                first_page=p,
+                last_page=p,
+                timeout=cfg.ocr_timeout_seconds,
+            )
+            if rendered:
+                images.append(rendered[0])
+        return self.extract_images(images)
 
 
 def assemble(data: dict[str, list[object]]) -> tuple[str, float | None]:
@@ -86,3 +118,8 @@ def low_confidence_words(data: dict[str, list[object]], threshold: float) -> set
 def needs_ocr(text: str, pages: int) -> bool:
     # A small per-page threshold avoids expensive OCR for normal digital PDFs.
     return pages > 0 and len(text.strip()) < pages * 20
+
+
+def pages_needing_ocr(pages: list[str]) -> list[int]:
+    """1-based page numbers of a PDF that carry virtually no digital text and need OCR."""
+    return [i for i, page in enumerate(pages, start=1) if len(page.strip()) < 20]

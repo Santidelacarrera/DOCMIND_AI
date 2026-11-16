@@ -27,8 +27,12 @@ backup_once() {
     return 1
   fi
   mv "$partial" "$target"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$target" > "${target}.sha256"
+  fi
   echo "backup ok $target $(wc -c < "$target") bytes"
   find "$DIR" -name "${PGDATABASE}-*.dump" -type f -mtime +"$RETENTION_DAYS" -print -delete
+  find "$DIR" -name "${PGDATABASE}-*.dump.sha256" -type f -mtime +"$RETENTION_DAYS" -delete
 }
 
 mkdir -p "$DIR"

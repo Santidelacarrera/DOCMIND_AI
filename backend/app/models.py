@@ -49,7 +49,10 @@ class Role(str, enum.Enum):
 
 class Plan(str, enum.Enum):
     free = "FREE"
+    starter = "STARTER"
     pro = "PRO"
+    professional = "PROFESSIONAL"
+    business = "BUSINESS"
     enterprise = "ENTERPRISE"
 
 
@@ -141,8 +144,13 @@ class Document(Base):
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     storage_key: Mapped[str] = mapped_column(String(512), unique=True, nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     page_count: Mapped[int | None] = mapped_column(Integer)
     checksum: Mapped[str] = mapped_column(String(64), index=True)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    tables_detected: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    protected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Vector index state (see app.vector_index): when the masked chunks were last written, or
     # the stable reason indexing was refused/failed. Both null = not indexed (yet).
@@ -392,6 +400,7 @@ class Webhook(Base):
     # it deterministically from JWT_SECRET + the webhook id, the same way on every
     # delivery, and is shown to the caller once at creation time.
     events: Mapped[list[str]] = mapped_column(JSON, default=lambda: ["document.completed"])
+    project_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     last_delivery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -451,39 +460,6 @@ class VectorDeletion(Base):
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
 
-class ContextRagEvent(Base):
-    """**Retired** (phase 2 of docs/CONTEXTRAG_SYNC_RETIREMENT_PLAN.md): nothing reads or writes this table any
-    more. The model is kept only so the table and its rows survive until phase 3 (backup, then drop), which
-    needs the owner's explicit authorization. Former role: outbox of changes for ContextRAG_Engine.
-
-    Written in the same transaction as the DOCMIND state change it describes (processing completed,
-    deleted, expired, purged), so a crash cannot lose the obligation. ``dedupe_key`` makes enqueueing
-    idempotent: ``upsert:<doc>:<version>:<content digest>`` and ``retire:<doc>``. Holds identifiers and
-    status only; document text is read from the database when the event is delivered, never copied here.
-    """
-
-    __tablename__ = "contextrag_events"
-    __table_args__ = (UniqueConstraint("dedupe_key", name="uq_contextrag_event_dedupe"),)
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
-    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)  # row may be purged
-    kind: Mapped[str] = mapped_column(String(16))  # upsert | retire
-    dedupe_key: Mapped[str] = mapped_column(String(160))
-    # pending -> processing -> done | failed | cancelled ; failed events are retried until the attempt budget
-    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
-    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Fencing token of the current claim. A timestamp is not used: SQLite returns naive datetimes, so a
-    # Python-side comparison with the claimed value silently fails and events stay "processing" forever.
-    claim_token: Mapped[str | None] = mapped_column(String(36))
-    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_error: Mapped[str | None] = mapped_column(String(80))
-    correlation_id: Mapped[str] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-
 class Conversation(Base):
     """A user's conversation with the organization's documents (ADR-005, delivery 3).
 
@@ -518,3 +494,98 @@ class ConversationMessage(Base):
     role: Mapped[str] = mapped_column(String(16))  # user | assistant
     payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OrganizationSubscription(Base):
+    """SaaS commercial subscription and configurable overrides per organization.
+
+    Stores provider references only (never raw card or banking details).
+    """
+
+    __tablename__ = "organization_subscriptions"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    plan: Mapped[str] = mapped_column(String(32), default="FREE", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="active", nullable=False)
+    billing_cycle: Mapped[str] = mapped_column(String(16), default="monthly", nullable=False)
+    payment_provider: Mapped[str] = mapped_column(String(32), default="none", nullable=False)
+    external_customer_id: Mapped[str | None] = mapped_column(String(128))
+    external_subscription_id: Mapped[str | None] = mapped_column(String(128))
+    custom_limits: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    alert_threshold_pct: Mapped[int] = mapped_column(Integer, default=80, nullable=False)
+    failed_payment_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    current_period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class BillingTransaction(Base):
+    """Payment transaction record per organization (checkout, renewal, plan change, refund).
+
+    Stores opaque provider transaction IDs and idempotency keys; never stores card details.
+    """
+
+    __tablename__ = "billing_transactions"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "idempotency_key", name="uq_billing_tx_idempotency"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    external_tx_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), default="checkout", nullable=False)
+    plan_code: Mapped[str] = mapped_column(String(32), default="FREE", nullable=False)
+    billing_cycle: Mapped[str] = mapped_column(String(16), default="monthly", nullable=False)
+    amount_cents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="USD", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False, index=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class BillingWebhookEvent(Base):
+    """Idempotent log of inbound payment gateway webhooks per organization."""
+
+    __tablename__ = "billing_webhook_events"
+    __table_args__ = (
+        UniqueConstraint("provider", "event_id", name="uq_billing_webhook_event"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    event_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="processed", nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    error_message: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class QueryHistory(Base):
+    """Tenant-scoped audit/history of /ask queries (masked question, citations metadata, no raw PII)."""
+
+    __tablename__ = "query_history"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), index=True)
+    question: Mapped[str] = mapped_column(String(500), nullable=False)
+    answer_preview: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    abstained: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    mode: Mapped[str] = mapped_column(String(24), default="extractive", nullable=False)
+    citations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    document_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

@@ -9,10 +9,12 @@ type Webhook = {
   url: string;
   description: string | null;
   events: string[];
+  project_ids?: string[] | null;
   active: boolean;
   last_delivery_at: string | null;
   last_delivery_status: number | null;
 };
+type Project = { id: string; name: string };
 
 const EVENT_OPTIONS = ["document.completed", "document.failed"];
 
@@ -20,6 +22,8 @@ export default function Webhooks() {
   const router = useRouter();
   const [org, setOrg] = useState("");
   const [items, setItems] = useState<Webhook[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
   const [url, setUrl] = useState("");
   const [description, setDescription] = useState("");
   const [events, setEvents] = useState<string[]>(["document.completed"]);
@@ -35,8 +39,12 @@ export default function Webhooks() {
     const first = ((await orgs.json()) as { id: string }[])[0];
     if (!first) return;
     setOrg(first.id);
-    const res = await api(`/api/v1/webhooks?organization_id=${first.id}`);
+    const [res, pRes] = await Promise.all([
+      api(`/api/v1/webhooks?organization_id=${first.id}`),
+      api(`/api/v1/projects?organization_id=${first.id}`),
+    ]);
     if (res.ok) setItems(await res.json());
+    if (pRes.ok) setProjects((await pRes.json()) as Project[]);
   }, [router]);
 
   useEffect(() => {
@@ -49,18 +57,33 @@ export default function Webhooks() {
     );
   }
 
+  function toggleProject(pid: string) {
+    setSelectedProjects((current) =>
+      current.includes(pid) ? current.filter((x) => x !== pid) : [...current, pid],
+    );
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     setRevealedSecret(null);
+    const payload: Record<string, unknown> = {
+      url,
+      description: description || null,
+      events,
+    };
+    if (selectedProjects.length > 0) {
+      payload.project_ids = selectedProjects;
+    }
     const res = await api(`/api/v1/webhooks?organization_id=${org}`, {
       method: "POST",
-      body: JSON.stringify({ url, description: description || null, events }),
+      body: JSON.stringify(payload),
     });
     if (res.ok) {
       const body = await res.json();
       setRevealedSecret(body.signing_secret);
       setUrl("");
       setDescription("");
+      setSelectedProjects([]);
       setMessage("Webhook created. Copy the signing secret now — it won't be shown again.");
       await load();
     } else {
@@ -119,6 +142,21 @@ export default function Webhooks() {
               </label>
             ))}
           </fieldset>
+          {projects.length > 0 && (
+            <fieldset>
+              <legend>Filter by project (optional — leave unchecked for all projects)</legend>
+              {projects.map((p) => (
+                <label key={p.id}>
+                  <input
+                    type="checkbox"
+                    checked={selectedProjects.includes(p.id)}
+                    onChange={() => toggleProject(p.id)}
+                  />
+                  {p.name}
+                </label>
+              ))}
+            </fieldset>
+          )}
           <button disabled={!events.length}>Create webhook</button>
         </form>
         {message && <p role="status">{message}</p>}
@@ -134,6 +172,9 @@ export default function Webhooks() {
           {items.map((w) => (
             <li key={w.id}>
               <strong>{w.url}</strong> — {w.events.join(", ")}
+              {w.project_ids && w.project_ids.length > 0
+                ? ` · Projects: ${w.project_ids.length}`
+                : " · All projects"}
               <br />
               <small>
                 {w.last_delivery_at

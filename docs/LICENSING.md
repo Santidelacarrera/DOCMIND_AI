@@ -43,4 +43,37 @@
 Esto no es asesoramiento jurídico. Conviene revisarlo con un abogado antes de publicar o vender.
 
 ---
+
+## Borradores Base para Comercialización SaaS B2B (Pendientes de Revisión Jurídica)
+
+> **IMPORTANTE:** Los siguientes apartados constituyen los **borradores técnicos y operativos base** alineados con el funcionamiento real de DOCMIND AI. **No están jurídicamente aprobados** y requieren validación por abogado habilitado (Chile / jurisdicción de contratación) antes de su publicación o firma con clientes.
+
+### 1. Términos de Servicio (ToS — Borrador Operativo)
+- **Objeto del servicio**: licencia de acceso SaaS no exclusiva, intransferible y acotada al plan suscrito (`FREE`, `STARTER`, `PROFESSIONAL`, `BUSINESS`, `ENTERPRISE`) para procesamiento, extracción estructurada, indexación e inteligencia documental.
+- **Titularidad de los documentos del cliente**: el Cliente conserva el 100 % de la propiedad intelectual y titularidad sobre los documentos subidos, sus metadatos y las exportaciones generadas. DOCMIND AI actúa únicamente como encargado del tratamiento (Data Processor).
+- **No entrenamiento con datos del cliente**: los documentos, fragmentos y consultas de una organización **nunca** se utilizan para entrenar modelos para otros clientes ni se comparten entre organizaciones.
+- **Uso de IA y supervisión humana**: las extracciones con confianza inferior al umbral calibrado se enrutan a la cola de revisión humana; las respuestas de `/ask` citan explícitamente documento y página o se abstienen cuando no hay evidencia suficiente. El Cliente es responsable de la validación final en decisiones jurídicas, financieras o regulatorias.
+- **Suspensión por morosidad y reactivación**: tras 3 intentos fallidos de cobro (`status=unpaid`), la cuenta degrada automáticamente sus límites efectivos al nivel `FREE` sin destruir los documentos existentes; al regularizar el pago (`payment.succeeded`), se reactivan los límites contratados.
+
+### 2. Política de Privacidad y Acuerdo de Tratamiento de Datos (DPA — Ley 19.628 / Ley 21.719 Chile y GDPR)
+- **Minimización y enmascarado de PII**: antes de indexar fragmentos en Qdrant o enviar pasajes al proveedor LLM externo, el pipeline enmascara identificadores sensibles (RUT chileno validado en módulo 11, correos electrónicos, teléfonos, números de tarjeta) mediante tokens deterministas por tenant (`app/ingestion/pii.py`).
+- **Aislamiento criptográfico y lógico**:
+  - PostgreSQL aplica Row-Level Security (RLS) en las 26 tablas de negocio.
+  - Los turnos de conversación se cifran con AES-256-GCM y clave derivada por organización mediante HKDF-SHA256 (`CONVERSATION_ENCRYPTION_KEY`).
+  - Los objetos en S3 se almacenan bajo prefijo por organización y cifrado SSE-KMS (`S3_KMS_KEY_ID`).
+- **Subencargados (Sub-processors) según configuración del despliegue**:
+  - Infraestructura de base de datos y almacenamiento: AWS S3/KMS, Google Cloud o proveedor cloud designado en el contrato.
+  - Proveedor LLM (cuando `LLM_PROVIDER=vertex` u `openai`): Google Cloud Vertex AI (en la región acordada, ej. `southamerica-east1`) u OpenAI API (sin retención para entrenamiento empresarial).
+
+### 3. Política de Retención y Eliminación de Datos (`docs/DATA_RETENTION.md`)
+- **Eliminación inmediata a petición del usuario (`DELETE /api/v1/documents/{id}`)**: borra en el acto los archivos del almacenamiento de objetos, vacía las páginas extraídas (`scrub_derived_text`), redacta el historial de consultas/conversaciones que citaban el documento y encola en la misma transacción la eliminación de vectores en Qdrant (`vector_deletions`).
+- **Purga definitiva (`RETENTION_DELETED_DAYS`, 30 días por defecto)**: la tarea programada `purge_expired_data` elimina físicamente los registros residuales de documentos borrados una vez cumplido el plazo de retención.
+- **Expiración automática opcional (`RETENTION_DOCUMENT_DAYS`)** y **retención de conversaciones (`CONVERSATION_RETENTION_DAYS`, 90 días por defecto)**.
+
+### 4. Decisiones que requieren aprobación del Propietario y Abogado
+1. Razón social definitiva emisora de contratos y facturas electrónicas (DTE en SII Chile: Persona natural vs. SpA / Ltda. bajo marca **Nexus Security & AI Lab**).
+2. SLA comprometido en contratos `BUSINESS` / `ENTERPRISE` (disponibilidad mensual, ventana de soporte, penalidades y límite de responsabilidad civil).
+3. Jurisdicción y arbitraje aplicables en los contratos B2B.
+
+---
 Relacionado: [[empresa]]
