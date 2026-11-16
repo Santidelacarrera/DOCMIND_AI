@@ -196,6 +196,7 @@ class Settings(BaseSettings):
     stripe_secret_key: SecretStr | None = None
     mercadopago_access_token: SecretStr | None = None
     transbank_api_key: SecretStr | None = None
+    transbank_commerce_code: str | None = None
     require_explicit_delete_scope: bool = False
     project_creator_auto_grant: bool = True
     rate_limit_login: int = 10

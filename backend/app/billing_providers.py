@@ -26,6 +26,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
+import httpx
+
 from app.core import settings
 
 SubscriptionStatus = Literal[
@@ -312,6 +314,64 @@ class _BaseAdapter:
     supported_currencies: tuple[str, ...] = ("USD", "CLP", "UF")
     status_map: dict[str, SubscriptionStatus] = STRIPE_STATUS_MAP
     outage_simulated: bool = False
+    http_transport: httpx.BaseTransport | None = None
+
+    def _is_live(self) -> bool:
+        return bool(settings().billing_live_enabled and self.name != "sandbox")
+
+    def _request_json(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json_body: dict[str, Any] | None = None,
+        form_body: dict[str, str] | None = None,
+        timeout: float = 10.0,
+        max_retries: int = 2,
+    ) -> dict[str, Any]:
+        self._check_available()
+        last_exc: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                with httpx.Client(timeout=timeout, transport=self.http_transport) as client:
+                    resp = client.request(
+                        method,
+                        url,
+                        headers=headers,
+                        json=json_body,
+                        data=form_body,
+                    )
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    if attempt < max_retries:
+                        continue
+                    raise PaymentProviderError(
+                        "PAYMENT_PROVIDER_UNAVAILABLE",
+                        f"{self.name} HTTP {resp.status_code}",
+                        retryable=True,
+                    )
+                if resp.status_code >= 400:
+                    raise PaymentProviderError(
+                        "PAYMENT_PROVIDER_REJECTED",
+                        f"{self.name} HTTP {resp.status_code}",
+                        retryable=False,
+                    )
+                data = resp.json()
+                return data if isinstance(data, dict) else {}
+            except httpx.HTTPError as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    continue
+                raise PaymentProviderError(
+                    "PAYMENT_PROVIDER_UNAVAILABLE",
+                    f"{self.name} network error: {type(exc).__name__}",
+                    retryable=True,
+                ) from exc
+        raise PaymentProviderError(
+            "PAYMENT_PROVIDER_UNAVAILABLE",
+            f"{self.name} request failed: {last_exc}",
+            retryable=True,
+        )
 
     def _check_available(self) -> None:
         if self.outage_simulated:
@@ -440,6 +500,132 @@ class StripeAdapter(_BaseAdapter):
     supports_refunds = True
     supported_currencies = ("USD", "CLP")
     status_map = STRIPE_STATUS_MAP
+    api_base = "https://api.stripe.com/v1"
+
+    def _headers(self, idempotency_key: str | None = None) -> dict[str, str]:
+        secret = settings().stripe_secret_key
+        if secret is None or not secret.get_secret_value():
+            raise PaymentProviderError("STRIPE_SECRET_KEY_MISSING", "STRIPE_SECRET_KEY is not configured")
+        hdr = {"Authorization": f"Bearer {secret.get_secret_value()}"}
+        if idempotency_key:
+            hdr["Idempotency-Key"] = idempotency_key
+        return hdr
+
+    def create_customer(self, organization_id: str, email: str, name: str) -> CustomerResult:
+        if not self._is_live():
+            return super().create_customer(organization_id, email, name)
+        data = self._request_json(
+            "POST",
+            f"{self.api_base}/customers",
+            headers=self._headers(f"cust-{organization_id}"),
+            form_body={"email": email, "name": name, "metadata[organization_id]": organization_id},
+        )
+        return CustomerResult(provider=self.name, customer_id=str(data["id"]), email=email)
+
+    def create_checkout(
+        self,
+        *,
+        organization_id: str,
+        customer_id: str,
+        plan_code: str,
+        billing_cycle: str,
+        amount_cents: int,
+        currency: str,
+        idempotency_key: str,
+        success_url: str,
+        cancel_url: str,
+    ) -> CheckoutResult:
+        if not self._is_live():
+            return super().create_checkout(
+                organization_id=organization_id,
+                customer_id=customer_id,
+                plan_code=plan_code,
+                billing_cycle=billing_cycle,
+                amount_cents=amount_cents,
+                currency=currency,
+                idempotency_key=idempotency_key,
+                success_url=success_url,
+                cancel_url=cancel_url,
+            )
+        curr = currency.upper()
+        if curr not in self.supported_currencies:
+            raise PaymentProviderError("UNSUPPORTED_CURRENCY", f"stripe does not support {curr}")
+        interval = "year" if billing_cycle == "annual" else "month"
+        data = self._request_json(
+            "POST",
+            f"{self.api_base}/checkout/sessions",
+            headers=self._headers(idempotency_key),
+            form_body={
+                "mode": "subscription",
+                "customer": customer_id,
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "line_items[0][quantity]": "1",
+                "line_items[0][price_data][currency]": curr.lower(),
+                "line_items[0][price_data][unit_amount]": str(amount_cents),
+                "line_items[0][price_data][recurring][interval]": interval,
+                "line_items[0][price_data][product_data][name]": f"DocMind AI {plan_code}",
+                "metadata[organization_id]": organization_id,
+                "metadata[plan_code]": plan_code,
+            },
+        )
+        return CheckoutResult(
+            provider=self.name,
+            session_id=str(data["id"]),
+            checkout_url=str(data.get("url") or ""),
+            customer_id=customer_id,
+            subscription_id=str(data["subscription"]) if data.get("subscription") else None,
+            amount_cents=amount_cents,
+            currency=curr,
+            status="pending",
+            subscription_status="incomplete",
+            live_mode=True,
+        )
+
+    def cancel_subscription(self, *, subscription_id: str, immediate: bool = False) -> SubscriptionResult:
+        if not self._is_live():
+            return super().cancel_subscription(subscription_id=subscription_id, immediate=immediate)
+        if immediate:
+            data = self._request_json(
+                "DELETE", f"{self.api_base}/subscriptions/{subscription_id}", headers=self._headers()
+            )
+        else:
+            data = self._request_json(
+                "POST",
+                f"{self.api_base}/subscriptions/{subscription_id}",
+                headers=self._headers(),
+                form_body={"cancel_at_period_end": "true"},
+            )
+        return SubscriptionResult(
+            provider=self.name,
+            subscription_id=str(data.get("id") or subscription_id),
+            status=self.normalize_status(str(data.get("status") or ("canceled" if immediate else "active"))),
+            plan_code="",
+            billing_cycle="monthly",
+            cancel_at_period_end=bool(data.get("cancel_at_period_end", not immediate)),
+        )
+
+    def refund(
+        self, *, external_tx_id: str, amount_cents: int, currency: str, reason: str = ""
+    ) -> RefundResult:
+        if not self._is_live():
+            return super().refund(
+                external_tx_id=external_tx_id, amount_cents=amount_cents, currency=currency, reason=reason
+            )
+        data = self._request_json(
+            "POST",
+            f"{self.api_base}/refunds",
+            headers=self._headers(f"refund-{external_tx_id}-{amount_cents}"),
+            form_body={"payment_intent": external_tx_id, "amount": str(amount_cents)},
+        )
+        return RefundResult(
+            provider=self.name,
+            refund_id=str(data["id"]),
+            transaction_id=external_tx_id,
+            amount_cents=amount_cents,
+            currency=currency.upper(),
+            status="refunded",
+        )
 
 
 class MercadoPagoAdapter(_BaseAdapter):
@@ -450,6 +636,97 @@ class MercadoPagoAdapter(_BaseAdapter):
     supports_refunds = True
     supported_currencies = ("CLP", "USD")
     status_map = MERCADOPAGO_STATUS_MAP
+    api_base = "https://api.mercadopago.com"
+
+    def _headers(self, idempotency_key: str | None = None) -> dict[str, str]:
+        token = settings().mercadopago_access_token
+        if token is None or not token.get_secret_value():
+            raise PaymentProviderError("MERCADOPAGO_TOKEN_MISSING", "MERCADOPAGO_ACCESS_TOKEN is not configured")
+        hdr = {"Authorization": f"Bearer {token.get_secret_value()}"}
+        if idempotency_key:
+            hdr["X-Idempotency-Key"] = idempotency_key
+        return hdr
+
+    def create_checkout(
+        self,
+        *,
+        organization_id: str,
+        customer_id: str,
+        plan_code: str,
+        billing_cycle: str,
+        amount_cents: int,
+        currency: str,
+        idempotency_key: str,
+        success_url: str,
+        cancel_url: str,
+    ) -> CheckoutResult:
+        if not self._is_live():
+            return super().create_checkout(
+                organization_id=organization_id,
+                customer_id=customer_id,
+                plan_code=plan_code,
+                billing_cycle=billing_cycle,
+                amount_cents=amount_cents,
+                currency=currency,
+                idempotency_key=idempotency_key,
+                success_url=success_url,
+                cancel_url=cancel_url,
+            )
+        curr = currency.upper()
+        if curr not in self.supported_currencies:
+            raise PaymentProviderError("UNSUPPORTED_CURRENCY", f"mercadopago does not support {curr}")
+        tx_amount = amount_cents if curr == "CLP" else round(amount_cents / 100, 2)
+        data = self._request_json(
+            "POST",
+            f"{self.api_base}/preapproval",
+            headers=self._headers(idempotency_key),
+            json_body={
+                "reason": f"DocMind AI {plan_code}",
+                "external_reference": organization_id,
+                "back_url": success_url,
+                "auto_recurring": {
+                    "frequency": 12 if billing_cycle == "annual" else 1,
+                    "frequency_type": "months",
+                    "transaction_amount": tx_amount,
+                    "currency_id": curr,
+                },
+            },
+        )
+        return CheckoutResult(
+            provider=self.name,
+            session_id=str(data["id"]),
+            checkout_url=str(data.get("init_point") or ""),
+            customer_id=customer_id,
+            subscription_id=str(data["id"]),
+            amount_cents=amount_cents,
+            currency=curr,
+            status="pending",
+            subscription_status=self.normalize_status(str(data.get("status") or "pending")),
+            live_mode=True,
+        )
+
+    def refund(
+        self, *, external_tx_id: str, amount_cents: int, currency: str, reason: str = ""
+    ) -> RefundResult:
+        if not self._is_live():
+            return super().refund(
+                external_tx_id=external_tx_id, amount_cents=amount_cents, currency=currency, reason=reason
+            )
+        amount = amount_cents if currency.upper() == "CLP" else round(amount_cents / 100, 2)
+        data = self._request_json(
+            "POST",
+            f"{self.api_base}/v1/payments/{external_tx_id}/refunds",
+            headers=self._headers(f"mp-re-{external_tx_id}-{amount_cents}"),
+            json_body={"amount": amount},
+        )
+        return RefundResult(
+            provider=self.name,
+            refund_id=str(data["id"]),
+            transaction_id=external_tx_id,
+            amount_cents=amount_cents,
+            currency=currency.upper(),
+            status="refunded",
+        )
 
 
 class TransbankAdapter(_BaseAdapter):
@@ -464,6 +741,93 @@ class TransbankAdapter(_BaseAdapter):
     supports_refunds = True
     supported_currencies = ("CLP", "UF")
     status_map = TRANSBANK_STATUS_MAP
+    api_base = "https://webpay3g.transbank.cl"
+
+    def _headers(self) -> dict[str, str]:
+        key = settings().transbank_api_key
+        if key is None or not key.get_secret_value():
+            raise PaymentProviderError("TRANSBANK_KEY_MISSING", "TRANSBANK_API_KEY is not configured")
+        return {
+            "Tbk-Api-Key-Id": settings().transbank_commerce_code or "597055555532",
+            "Tbk-Api-Key-Secret": key.get_secret_value(),
+        }
+
+    def create_checkout(
+        self,
+        *,
+        organization_id: str,
+        customer_id: str,
+        plan_code: str,
+        billing_cycle: str,
+        amount_cents: int,
+        currency: str,
+        idempotency_key: str,
+        success_url: str,
+        cancel_url: str,
+    ) -> CheckoutResult:
+        if not self._is_live():
+            return super().create_checkout(
+                organization_id=organization_id,
+                customer_id=customer_id,
+                plan_code=plan_code,
+                billing_cycle=billing_cycle,
+                amount_cents=amount_cents,
+                currency=currency,
+                idempotency_key=idempotency_key,
+                success_url=success_url,
+                cancel_url=cancel_url,
+            )
+        curr = currency.upper()
+        if curr not in self.supported_currencies:
+            raise PaymentProviderError("UNSUPPORTED_CURRENCY", f"transbank does not support {curr}")
+        buy_order = hashlib.sha256(idempotency_key.encode()).hexdigest()[:24]
+        data = self._request_json(
+            "POST",
+            f"{self.api_base}/rswebpaytransaction/api/webpay/v1.2/transactions",
+            headers=self._headers(),
+            json_body={
+                "buy_order": buy_order,
+                "session_id": organization_id[:60],
+                "amount": amount_cents,
+                "return_url": success_url,
+            },
+        )
+        token = str(data.get("token") or buy_order)
+        url = str(data.get("url") or "")
+        return CheckoutResult(
+            provider=self.name,
+            session_id=token,
+            checkout_url=f"{url}?token_ws={token}" if url else "",
+            customer_id=customer_id,
+            subscription_id=None,
+            amount_cents=amount_cents,
+            currency=curr,
+            status="pending",
+            subscription_status="incomplete",
+            live_mode=True,
+        )
+
+    def refund(
+        self, *, external_tx_id: str, amount_cents: int, currency: str, reason: str = ""
+    ) -> RefundResult:
+        if not self._is_live():
+            return super().refund(
+                external_tx_id=external_tx_id, amount_cents=amount_cents, currency=currency, reason=reason
+            )
+        data = self._request_json(
+            "POST",
+            f"{self.api_base}/rswebpaytransaction/api/webpay/v1.2/transactions/{external_tx_id}/refunds",
+            headers=self._headers(),
+            json_body={"amount": amount_cents},
+        )
+        return RefundResult(
+            provider=self.name,
+            refund_id=str(data.get("authorization_code") or f"tbk_re_{external_tx_id[:12]}"),
+            transaction_id=external_tx_id,
+            amount_cents=amount_cents,
+            currency=currency.upper(),
+            status="refunded",
+        )
 
 
 _ADAPTERS: dict[str, _BaseAdapter] = {

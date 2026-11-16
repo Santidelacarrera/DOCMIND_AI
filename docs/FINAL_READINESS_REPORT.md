@@ -124,6 +124,10 @@ DOCMIND AI cuenta con **todas sus capacidades técnicas implementadas y verifica
 4. **Stack vivo Docker Compose (`db`, `redis`, `qdrant`, `storage-init`, `api`, `worker`, `scheduler`, `web`)**:
    - `scripts/staging_smoke.py --base-url http://localhost:8000 --lifecycle`: **27/27 controles superados (`smoke test passed`)**.
    - Playwright E2E (`npx playwright test`): **11/11 passed (57.3 s)**, incluyendo layout móvil a 375 px en todas las vistas.
+   - **Pruebas de carga y concurrencia (Fase 16)** sobre Compose (`concurrency=4`):
+     - `ask_load_smoke.py` (`/ask`, 80 preguntas): `p50=41 ms`, `p95=94 ms`, `max=138 ms`, `8.18 req/s`, `0` errores.
+     - `ask_load_smoke.py --conversations` (40 preguntas cifradas AES-GCM): `p50=53 ms`, `p95=147 ms`, `max=152 ms`, `7.97 req/s`, `0` errores.
+     - `load_smoke.py` (16 documentos concurrentes): `16/16` aceptados y completados (`0` fallos), latencia subida `p50=91 ms` / `p95=133 ms`, rendimiento `197.03 docs/min`.
 
 ---
 

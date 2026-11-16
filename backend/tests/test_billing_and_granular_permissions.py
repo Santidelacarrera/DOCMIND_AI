@@ -361,3 +361,87 @@ def test_conversation_key_rotation_and_contextrag_phase3_backup(
     backup_file = Path(report["backup_file"])
     assert backup_file.exists()
     assert hashlib.sha256(backup_file.read_bytes()).hexdigest() == report["backup_sha256"]
+
+
+def test_live_http_payment_adapters_with_mock_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    calls: list[tuple[str, str, dict[str, str]]] = []
+    attempts = {"stripe_503": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, str(request.url), dict(request.headers)))
+        if "api.stripe.com/v1/customers" in str(request.url):
+            if attempts["stripe_503"] == 0:
+                attempts["stripe_503"] += 1
+                return httpx.Response(503, json={"error": "temporary"})
+            return httpx.Response(200, json={"id": "cus_live_123"})
+        if "api.stripe.com/v1/checkout/sessions" in str(request.url):
+            return httpx.Response(
+                200,
+                json={"id": "cs_live_1", "url": "https://checkout.stripe.com/c/pay/cs_live_1", "subscription": "sub_live_1"},
+            )
+        if "api.mercadopago.com/preapproval" in str(request.url):
+            return httpx.Response(201, json={"id": "mp_pre_1", "init_point": "https://www.mercadopago.cl/subscriptions/checkout?preapproval_id=mp_pre_1", "status": "pending"})
+        if "webpay3g.transbank.cl" in str(request.url) and request.url.path.endswith("/transactions"):
+            return httpx.Response(200, json={"token": "tbk_tok_999", "url": "https://webpay3g.transbank.cl/webpayserver/initTransaction"})
+        return httpx.Response(404, json={"error": "not found"})
+
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(settings(), "billing_live_enabled", True)
+    monkeypatch.setattr(settings(), "stripe_secret_key", SecretStr("sk_test_mock"))
+    monkeypatch.setattr(settings(), "mercadopago_access_token", SecretStr("APP_USR_mock"))
+    monkeypatch.setattr(settings(), "transbank_api_key", SecretStr("tbk_secret_mock"))
+    monkeypatch.setattr(settings(), "transbank_commerce_code", "597055555532")
+
+    stripe_adapter = billing_providers.get_payment_adapter("stripe")
+    mp_adapter = billing_providers.get_payment_adapter("mercadopago")
+    tbk_adapter = billing_providers.get_payment_adapter("transbank")
+    for adp in (stripe_adapter, mp_adapter, tbk_adapter):
+        monkeypatch.setattr(adp, "http_transport", transport)
+
+    # Stripe retries on 503 and passes Idempotency-Key
+    cust = stripe_adapter.create_customer("org-1", "a@example.com", "Acme")
+    assert cust.customer_id == "cus_live_123"
+    assert attempts["stripe_503"] == 1
+    chk_stripe = stripe_adapter.create_checkout(
+        organization_id="org-1",
+        customer_id=cust.customer_id,
+        plan_code="PROFESSIONAL",
+        billing_cycle="monthly",
+        amount_cents=19900,
+        currency="USD",
+        idempotency_key="idem-live-1",
+        success_url="https://app.example.com/billing?ok=1",
+        cancel_url="https://app.example.com/billing?cancel=1",
+    )
+    assert chk_stripe.live_mode is True and chk_stripe.session_id == "cs_live_1"
+    assert any(h.get("idempotency-key") == "idem-live-1" for _, u, h in calls if "checkout/sessions" in u)
+
+    # Mercado Pago CLP preapproval
+    chk_mp = mp_adapter.create_checkout(
+        organization_id="org-1",
+        customer_id="cus_mp",
+        plan_code="STARTER",
+        billing_cycle="monthly",
+        amount_cents=46550,
+        currency="CLP",
+        idempotency_key="idem-mp-1",
+        success_url="https://app.example.com/billing?ok=1",
+        cancel_url="https://app.example.com/billing?cancel=1",
+    )
+    assert chk_mp.live_mode is True and chk_mp.session_id == "mp_pre_1"
+
+    # Transbank Webpay Plus init
+    chk_tbk = tbk_adapter.create_checkout(
+        organization_id="org-1",
+        customer_id="cus_tbk",
+        plan_code="BUSINESS",
+        billing_cycle="monthly",
+        amount_cents=474050,
+        currency="CLP",
+        idempotency_key="idem-tbk-1",
+        success_url="https://app.example.com/billing?ok=1",
+        cancel_url="https://app.example.com/billing?cancel=1",
+    )
+    assert chk_tbk.live_mode is True and "token_ws=tbk_tok_999" in chk_tbk.checkout_url

@@ -1,6 +1,6 @@
 # Integración Comercial de Billing y Pasarelas de Pago (Chile y Global)
 
-> **Estado:** Arquitectura de adaptadores, máquina de estados normalizada, idempotencia, conciliación, morosidad (dunning) y webhooks firmados **COMPLETADOS Y PROBADOS EN SANDBOX**. La activación de cobros reales (`BILLING_LIVE_ENABLED=true`) está **BLOQUEADA POR CREDENCIALES COMERCIALES** del propietario.
+> **Estado:** Arquitectura de adaptadores (con llamadas HTTP reales vía `httpx` para Stripe, Mercado Pago y Transbank cuando `BILLING_LIVE_ENABLED=true`, más modo Sandbox determinista por defecto), máquina de estados normalizada, idempotencia, conciliación, morosidad (dunning) y webhooks firmados **COMPLETADOS Y PROBADOS CON `MockTransport` Y EN SANDBOX**. La activación de cobros reales (`BILLING_LIVE_ENABLED=true`) contra cuentas comerciales está **BLOQUEADA POR CREDENCIALES COMERCIALES** del propietario.
 
 ---
 
@@ -76,5 +76,6 @@ BILLING_WEBHOOK_TOLERANCE_SECONDS=300
 STRIPE_SECRET_KEY=<sk_live_...>          # Obligatorio si BILLING_PROVIDER=stripe
 MERCADOPAGO_ACCESS_TOKEN=<APP_USR-...>   # Obligatorio si BILLING_PROVIDER=mercadopago
 TRANSBANK_API_KEY=<tbk-api-key>          # Obligatorio si BILLING_PROVIDER=transbank
+TRANSBANK_COMMERCE_CODE=<codigo-comercio> # Código de comercio Transbank (producción)
 PLANS_CONFIG_JSON=                       # JSON opcional para sobrescribir precios/límites sin redesplegar
 ```
