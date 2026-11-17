@@ -11,7 +11,12 @@ from app import conversations
 from app.core import settings
 from app.db import SessionLocal
 from app.models import ConversationMessage, OrganizationMember, Role, utcnow
-from tests.test_case_query import ALPHA_TEXT, QUESTION, env, ingest  # noqa: F401  (env is a fixture)
+from tests.test_case_query import (  # noqa: F401  (env is a fixture)
+    ALPHA_TEXT,
+    QUESTION,
+    env,
+    ingest,
+)
 
 pytest.importorskip("qdrant_client")
 

@@ -18,7 +18,12 @@ from app.evaluation.pdfgen import digital_pdf
 from app.models import OrganizationMember, ProjectMember, Role
 from app.routers.conversations import WITHDRAWN
 from tests.conftest import PASSWORD
-from tests.test_case_query import ALPHA_TEXT, QUESTION, env, ingest  # noqa: F401  (env is a fixture)
+from tests.test_case_query import (  # noqa: F401  (env is a fixture)
+    ALPHA_TEXT,
+    QUESTION,
+    env,
+    ingest,
+)
 
 pytest.importorskip("qdrant_client")
 

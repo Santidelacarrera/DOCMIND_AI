@@ -173,7 +173,10 @@ from app.routers import (
     projects,
     schemas,
 )
-from app.worker import process_document, process_vector_deletions  # noqa: F401  (re-exported for tests)
+from app.worker import (  # noqa: F401  (re-exported for tests)
+    process_document,
+    process_vector_deletions,
+)
 
 # Routes are appended to the app's own flat route list rather than through include_router: in this
 # FastAPI version include_router adds one opaque _IncludedRouter per router, which would hide the
