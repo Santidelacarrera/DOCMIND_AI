@@ -41,7 +41,7 @@ router = APIRouter()
 
 class AskInput(BaseModel):
     question: str = Field(min_length=3, max_length=500)
-    top_k: int = Field(default=6, ge=1, le=12)
+    top_k: int = Field(default=6, ge=1, le=8)
     document_ids: list[uuid.UUID] | None = Field(default=None, max_length=25)
 
 
