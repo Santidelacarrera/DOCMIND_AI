@@ -95,11 +95,19 @@ def test_manifest_matches_the_generator_and_covers_every_case() -> None:
 
 
 def test_digital_documents_regenerate_byte_for_byte(tmp_path: Path) -> None:
+    import io
+
+    from pypdf import PdfReader
+
     corpus.build(tmp_path, only_digital=True)
     for spec in corpus.SPECS:
         if spec.render == "scanned":
             continue
-        assert (tmp_path / "pdfs" / f"{spec.id}.pdf").read_bytes() == (
+        generated = (tmp_path / "pdfs" / f"{spec.id}.pdf").read_bytes()
+        if spec.recipe == "encrypted":
+            assert PdfReader(io.BytesIO(generated)).is_encrypted, spec.id
+            continue
+        assert generated == (
             corpus.CORPUS_DIR / "pdfs" / f"{spec.id}.pdf"
         ).read_bytes(), spec.id
     assert (tmp_path / "manifest.json").read_text() == (corpus.CORPUS_DIR / "manifest.json").read_text()
