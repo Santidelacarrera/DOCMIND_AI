@@ -404,3 +404,80 @@ def extract_any_pages(content: bytes, mime_type: str) -> "Any":
 def extract_pdf_text(content: bytes) -> tuple[str, int]:
     pages = extract_pdf_pages(content)
     return "\n".join(pages)[: settings().max_pdf_text_chars], len(pages)
+
+
+def format_pages_for_extraction(pages_text: list[str], *, start_page: int = 1) -> str:
+    """Annotate extracted pages with ``[Page N]`` markers so the LLM preserves page context."""
+    return "\n\n".join(
+        f"[Page {start_page + idx}]\n{page}" for idx, page in enumerate(pages_text) if page
+    )
+
+
+def extract_pages_windowed(
+    provider: LLMProvider,
+    pages_text: list[str],
+    schema: dict[str, Any],
+    prompt_instructions: str | None = None,
+    *,
+    max_chars: int | None = None,
+) -> dict[str, Any]:
+    """Extract structured fields across all pages without silently truncating the tail of long docs.
+
+    If the annotated document fits in ``max_chars``, performs a single LLM call. Otherwise splits
+    pages into overlapping windows (1-page overlap) and merges fields preferring non-null values
+    with the highest confidence.
+    """
+    budget = max_chars if max_chars is not None else settings().openai_max_input_chars
+    full_text = format_pages_for_extraction(pages_text) or "\n".join(pages_text)
+    if len(full_text) <= budget or len(pages_text) <= 1:
+        return provider.extract(full_text, schema, prompt_instructions=prompt_instructions)
+
+    windows: list[tuple[int, list[str]]] = []
+    idx = 0
+    while idx < len(pages_text):
+        window_pages: list[str] = []
+        cur_len = 0
+        start = idx
+        while idx < len(pages_text):
+            page_block = f"[Page {idx + 1}]\n{pages_text[idx]}"
+            if window_pages and cur_len + len(page_block) + 2 > budget:
+                break
+            window_pages.append(pages_text[idx])
+            cur_len += len(page_block) + 2
+            idx += 1
+        windows.append((start + 1, window_pages))
+        if idx < len(pages_text) and len(window_pages) > 1:
+            idx -= 1  # 1-page overlap so boundary tables/clauses aren't split
+
+    merged_fields: dict[str, Any] = {}
+    merged_conf: dict[str, float] = {}
+    total_prompt = 0
+    total_completion = 0
+    any_estimated = False
+    for start_page, w_pages in windows:
+        w_text = format_pages_for_extraction(w_pages, start_page=start_page)
+        res = provider.extract(w_text, schema, prompt_instructions=prompt_instructions)
+        usage = res.get("usage") or {}
+        total_prompt += int(usage.get("prompt_tokens") or 0)
+        total_completion += int(usage.get("completion_tokens") or 0)
+        any_estimated = any_estimated or bool(usage.get("estimated"))
+        fields = res.get("fields")
+        conf = res.get("confidence") or {}
+        if not isinstance(fields, dict):
+            continue
+        for k, v in fields.items():
+            score = float(conf.get(k) or 0.0) if isinstance(conf, dict) and conf.get(k) is not None else 0.0
+            prev = merged_fields.get(k)
+            prev_score = merged_conf.get(k, -1.0)
+            if (v is not None and (prev is None or score >= prev_score)) or k not in merged_fields:
+                merged_fields[k] = v
+                merged_conf[k] = score
+    return {
+        "fields": merged_fields,
+        "confidence": merged_conf,
+        "usage": {
+            "prompt_tokens": total_prompt,
+            "completion_tokens": total_completion,
+            "estimated": any_estimated,
+        },
+    }

@@ -128,3 +128,77 @@ def test_end_to_end_generative_reasoning_in_answer() -> None:
     assert ans.mode == "generative"
     assert len(ans.citations) == 2
     assert "1200" in ans.text and "1500" in ans.text
+
+
+def test_order_hits_by_document_and_fetch_neighbors() -> None:
+    from qdrant_client import QdrantClient
+
+    from app.rag.reasoning import order_hits_by_document
+
+    store = QdrantStore(QdrantClient(":memory:"), f"test-nb-{uuid.uuid4().hex[:8]}")
+    pipeline = IngestionPipeline(store, HashingEmbedder(64), max_chars=220, overlap=0)
+    org_a = str(uuid.uuid4())
+    org_b = str(uuid.uuid4())
+    proj_a = str(uuid.uuid4())
+    doc_a = str(uuid.uuid4())
+    pipeline.ingest(
+        tenant_id=org_a,
+        document_id=doc_a,
+        content=digital_pdf([[
+            "Clausula primera sobre vigencia y condiciones generales del contrato de servicios profesionales " * 2,
+            "Clausula segunda sobre penalidad de 500 USD por retraso en la entrega de los entregables pactados " * 2,
+            "Clausula tercera sobre jurisdiccion aplicable y arbitraje comercial en Santiago de Chile " * 2,
+        ]]),
+        source_name="contrato.pdf",
+        project_id=proj_a,
+    )
+    pipeline.ingest(
+        tenant_id=org_b,
+        document_id=str(uuid.uuid4()),
+        content=digital_pdf([["Documento confidencial de otro tenant."]]),
+        source_name="other.pdf",
+        project_id=str(uuid.uuid4()),
+    )
+    seed = [{"document_id": doc_a, "chunk_index": 1, "page": 1, "score": 0.9}]
+    neighbors = store.fetch_neighbors(org_a, seed, radius=1, project_id=proj_a)
+    indices = sorted(int(n["chunk_index"]) for n in neighbors)
+    assert 0 in indices and 1 in indices
+    assert all(n["tenant_id"] == org_a for n in neighbors)
+    assert store.fetch_neighbors(org_b, seed, radius=1) == []
+
+    unordered = [
+        {"document_id": "d1", "page": 3, "chunk_index": 5},
+        {"document_id": "d2", "page": 1, "chunk_index": 0},
+        {"document_id": "d1", "page": 1, "chunk_index": 0},
+    ]
+    ordered = order_hits_by_document(unordered)
+    assert [(h["document_id"], h["page"]) for h in ordered] == [("d1", 1), ("d1", 3), ("d2", 1)]
+
+
+def test_extract_pages_windowed_recovers_fields_from_late_pages() -> None:
+    from app.processing import extract_pages_windowed
+
+    class _WindowProvider:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def extract(self, text: str, schema: dict[str, object], prompt_instructions: str | None = None) -> dict[str, object]:
+            self.prompts.append(text)
+            if "[Page 3]" in text:
+                return {
+                    "fields": {"issuer": "Acme", "total": 9500},
+                    "confidence": {"issuer": 0.9, "total": 0.95},
+                    "usage": {"prompt_tokens": 20, "completion_tokens": 10},
+                }
+            return {
+                "fields": {"issuer": "Acme", "total": None},
+                "confidence": {"issuer": 0.9, "total": 0.0},
+                "usage": {"prompt_tokens": 20, "completion_tokens": 10},
+            }
+
+    provider = _WindowProvider()
+    pages = ["Pagina uno " * 8, "Pagina dos " * 8, "Pagina tres total 9500"]
+    res = extract_pages_windowed(provider, pages, {"type": "object"}, max_chars=120)
+    assert len(provider.prompts) >= 2
+    assert res["fields"]["total"] == 9500
+    assert res["usage"]["prompt_tokens"] >= 40

@@ -116,3 +116,21 @@ def merge_multi_query_hits(
     if reranker is not None and rerank_fn is not None and question:
         merged = rerank_fn(reranker, question, merged, candidates=max(limit, rerank_candidates))
     return merged[:limit]
+
+
+def order_hits_by_document(hits: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group hits by document (preserving first-seen relevance order) and sort by page & chunk_index."""
+    doc_order: dict[str, int] = {}
+    for h in hits:
+        doc_id = str(h.get("document_id") or "")
+        if doc_id not in doc_order:
+            doc_order[doc_id] = len(doc_order)
+
+    def sort_key(h: dict[str, Any]) -> tuple[int, int, int]:
+        doc_id = str(h.get("document_id") or "")
+        page = int(h.get("page") or h.get("page_start") or 0)
+        idx = h.get("chunk_index")
+        chunk = int(idx) if isinstance(idx, int) and not isinstance(idx, bool) else 0
+        return (doc_order.get(doc_id, 0), page, chunk)
+
+    return sorted(hits, key=sort_key)

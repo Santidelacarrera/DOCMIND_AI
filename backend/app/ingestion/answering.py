@@ -252,6 +252,7 @@ def answer(
 
     if answer_mode == "generative" and is_reasoning_llm(generator):
         from app.core import settings
+        from app.rag.reasoning import order_hits_by_document
 
         queries = plan_queries(question, generator, memory=memory)
         broad_k = max(top_k, 16)
@@ -274,6 +275,25 @@ def answer(
             rerank_fn=reranking.rerank,
             rerank_candidates=cfg.rerank_candidates,
         )
+        if hits and hasattr(pipeline.store, "fetch_neighbors"):
+            neighbors = pipeline.store.fetch_neighbors(
+                tenant_id,
+                hits[:8],
+                radius=1,
+                project_id=project_id,
+                project_ids=project_ids,
+                document_ids=document_ids,
+            )
+            seen_keys = {(str(h.get("document_id")), h.get("chunk_index")) for h in hits}
+            for nb in neighbors:
+                k = (str(nb.get("document_id")), nb.get("chunk_index"))
+                if k in seen_keys:
+                    continue
+                if is_live is not None and not is_live(str(nb.get("document_id"))):
+                    continue
+                seen_keys.add(k)
+                hits.append(nb)
+        hits = order_hits_by_document(hits)
         return _generative(
             question, hits, generator, threshold=generation_threshold, context_chars=context_chars,
             detect_conflicts=detect_conflicts, memory=memory,

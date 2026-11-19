@@ -225,6 +225,68 @@ class QdrantStore:
         )
         return self._c.count(self._collection, count_filter=unscoped, exact=True).count
 
+    def fetch_neighbors(
+        self,
+        tenant_id: str,
+        hits: Sequence[dict[str, Any]],
+        *,
+        radius: int = 1,
+        project_id: str | None = None,
+        project_ids: Sequence[str] | None = None,
+        document_ids: Sequence[str] | None = None,
+        max_points: int = 48,
+    ) -> list[dict[str, Any]]:
+        """Fetch neighboring chunks (``chunk_index ± radius``) for the given hits within the same scope."""
+        from qdrant_client import models
+
+        if (
+            not hits
+            or radius < 1
+            or (project_ids is not None and not project_ids)
+            or (document_ids is not None and not document_ids)
+            or not self._c.collection_exists(self._collection)
+        ):
+            return []
+
+        wanted_indices: set[int] = set()
+        hit_docs: set[str] = set()
+        for h in hits:
+            doc_id = str(h.get("document_id") or "")
+            idx = h.get("chunk_index")
+            if not doc_id or not isinstance(idx, int) or isinstance(idx, bool):
+                continue
+            hit_docs.add(doc_id)
+            for delta in range(-radius, radius + 1):
+                if idx + delta >= 0:
+                    wanted_indices.add(idx + delta)
+
+        if not hit_docs or not wanted_indices:
+            return []
+
+        base = self.tenant_filter(
+            tenant_id,
+            project_id=project_id,
+            project_ids=project_ids,
+            document_ids=document_ids,
+            include_suspicious=False,
+        )
+        scoped_filter = models.Filter(
+            must=[
+                *base.must,
+                models.FieldCondition(key="document_id", match=models.MatchAny(any=sorted(hit_docs))),
+                models.FieldCondition(key="chunk_index", match=models.MatchAny(any=sorted(wanted_indices))),
+            ],
+            must_not=base.must_not,
+        )
+        records, _ = self._c.scroll(
+            self._collection,
+            scroll_filter=scoped_filter,
+            limit=max_points,
+            with_payload=True,
+            with_vectors=False,
+        )
+        return [{"score": 0.0, **(r.payload or {})} for r in records if r.payload]
+
     def scroll_chunks(self, tenant_id: str, *, limit: int) -> list[dict[str, Any]] | None:
         """Every non-suspicious chunk payload of this tenant (``_point_id`` added), for lexical search.
 

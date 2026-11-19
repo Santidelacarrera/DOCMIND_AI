@@ -48,8 +48,10 @@ from app.processing import (
     estimate_tokens,
     extract_any_pages,
     extract_docx_pages,
+    extract_pages_windowed,
     extract_pdf_pages,
     extraction_envelope,
+    format_pages_for_extraction,
     llm,
     llm_model,
 )
@@ -441,8 +443,9 @@ def _compute(claim: _Claim, log: _StepLog) -> _Computed:
     log.start("llm_extraction")
     result: dict[str, Any] = {}
     problems: list[str] = ["no attempt made"]
+    envelope = extraction_envelope(json_schema)
     for _ in range(1 + max(0, settings().llm_invalid_output_retries)):
-        result = llm().extract(text, extraction_envelope(json_schema), prompt_instructions=instructions)
+        result = extract_pages_windowed(llm(), pages_text, envelope, prompt_instructions=instructions)
         problems = check_envelope(result)
         if not problems:
             break
@@ -460,6 +463,29 @@ def _compute(claim: _Claim, log: _StepLog) -> _Computed:
     }
     known = {name: score for name, score in confidence_by_field.items() if score is not None}
     issues = validate_fields(json_schema, fields, known)
+    repairable = [i for i in issues if i["rule"] in ("schema", "cl_rut")]
+    if repairable and settings().llm_provider != "mock":
+        error_summary = "; ".join(f"{i.get('field') or 'object'}: {i['message']}" for i in repairable[:6])
+        repair_note = (
+            f"{instructions}\n\n" if instructions else ""
+        ) + f"Previous extraction failed validation ({error_summary}). Fix only those issues from the document text; use null if absent."
+        repaired = llm().extract(
+            format_pages_for_extraction(pages_text)[: settings().openai_max_input_chars],
+            envelope,
+            prompt_instructions=repair_note,
+        )
+        if not check_envelope(repaired):
+            r_usage = repaired.pop("usage", None) or {}
+            usage["prompt_tokens"] = int(usage.get("prompt_tokens") or 0) + int(r_usage.get("prompt_tokens") or 0)
+            usage["completion_tokens"] = int(usage.get("completion_tokens") or 0) + int(r_usage.get("completion_tokens") or 0)
+            r_fields = repaired["fields"]
+            r_conf: dict[str, float | None] = {
+                str(name): clamp_confidence(value) for name, value in (repaired.get("confidence") or {}).items()
+            }
+            r_known = {name: score for name, score in r_conf.items() if score is not None}
+            r_issues = validate_fields(json_schema, r_fields, r_known)
+            if len(r_issues) <= len(issues):
+                fields, confidence_by_field, known, issues = r_fields, r_conf, r_known, r_issues
     if ocr_used and ocr_confidences:
         issues.extend(ocr_issues(ocr_confidences))
     # Evidence: only text the pipeline really extracted can support a value (never generated).
