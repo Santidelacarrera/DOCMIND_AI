@@ -81,8 +81,9 @@ class LoginInput(BaseModel):
 
 
 
-def set_session_cookies(response: Response, token: str) -> None:
+def set_session_cookies(response: Response, token: str) -> str:
     config = settings()
+    csrf = token_urlsafe(32)
     response.set_cookie(
         "access_token",
         token,
@@ -94,13 +95,14 @@ def set_session_cookies(response: Response, token: str) -> None:
     )
     response.set_cookie(
         "csrf_token",
-        token_urlsafe(32),
+        csrf,
         httponly=False,
         secure=config.effective_cookie_secure,
         samesite=config.cookie_samesite,
         max_age=config.access_token_minutes * 60,
         path="/",
     )
+    return csrf
 
 
 @router.post("/api/v1/auth/register", status_code=201)
@@ -131,11 +133,12 @@ def register(
     audit(db, "register", "user", str(user.id), user, org.id)
     db.commit()
     token = create_access_token(user)
-    set_session_cookies(response, token)
+    csrf = set_session_cookies(response, token)
     return {
         "access_token": token,
         "token_type": "bearer",
         "organization_id": str(org.id),
+        "csrf_token": csrf,
     }
 
 
@@ -160,8 +163,8 @@ def login(
     audit(db, "login", "user", str(user.id), user)
     db.commit()
     token = create_access_token(user)
-    set_session_cookies(response, token)
-    return {"access_token": token, "token_type": "bearer"}
+    csrf = set_session_cookies(response, token)
+    return {"access_token": token, "token_type": "bearer", "csrf_token": csrf}
 
 
 @router.post("/api/v1/auth/logout", status_code=204)
@@ -183,8 +186,12 @@ def logout(user: User = Depends(require_user), db: Session = Depends(get_db)) ->
 
 
 @router.get("/api/v1/auth/me")
-def me(user: User = Depends(require_user)) -> dict[str, object]:
-    return {"id": str(user.id), "email": user.email}
+def me(request: Request, user: User = Depends(require_user)) -> dict[str, object]:
+    csrf = request.cookies.get("csrf_token")
+    out: dict[str, object] = {"id": str(user.id), "email": user.email}
+    if csrf:
+        out["csrf_token"] = csrf
+    return out
 
 
 @router.post("/api/v1/organizations", status_code=201)
