@@ -80,7 +80,8 @@ def check_ask(client: httpx.Client, headers: dict[str, str], org: str, project: 
         if body["abstained"]:
             time.sleep(3)
     citation = (body.get("citations") or [{}])[0]
-    step("ask: answer quotes the fact", "23 dias" in body.get("answer", ""), body.get("answer", "")[:80])
+    ans_text = str(body.get("answer", ""))
+    step("ask: answer quotes the fact", "23 dias" in ans_text or "23 días" in ans_text, ans_text[:80])
     step("ask: citation names document and page",
          citation.get("document") == "politica_smoke.pdf" and citation.get("page") == 2, str(citation.get("label")))
     step("ask: citation locates the fragment",
