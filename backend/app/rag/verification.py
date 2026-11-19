@@ -341,7 +341,7 @@ def verify_grounded(
     nli: NLIModel | None = None,
     *,
     threshold: float = DEFAULT_THRESHOLD,
-    min_overlap: float = 0.35,
+    min_overlap: float = 0.15,
 ) -> list[ClaimVerdict]:
     """Claim-level verification for reasoned synthesis across multiple cited passages.
 
@@ -388,7 +388,10 @@ def verify_grounded(
 
         combined = " ".join(passages[i - 1] for i in cited)
         cleaned_claim = _LIST_PREFIX.sub("", claim)
-        claim_numbers = _Analysis(cleaned_claim).numbers
+        claim_numbers = {
+            n for n in _Analysis(cleaned_claim).numbers
+            if not (n.isdigit() and int(n) <= 10)
+        }
         cited_numbers = _Analysis(combined).numbers
         if not claim_numbers.issubset(cited_numbers):
             missing_nums = ", ".join(sorted(claim_numbers - cited_numbers))

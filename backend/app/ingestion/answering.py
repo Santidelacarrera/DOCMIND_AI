@@ -254,9 +254,10 @@ def answer(
         from app.core import settings
 
         queries = plan_queries(question, generator, memory=memory)
+        broad_k = max(top_k, 16)
         per_query_hits = [
             _retrieve(
-                pipeline, tenant_id=tenant_id, question=q, top_k=top_k, min_score=min_score,
+                pipeline, tenant_id=tenant_id, question=q, top_k=broad_k, min_score=0.0,
                 is_live=is_live, project_id=project_id, project_ids=project_ids, document_ids=document_ids,
                 mode=mode, reranker=reranker,
             )[0]
@@ -266,7 +267,7 @@ def answer(
         cfg = settings()
         hits = merge_multi_query_hits(
             per_query_hits,
-            limit=top_k,
+            limit=broad_k,
             rrf_k=cfg.retrieval_rrf_k,
             reranker=active,
             question=pipeline.mask_query(tenant_id=tenant_id, question=question),
