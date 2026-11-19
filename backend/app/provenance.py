@@ -264,10 +264,40 @@ def _locate(value: Any, pages: list[str]) -> Evidence:
     return Evidence(NOT_FOUND)
 
 
+def _flatten_scalars(value: Any, *, limit: int = 25) -> list[Any]:
+    out: list[Any] = []
+    stack = [value]
+    while stack and len(out) < limit:
+        cur = stack.pop(0)
+        if cur is None or isinstance(cur, bool):
+            continue
+        if isinstance(cur, list):
+            stack.extend(cur[:limit])
+        elif isinstance(cur, dict):
+            stack.extend(list(cur.values())[:limit])
+        elif str(cur).strip():
+            out.append(cur)
+    return out
+
+
 def locate(value: Any, pages: list[str]) -> Evidence:
     """Find ``value`` in the extracted page texts (1-based page numbers)."""
-    if value is None or isinstance(value, (bool, list, dict)):
+    if value is None or isinstance(value, bool):
         return Evidence(NOT_APPLICABLE)
+    if isinstance(value, (list, dict)):
+        if not value:
+            return Evidence(NOT_APPLICABLE)
+        scalars = _flatten_scalars(value)
+        if not scalars:
+            return Evidence(NOT_APPLICABLE)
+        located = [_locate(item, pages) for item in scalars]
+        supported = [ev for ev in located if ev.status in (EXACT, NORMALIZED)]
+        if not supported:
+            return Evidence(NOT_FOUND)
+        best = supported[0]
+        if len(supported) < len(scalars):
+            return dataclasses.replace(best, weak=True)
+        return best
     if not str(value).strip():
         return Evidence(NOT_APPLICABLE)
     found = _locate(value, pages)

@@ -137,6 +137,18 @@ def summarize_project(
     ).all()
     bundle = [(str(d.id), d.filename, _document_pages(db, d.id)) for d in docs]
     result = intelligence.summarize_documents(bundle, max_sentences=payload.max_sentences)
+    cfg = settings()
+    if cfg.llm_provider != "mock" and bundle:
+        from app.rag.generation import build_generator
+        from app.rag.reasoning import synthesize_summary
+
+        llm_summary = synthesize_summary(
+            bundle,
+            build_generator(cfg.llm_provider),
+            max_sentences=payload.max_sentences,
+        )
+        if llm_summary:
+            result = {**result, "summary": llm_summary, "mode": "generative"}
     audit(db, "project.summarize", "project", str(project_id), user, org_id)
     db.commit()
     return {"project_id": str(project_id), "documents_included": len(docs), **result}
