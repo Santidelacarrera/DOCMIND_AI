@@ -34,13 +34,14 @@ test("owner can manage billing plans, sandbox checkout, and project-scoped webho
 
   await page.goto("/webhooks");
   await expect(page.getByRole("heading", { name: "Webhooks", exact: true })).toBeVisible();
-  await page.getByLabel("Endpoint URL").fill("https://example.com/docmind-e2e");
+  await page.getByLabel("Endpoint URL").fill("https://1.1.1.1/docmind-e2e");
   await page.getByLabel("Description (optional)").fill("Project-scoped E2E hook");
+  await expect(page.getByLabel("Webhook Scope Alpha")).toBeVisible();
   await page.getByLabel("Webhook Scope Alpha").check();
   await page.getByRole("button", { name: "Create webhook" }).click();
 
   await expect(page.getByRole("status")).toContainText("Webhook created. Copy the signing secret now");
-  await expect(page.getByText("https://example.com/docmind-e2e")).toBeVisible();
+  await expect(page.getByText("https://1.1.1.1/docmind-e2e")).toBeVisible();
   await expect(page.getByText("Projects: 1")).toBeVisible();
 
   await page.getByRole("button", { name: "Delete" }).first().click();

@@ -76,6 +76,8 @@ test("user can compare processed documents and generate a project summary on /in
     page.getByRole("heading", { name: "Document comparison & contradiction detection" }),
   ).toBeVisible();
 
+  await expect(page.getByLabel("contract-a.txt")).toBeVisible();
+  await expect(page.getByLabel("contract-b.txt")).toBeVisible();
   await page.getByLabel("contract-a.txt").check();
   await page.getByLabel("contract-b.txt").check();
   await page.getByLabel("Focus topic (optional)").fill("rent");
