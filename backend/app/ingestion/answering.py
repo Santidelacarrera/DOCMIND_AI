@@ -248,6 +248,35 @@ def answer(
     an identifier) that appears in no retrieved passage abstains (:mod:`app.rag.entities`).
     """
     question = question.strip()
+    from app.rag.reasoning import is_reasoning_llm, merge_multi_query_hits, plan_queries
+
+    if answer_mode == "generative" and is_reasoning_llm(generator):
+        from app.core import settings
+
+        queries = plan_queries(question, generator, memory=memory)
+        per_query_hits = [
+            _retrieve(
+                pipeline, tenant_id=tenant_id, question=q, top_k=top_k, min_score=min_score,
+                is_live=is_live, project_id=project_id, project_ids=project_ids, document_ids=document_ids,
+                mode=mode, reranker=reranker,
+            )[0]
+            for q in queries
+        ]
+        active = reranking.configured() if reranker == "configured" else reranker
+        cfg = settings()
+        hits = merge_multi_query_hits(
+            per_query_hits,
+            limit=top_k,
+            rrf_k=cfg.retrieval_rrf_k,
+            reranker=active,
+            question=pipeline.mask_query(tenant_id=tenant_id, question=question),
+            rerank_fn=reranking.rerank,
+            rerank_candidates=cfg.rerank_candidates,
+        )
+        return _generative(
+            question, hits, generator, threshold=generation_threshold, context_chars=context_chars,
+            detect_conflicts=detect_conflicts, memory=memory,
+        )
     hits, vector = _retrieve(
         pipeline, tenant_id=tenant_id, question=question, top_k=top_k, min_score=min_score,
         is_live=is_live, project_id=project_id, project_ids=project_ids, document_ids=document_ids,
@@ -332,19 +361,25 @@ def _generative(
     position: dict[tuple[str, int], int] = {}
     sentences: list[str] = []
     for verdict in result.supported:
-        hit = result.passages[(verdict.passage or 1) - 1].hit
-        citation = _citation(hit, verdict.evidence)
-        key = (citation.document_id, citation.page)
-        if key not in position:
-            citations.append(citation)
-            position[key] = len(citations)
         cited_keys = []
         for index in verdict.citations:
             cited_hit = result.passages[index - 1].hit
-            cited_key = (str(cited_hit["document_id"]), int(cited_hit.get("page") or cited_hit.get("page_start") or 0))
-            if cited_key in position:
-                cited_keys.append(position[cited_key])
-        markers = "".join(f"[{n}]" for n in dict.fromkeys(cited_keys or [position[key]]))
+            excerpt = verdict.evidence if index == verdict.passage else str(cited_hit.get("text", ""))
+            citation = _citation(cited_hit, excerpt)
+            key = (citation.document_id, citation.page)
+            if key not in position:
+                citations.append(citation)
+                position[key] = len(citations)
+            cited_keys.append(position[key])
+        if not cited_keys:
+            hit = result.passages[(verdict.passage or 1) - 1].hit
+            citation = _citation(hit, verdict.evidence)
+            key = (citation.document_id, citation.page)
+            if key not in position:
+                citations.append(citation)
+                position[key] = len(citations)
+            cited_keys.append(position[key])
+        markers = "".join(f"[{n}]" for n in dict.fromkeys(cited_keys))
         sentences.append(f"{verdict.claim} {markers}")
     found = _conflicts(question, hits, citations) if detect_conflicts else ()
     return Answer(question, " ".join(sentences), tuple(citations), False, found, "generative", result.dropped)

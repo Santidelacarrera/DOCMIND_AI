@@ -330,3 +330,89 @@ def verify(answer: str, passages: Sequence[str], nli: NLIModel | None = None,
             reason="" if ok else f"best entailment {scores[best]:.2f} < {threshold}",
         ))
     return verdicts
+
+
+_LIST_PREFIX = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+")
+
+
+def verify_grounded(
+    answer: str,
+    passages: Sequence[str],
+    nli: NLIModel | None = None,
+    *,
+    threshold: float = DEFAULT_THRESHOLD,
+    min_overlap: float = 0.35,
+) -> list[ClaimVerdict]:
+    """Claim-level verification for reasoned synthesis across multiple cited passages.
+
+    1. Uncited claims, unknown passage indices, or empty passages always fail closed.
+    2. Exact quotes / close paraphrases that pass ``LexicalEntailment`` (>= ``threshold``) are
+       accepted immediately with their tightest supporting window.
+    3. Cross-passage syntheses or natural paraphrases are accepted when **all** numbers/dates in
+       the claim appear in the combined cited passages (no invented figures) and content-term
+       overlap across the combined cited passages meets ``min_overlap``.
+    """
+    if not (0.0 < threshold <= 1.0):
+        raise ValueError("threshold must be in (0, 1]")
+    nli = nli or LexicalEntailment()
+    verdicts: list[ClaimVerdict] = []
+    for claim, cites in parse_claims(answer):
+        cited = tuple(dict.fromkeys(cites))
+        if not cited:
+            verdicts.append(ClaimVerdict(claim, (), 0.0, False, reason="no citation"))
+            continue
+        if any(not 1 <= i <= len(passages) for i in cited):
+            verdicts.append(ClaimVerdict(claim, cited, 0.0, False, reason="unknown citation"))
+            continue
+        candidates = [(window, i) for i in cited for window, _, _ in _windows(passages[i - 1], 0)]
+        if not candidates:
+            verdicts.append(ClaimVerdict(claim, cited, 0.0, False, reason="cited passage empty"))
+            continue
+
+        scores = nli.entailment([(window, claim) for window, _ in candidates])
+        top = max(scores)
+        floor = max(threshold, top - EVIDENCE_TOLERANCE) if top >= threshold else top
+        eligible = [i for i, score in enumerate(scores) if score >= floor]
+        best = max(
+            eligible,
+            key=lambda i: (round(_term_overlap(claim, candidates[i][0]), 6), -len(candidates[i][0])),
+        )
+        if scores[best] >= threshold:
+            verdicts.append(
+                ClaimVerdict(
+                    claim, cited, float(scores[best]), True,
+                    evidence=candidates[best][0], passage=candidates[best][1],
+                )
+            )
+            continue
+
+        combined = " ".join(passages[i - 1] for i in cited)
+        cleaned_claim = _LIST_PREFIX.sub("", claim)
+        claim_numbers = _Analysis(cleaned_claim).numbers
+        cited_numbers = _Analysis(combined).numbers
+        if not claim_numbers.issubset(cited_numbers):
+            missing_nums = ", ".join(sorted(claim_numbers - cited_numbers))
+            verdicts.append(
+                ClaimVerdict(
+                    claim, cited, float(scores[best]), False,
+                    reason=f"ungrounded numbers: {missing_nums}",
+                )
+            )
+            continue
+
+        overlap = _term_overlap(cleaned_claim, combined)
+        if overlap >= min_overlap:
+            verdicts.append(
+                ClaimVerdict(
+                    claim, cited, round(max(float(scores[best]), overlap), 4), True,
+                    evidence=candidates[best][0], passage=candidates[best][1],
+                )
+            )
+        else:
+            verdicts.append(
+                ClaimVerdict(
+                    claim, cited, float(overlap), False,
+                    reason=f"low grounding overlap {overlap:.2f} < {min_overlap}",
+                )
+            )
+    return verdicts
