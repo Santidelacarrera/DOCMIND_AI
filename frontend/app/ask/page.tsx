@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Nav from "../../components/Nav";
 import { api } from "../../lib/api";
+import { submitAnswerFeedback } from "../../lib/feedback";
 
 type Citation = {
   document_id: string;
@@ -46,7 +47,9 @@ export default function Ask() {
   const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [question, setQuestion] = useState("");
+  const [askedQuestion, setAskedQuestion] = useState("");
   const [result, setResult] = useState<Answer | null>(null);
+  const [feedbackSent, setFeedbackSent] = useState<"positive" | "negative" | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -86,6 +89,8 @@ export default function Ask() {
     setBusy(true);
     setMessage("");
     setResult(null);
+    setFeedbackSent(null);
+    setAskedQuestion(question);
     try {
       const payload: Record<string, unknown> = { question };
       if (selectedDocs.length > 0) payload.document_ids = selectedDocs;
@@ -121,6 +126,17 @@ export default function Ask() {
     a.download = "answer-with-citations.json";
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function sendFeedback(rating: "positive" | "negative") {
+    if (!org || !result || !askedQuestion) return;
+    const ok = await submitAnswerFeedback(org, {
+      question: askedQuestion,
+      answer: result.answer,
+      rating,
+      cited_document_ids: Array.from(new Set(result.citations.map((c) => c.document_id))),
+    });
+    if (ok) setFeedbackSent(rating);
   }
 
   return (
@@ -191,6 +207,32 @@ export default function Ask() {
             </button>
           </div>
           <p>{result.answer}</p>
+          {!result.abstained && (
+            <div className="toolbar" style={{ marginTop: 8, marginBottom: 12 }}>
+              {feedbackSent ? (
+                <span className="badge ok" role="status">
+                  Feedback recorded ({feedbackSent})
+                </span>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="linkbutton"
+                    onClick={() => void sendFeedback("positive")}
+                  >
+                    Helpful ✓
+                  </button>
+                  <button
+                    type="button"
+                    className="linkbutton"
+                    onClick={() => void sendFeedback("negative")}
+                  >
+                    Incorrect ✗
+                  </button>
+                </>
+              )}
+            </div>
+          )}
           {result.citations.length > 0 && (
             <>
               <h3>Sources</h3>

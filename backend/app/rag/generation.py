@@ -140,22 +140,39 @@ def build_prompt(
     passages: Sequence[Passage],
     memory: str | None = None,
     conflicts: Sequence[Any] | None = None,
+    examples: Sequence[tuple[str, str]] | None = None,
 ) -> str:
-    """``memory``: earlier turns of the conversation, fenced as non-citable data for continuity only
-    (a follow-up such as "¿y el plazo?"). ``conflicts``: potential disagreements detected across
-    passages before generation, fenced as untrusted data. Citations ``[n]`` can only point to passages."""
+    """``memory``: earlier turns & semantic context, fenced as non-citable data.
+    ``conflicts``: potential disagreements detected across passages before generation.
+    ``examples``: validated workspace Q&A pairs for dynamic few-shot style guidance (never citable).
+    Citations ``[n]`` can only point to passages."""
 
     def fence(p: Passage) -> str:
         body = defang_tag(p.text, "passage")
         source = safe_attribute(str(p.hit.get("source_name") or ""), limit=120)
         page = int(p.hit.get("page") or 0)
-        return f'<passage index="{p.index}" source="{source}" page="{page}">\n{body}\n</passage>'
+        section = safe_attribute(str(p.hit.get("section_path") or ""), limit=100)
+        sec_attr = f' section="{section}"' if section else ""
+        return f'<passage index="{p.index}" source="{source}" page="{page}"{sec_attr}>\n{body}\n</passage>'
 
     joined = "\n".join(fence(p) for p in passages)
     prefix = ""
     if memory:
         body = defang_tag(defang_tag(memory, "memory"), "passage")
-        prefix = f"<memory>\nConversation context (earlier turns; not a source; do not cite it):\n{body}\n</memory>\n\n"
+        prefix += f"<memory>\nConversation context (earlier turns; not a source; do not cite it):\n{body}\n</memory>\n\n"
+    if examples:
+        ex_blocks: list[str] = []
+        for idx, (ex_q, ex_a) in enumerate(examples[:2], start=1):
+            sq = defang_tag(defang_tag(str(ex_q)[:240], "examples"), "passage")
+            sa = defang_tag(defang_tag(str(ex_a)[:450], "examples"), "passage")
+            ex_blocks.append(f"Example {idx}:\nQ: {sq}\nA: {sa}")
+        if ex_blocks:
+            prefix += (
+                "<examples>\nPreviously validated workspace answers (style reference ONLY; "
+                "NEVER copy facts from here—ground every claim in <passages>):\n"
+                + "\n\n".join(ex_blocks)
+                + "\n</examples>\n\n"
+            )
     conflict_block = ""
     if conflicts:
         lines: list[str] = []
@@ -224,13 +241,18 @@ def generate_verified(
     question: str, hits: Sequence[dict[str, Any]], generator: Generator, *,
     max_chars: int, threshold: float, memory: str | None = None,
     conflicts: Sequence[Any] | None = None,
+    examples: Sequence[tuple[str, str]] | None = None,
 ) -> GeneratedAnswer:
     passages = select_passages(hits, max_chars=max_chars)
     if not passages:
         return GeneratedAnswer("", (), ())
     is_llm = is_reasoning_llm(generator)
     system_prompt = REASONING_SYSTEM_PROMPT if is_llm else SYSTEM_PROMPT
-    prompt = build_prompt(question, passages, memory, conflicts=conflicts if is_llm else None)
+    prompt = build_prompt(
+        question, passages, memory,
+        conflicts=conflicts if is_llm else None,
+        examples=examples if is_llm else None,
+    )
     raw = generator.complete(system_prompt, prompt).strip()
     if not raw or raw.startswith(NO_ANSWER):
         return GeneratedAnswer("", tuple(passages), ())

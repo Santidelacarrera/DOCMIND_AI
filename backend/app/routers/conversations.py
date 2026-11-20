@@ -9,6 +9,7 @@
   documents. Deleting a conversation deletes its turns (erasure); retention purges old ones.
 """
 
+import logging
 import uuid
 from typing import Any
 
@@ -183,11 +184,21 @@ def ask_in_conversation(
         require_project(db, org_id, user, conv.project_id)  # access may have been revoked since
     earlier = _turns(db, conv, user)
     keep = settings().conversation_memory_turns * 2
-    memory = "\n".join(
-        f"{t['role']}: {t.get('text', '')}" for t in (earlier[-keep:] if keep else [])
-        if not t.get("abstained") and not t.get("withdrawn")
-    ) or None
-    result = answer_in_scope(db, org_id, user, payload.question, payload.top_k, conv.project_id, memory)
+    from app.rag.generation import build_generator
+    from app.rag.memory import (
+        build_hybrid_memory,
+        consolidate_conversation_memory,
+        retrieve_few_shot_examples,
+    )
+
+    memory = build_hybrid_memory(
+        db, org_id, user, conv, earlier, payload.question, recent_window_messages=keep
+    )
+    examples = retrieve_few_shot_examples(db, org_id, user, payload.question, project_id=conv.project_id)
+    result = answer_in_scope(
+        db, org_id, user, payload.question, payload.top_k, conv.project_id, memory,
+        few_shot_examples=examples or None,
+    )
     body = _answer_body(result)
     seq = (earlier[-1]["seq"] if earlier else 0) + 1
     db.add_all([
@@ -204,6 +215,21 @@ def ask_in_conversation(
         ),
     ])
     conv.updated_at = utcnow()
+    cfg = settings()
+    if cfg.ask_mode == "generative":
+        try:
+            consolidate_conversation_memory(
+                db, org_id, user, conv, earlier,
+                latest_question=payload.question,
+                latest_answer=str(body["answer"]),
+                latest_abstained=bool(body["abstained"]),
+                recent_window_messages=keep,
+                generator=build_generator(cfg.llm_provider),
+            )
+        except Exception as exc:
+            logging.getLogger("docmind.rag.memory").debug(
+                "memory consolidation skipped", extra={"error": type(exc).__name__}
+            )
     audit(db, "conversation.ask", "conversation", str(conv.id), user, org_id)
     try:
         db.commit()

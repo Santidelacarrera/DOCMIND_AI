@@ -164,6 +164,9 @@ def ask(
         )
 
     pipeline = vector_index.get_pipeline()
+    from app.rag.memory import retrieve_few_shot_examples
+
+    examples = retrieve_few_shot_examples(db, org_id, user, payload.question)
     # Phase 3B: only the projects the caller may read. Vectors without a project (legacy, not yet
     # backfilled) match no list, so they are excluded instead of being answered without an owner.
     result = _answer(
@@ -176,6 +179,7 @@ def ask(
         document_ids=scoped_doc_ids,
         min_coverage=settings().ask_min_evidence_coverage,
         min_similarity=settings().ask_min_semantic_similarity,
+        few_shot_examples=examples or None,
     )
     body = _answer_body(result)
     masked_q = pipeline.mask_query(tenant_id=str(org_id), question=payload.question)
@@ -266,6 +270,9 @@ def project_ask(
 
     request_id = request_context.get()
     pipeline = vector_index.get_pipeline()
+    from app.rag.memory import retrieve_few_shot_examples
+
+    examples = retrieve_few_shot_examples(db, org_id, user, payload.question, project_id=project_uuid)
     result = _answer(
         pipeline,
         tenant_id=str(org_id),
@@ -276,6 +283,7 @@ def project_ask(
         document_ids=scoped_doc_ids,
         min_coverage=settings().ask_min_evidence_coverage,
         min_similarity=settings().ask_min_semantic_similarity,
+        few_shot_examples=examples or None,
     )
     body = _answer_body(result)
     masked_q = pipeline.mask_query(tenant_id=str(org_id), question=payload.question)
@@ -377,6 +385,7 @@ def ask_history(
 def answer_in_scope(
     db: Session, org_id: uuid.UUID, user: User | ApiPrincipal, question: str, top_k: int,
     project_uuid: uuid.UUID | None, memory: str | None = None,
+    few_shot_examples: list[tuple[str, str]] | None = None,
 ) -> Any:
     """The answer ``/ask`` (no project) or ``/projects/{id}/ask`` (project) would give, for callers that
     already checked membership and project access (conversations). Same scope and liveness rules."""
@@ -402,5 +411,5 @@ def answer_in_scope(
     return _answer(
         vector_index.get_pipeline(), tenant_id=str(org_id), question=question, top_k=top_k, is_live=is_live,
         min_coverage=settings().ask_min_evidence_coverage, min_similarity=settings().ask_min_semantic_similarity,
-        memory=memory, **scope,
+        memory=memory, few_shot_examples=few_shot_examples or None, **scope,
     )

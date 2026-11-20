@@ -13,15 +13,18 @@ from app.api_support import audit
 from app.core import settings
 from app.db import get_db
 from app.models import (
+    AnswerFeedback,
     AuditLog,
     Conversation,
     ConversationMessage,
     Document,
     QueryHistory,
     User,
+    UserSemanticMemory,
     utcnow,
 )
 from app.project_access import accessible_project_ids
+from app.rag.memory import open_semantic_memories
 from app.rate_limit import enforce
 from app.security import ApiPrincipal, current_user, membership
 
@@ -197,6 +200,7 @@ def export_my_data(
             for q in queries
         ],
         "conversations": exported_convs,
+        "semantic_memories": open_semantic_memories(db, org_id, user.id),
         "audit_events": [
             {
                 "id": str(a.id),
@@ -245,6 +249,25 @@ def erase_my_history(
         )
         db.execute(delete(Conversation).where(Conversation.id.in_(conv_ids)))
 
+    mem_deleted = (
+        db.execute(
+            delete(UserSemanticMemory).where(
+                UserSemanticMemory.organization_id == org_id,
+                UserSemanticMemory.user_id == user.id,
+            )
+        ).rowcount
+        or 0
+    )
+    fb_deleted = (
+        db.execute(
+            delete(AnswerFeedback).where(
+                AnswerFeedback.organization_id == org_id,
+                AnswerFeedback.user_id == user.id,
+            )
+        ).rowcount
+        or 0
+    )
+
     audit(
         db,
         "privacy.history_erased",
@@ -254,4 +277,9 @@ def erase_my_history(
         org_id,
     )
     db.commit()
-    return {"queries_deleted": int(q_deleted), "conversations_deleted": len(conv_ids)}
+    return {
+        "queries_deleted": int(q_deleted),
+        "conversations_deleted": len(conv_ids),
+        "memories_deleted": int(mem_deleted),
+        "feedback_deleted": int(fb_deleted),
+    }

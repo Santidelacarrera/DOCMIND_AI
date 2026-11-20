@@ -192,27 +192,27 @@ class IngestionPipeline:
             for kind, n in result.counts.items():
                 report.pii[kind] = report.pii.get(kind, 0) + n
 
-        # 5. chunk, bind to tenant
-        windows = chunking.split_pages(masked_pages, max_chars=self.max_chars, overlap=self.overlap)
+        # 5. structure-aware chunking (preserves tables & section headings), bind to tenant
+        windows = chunking.split_pages_structured(masked_pages, max_chars=self.max_chars, overlap=self.overlap)
         if not windows:
             raise IngestionRefused("NO_TEXT")
-        per_chunk = [masker.residual(w[0]) for w in windows]
+        per_chunk = [masker.residual(w.text) for w in windows]
         # 6. verify (fail closed): masked text must contain nothing the detector still recognises
         if any(per_chunk):
             raise IngestionRefused("PII_RESIDUAL_AFTER_MASKING")
-        flags = [text.looks_like_injection(w[0]) for w in windows]
+        flags = [text.looks_like_injection(w.text) for w in windows]
         chunks = chunking.build_chunks(
             tenant_id=tenant, document_id=document, windows=windows,
             source_name=source_name[:255], page_basis=report.page_basis,
-            pii_counts=[pii.placeholder_counts(w[0]) for w in windows], suspicious=flags,
+            pii_counts=[pii.placeholder_counts(w.text) for w in windows], suspicious=flags,
             project_id=project_id,
         )
         chunking.assert_single_tenant(chunks, tenant)
         report.chunks = len(chunks)
         report.suspicious_chunks = sum(flags)
 
-        # 7-8. embed masked text only, write with the tenant key
-        vectors = self.embedder.embed([c.text for c in chunks])
+        # 7-8. embed masked text (context-enriched with section_path when present), write with tenant key
+        vectors = self.embedder.embed([c.embedding_text for c in chunks])
         points = [vectorstore.to_point(c, v, embedding_model=self.embedder.name) for c, v in zip(chunks, vectors, strict=True)]
         self.store.ensure_collection(self.embedder.dimension, model=self.embedder.name)
         self.store.delete_document(tenant, document)  # re-ingestion replaces, never duplicates

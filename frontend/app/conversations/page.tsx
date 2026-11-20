@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Nav from "../../components/Nav";
 import { api } from "../../lib/api";
+import { submitAnswerFeedback } from "../../lib/feedback";
 
 type Citation = { document_id: string; label: string; excerpt: string; page: number };
 type Turn = {
@@ -28,6 +29,7 @@ export default function Conversations() {
   const [question, setQuestion] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [ratedTurns, setRatedTurns] = useState<Record<number, "positive" | "negative">>({});
 
   const refresh = useCallback(async (organization: string) => {
     const res = await api(`/api/v1/conversations?organization_id=${organization}`);
@@ -58,6 +60,7 @@ export default function Conversations() {
       return;
     }
     setCurrent(id);
+    setRatedTurns({});
     setTurns(((await res.json()) as { turns: Turn[] }).turns);
   }
 
@@ -106,6 +109,25 @@ export default function Conversations() {
     }
   }
 
+  async function rateTurn(turn: Turn, idx: number, rating: "positive" | "negative") {
+    if (!org || !current) return;
+    const prevUser = turns
+      .slice(0, idx)
+      .reverse()
+      .find((t) => t.role === "user");
+    const ok = await submitAnswerFeedback(org, {
+      question: prevUser?.text ?? "Follow-up question",
+      answer: turn.text,
+      rating,
+      conversation_id: current,
+      turn_seq: turn.seq,
+      cited_document_ids: Array.from(new Set((turn.citations ?? []).map((c) => c.document_id))),
+    });
+    if (ok) {
+      setRatedTurns((prev) => ({ ...prev, [turn.seq]: rating }));
+    }
+  }
+
   return (
     <main>
       <Nav current="conversations" />
@@ -143,7 +165,7 @@ export default function Conversations() {
       </section>
       {current && (
         <section className="panel" aria-live="polite">
-          {turns.map((t) => (
+          {turns.map((t, idx) => (
             <div key={t.seq} className="field">
               <strong>{t.role === "user" ? "You" : t.abstained ? "No answer found" : "Answer"}</strong>
               <p>{t.text}</p>
@@ -154,6 +176,32 @@ export default function Conversations() {
                 </blockquote>
               ))}
               {(t.conflicts ?? []).length > 0 && <small role="alert">Sources may disagree: check both.</small>}
+              {t.role === "assistant" && !t.abstained && (
+                <div className="toolbar" style={{ marginTop: 6 }}>
+                  {ratedTurns[t.seq] ? (
+                    <span className="badge ok" role="status">
+                      Feedback saved ({ratedTurns[t.seq]})
+                    </span>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="linkbutton"
+                        onClick={() => void rateTurn(t, idx, "positive")}
+                      >
+                        Helpful ✓
+                      </button>
+                      <button
+                        type="button"
+                        className="linkbutton"
+                        onClick={() => void rateTurn(t, idx, "negative")}
+                      >
+                        Incorrect ✗
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           ))}
           <form onSubmit={send}>

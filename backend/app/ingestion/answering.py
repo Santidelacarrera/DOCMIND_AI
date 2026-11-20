@@ -221,6 +221,7 @@ def answer(
     memory: str | None = None,
     require_named_terms: bool = True,
     reranker: Any = "configured",
+    few_shot_examples: Sequence[tuple[str, str]] | None = None,
 ) -> Answer:
     """Answer ``question`` from this tenant's documents only.
 
@@ -251,22 +252,52 @@ def answer(
     an identifier) that appears in no retrieved passage abstains (:mod:`app.rag.entities`).
     """
     question = question.strip()
-    from app.rag.reasoning import is_reasoning_llm, merge_multi_query_hits, plan_queries
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.rag.reasoning import is_reasoning_llm, merge_multi_query_hits, plan_retrieval
 
     if answer_mode == "generative" and is_reasoning_llm(generator):
         from app.core import settings
         from app.rag.reasoning import order_hits_by_document
 
-        queries = plan_queries(question, generator, memory=memory)
+        plan = plan_retrieval(question, generator, memory=memory)
         broad_k = max(top_k, 16)
-        per_query_hits = [
-            _retrieve(
-                pipeline, tenant_id=tenant_id, question=q, top_k=broad_k, min_score=0.0,
-                is_live=is_live, project_id=project_id, project_ids=project_ids, document_ids=document_ids,
-                mode=mode, reranker=reranker,
+        search_jobs: list[tuple[str, str | None]] = [(q, mode) for q in plan.queries]
+        if plan.hyde_passage:
+            # HyDE excels at semantic/dense recall without polluting lexical BM25
+            search_jobs.append((plan.hyde_passage, "dense"))
+
+        def _run_branch(job: tuple[str, str | None]) -> list[dict[str, Any]]:
+            q_text, branch_mode = job
+            # Keep SQLAlchemy Session calls (is_live) on the caller thread; filter liveness right after join.
+            return _retrieve(
+                pipeline, tenant_id=tenant_id, question=q_text, top_k=broad_k, min_score=0.0,
+                is_live=None, project_id=project_id, project_ids=project_ids, document_ids=document_ids,
+                mode=branch_mode, reranker=None,
             )[0]
-            for q in queries
-        ]
+
+        if len(search_jobs) > 1:
+            with ThreadPoolExecutor(max_workers=min(4, len(search_jobs)), thread_name_prefix="rag-ret") as pool:
+                raw_batches = list(pool.map(_run_branch, search_jobs))
+        else:
+            raw_batches = [_run_branch(j) for j in search_jobs]
+
+        # Enforce liveness check on the main request thread (safe for both PostgreSQL and SQLite sessions)
+        if is_live is not None:
+            live_cache: dict[str, bool] = {}
+
+            def _cached_live(doc_id: str) -> bool:
+                if doc_id not in live_cache:
+                    live_cache[doc_id] = is_live(doc_id)
+                return live_cache[doc_id]
+
+            per_query_hits = [
+                [h for h in batch if _cached_live(str(h.get("document_id")))]
+                for batch in raw_batches
+            ]
+        else:
+            per_query_hits = raw_batches
+
         active = reranking.configured() if reranker == "configured" else reranker
         cfg = settings()
         hits = merge_multi_query_hits(
@@ -274,7 +305,7 @@ def answer(
             limit=broad_k,
             rrf_k=cfg.retrieval_rrf_k,
             reranker=active,
-            question=pipeline.mask_query(tenant_id=tenant_id, question=question),
+            question=pipeline.mask_query(tenant_id=tenant_id, question=plan.standalone or question),
             rerank_fn=reranking.rerank,
             rerank_candidates=cfg.rerank_candidates,
         )
@@ -299,7 +330,7 @@ def answer(
         hits = order_hits_by_document(hits)
         return _generative(
             question, hits, generator, threshold=generation_threshold, context_chars=context_chars,
-            detect_conflicts=detect_conflicts, memory=memory,
+            detect_conflicts=detect_conflicts, memory=memory, few_shot_examples=few_shot_examples,
         )
     hits, vector = _retrieve(
         pipeline, tenant_id=tenant_id, question=question, top_k=top_k, min_score=min_score,
@@ -309,7 +340,7 @@ def answer(
     if answer_mode == "generative":
         return _generative(
             question, hits, generator, threshold=generation_threshold, context_chars=context_chars,
-            detect_conflicts=detect_conflicts, memory=memory,
+            detect_conflicts=detect_conflicts, memory=memory, few_shot_examples=few_shot_examples,
         )
     if answer_mode != "extractive":
         raise ValueError("UNKNOWN_ANSWER_MODE")
@@ -368,6 +399,7 @@ def _citation(hit: dict[str, Any], excerpt: str) -> Citation:
 def _generative(
     question: str, hits: list[dict[str, Any]], generator: Any, *, threshold: float, context_chars: int,
     detect_conflicts: bool, memory: str | None = None,
+    few_shot_examples: Sequence[tuple[str, str]] | None = None,
 ) -> Answer:
     """Generated wording, verified sentence by sentence. Markers ``[n]`` are renumbered to the
     position of the citation in ``Answer.citations``."""
@@ -390,7 +422,7 @@ def _generative(
     )
     result = generate_verified(
         question, hits, generator, max_chars=context_chars, threshold=threshold,
-        memory=memory, conflicts=pre_conflicts,
+        memory=memory, conflicts=pre_conflicts, examples=few_shot_examples,
     )
     if not result.text:
         return Answer(question, ABSTENTION, (), True, mode="generative", dropped_claims=result.dropped)

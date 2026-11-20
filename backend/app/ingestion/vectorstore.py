@@ -56,6 +56,8 @@ def to_point(chunk: Chunk, vector: Sequence[float], *, embedding_model: str = ""
             "page_start": chunk.page_start,
             "page_end": chunk.page_end,
             "text": chunk.text,
+            "section_path": chunk.section_path,
+            "chunk_type": chunk.chunk_type,
             "content_hash": chunk.content_hash,
             "pii": chunk.pii_counts,
             "suspicious": chunk.suspicious,

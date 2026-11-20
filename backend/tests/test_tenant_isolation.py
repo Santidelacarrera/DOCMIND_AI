@@ -49,6 +49,12 @@ BODIES: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/billing/checkout"): {"target_plan": "STARTER", "billing_cycle": "monthly"},
     ("POST", "/api/v1/billing/subscription/cancel"): {"immediate": False},
     ("POST", "/api/v1/billing/refund"): {"transaction_id": str(uuid.uuid4())},
+    ("POST", "/api/v1/feedback"): {
+        "question": "outsider question",
+        "answer": "outsider answer",
+        "rating": "positive",
+        "cited_document_ids": [],
+    },
 }
 EXTRA_QUERY = {
     ("POST", "/api/v1/members"): "&email=x@example.com&role=MEMBER",
@@ -100,6 +106,7 @@ class World:
             "event_id": str(uuid.uuid4()),
             # Same for conversations: membership, then ownership, are checked before anything else.
             "conversation_id": str(uuid.uuid4()),
+            "memory_id": str(uuid.uuid4()),
         }
         self.secrets = [
             self.document, "victim-secret-contract", self.schema, "victim-schema", self.webhook,

@@ -58,6 +58,10 @@ TENANT_TABLES_0012 = (
     "billing_transactions",
     "billing_webhook_events",
 )
+TENANT_TABLES_0014 = (
+    "user_semantic_memories",
+    "answer_feedback",
+)
 
 
 def policy_statements(
@@ -90,6 +94,7 @@ def all_policy_statements() -> list[str]:
         *policy_statements(),
         *policy_statements(TENANT_TABLES_0011, {}),
         *policy_statements(TENANT_TABLES_0012, {}),
+        *policy_statements(TENANT_TABLES_0014, {}),
     ]
 
 

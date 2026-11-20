@@ -168,6 +168,7 @@ from app.routers import (
     billing,
     conversations,
     documents,
+    feedback,
     intelligence,
     members,
     privacy,
@@ -195,5 +196,6 @@ for _router in (
     intelligence.router,
     billing.router,
     privacy.router,
+    feedback.router,
 ):
     app.router.routes.extend(_router.routes)
