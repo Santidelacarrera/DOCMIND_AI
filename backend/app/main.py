@@ -170,6 +170,7 @@ from app.routers import (
     documents,
     intelligence,
     members,
+    privacy,
     projects,
     schemas,
 )
@@ -193,5 +194,6 @@ for _router in (
     conversations.router,
     intelligence.router,
     billing.router,
+    privacy.router,
 ):
     app.router.routes.extend(_router.routes)
