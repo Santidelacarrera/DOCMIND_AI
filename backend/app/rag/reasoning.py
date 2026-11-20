@@ -9,7 +9,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from app.rag.fusion import reciprocal_rank_fusion
-from app.rag.safety import has_active_content, safe_attribute
+from app.rag.safety import contains_secret_leak, defang_tag, has_active_content, safe_attribute
 
 logger = logging.getLogger("docmind.rag")
 
@@ -30,8 +30,6 @@ Rules:
 - Cite document names in parentheses (e.g. "(contrato.pdf)") and never invent facts or figures absent from the text."""
 
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
-_MEMORY_TAG = re.compile(r"<(/?)memory", re.IGNORECASE)
-_DOC_TAG = re.compile(r"<(/?)document", re.IGNORECASE)
 _MAX_SUBQUERY_CHARS = 240
 
 _LLM_PROVIDERS = frozenset({"openai", "gemini", "vertex"})
@@ -58,7 +56,7 @@ def plan_queries(
 
     prompt = clean
     if memory:
-        safe_memory = _MEMORY_TAG.sub(lambda m: f"<{m.group(1)}\u200bmemory", memory)
+        safe_memory = defang_tag(memory, "memory")
         prompt = f"<memory>\n{safe_memory}\n</memory>\n\nQuestion: {clean}"
 
     try:
@@ -76,7 +74,7 @@ def plan_queries(
             if not isinstance(item, str):
                 continue
             q = " ".join(item.split())[:_MAX_SUBQUERY_CHARS].strip()
-            if q and not has_active_content(q) and q.casefold() not in seen:
+            if q and not has_active_content(q) and not contains_secret_leak(q) and q.casefold() not in seen:
                 planned.append(q)
                 seen.add(q.casefold())
             if len(planned) >= max_queries:
@@ -166,7 +164,7 @@ def synthesize_summary(
         remaining = max_chars - used
         if remaining <= 200:
             break
-        snippet = _DOC_TAG.sub(lambda m: f"<{m.group(1)}\u200bdocument", joined[:remaining])
+        snippet = defang_tag(joined[:remaining], "document")
         safe_name = safe_attribute(filename, limit=120)
         blocks.append(f'<document name="{safe_name}">\n{snippet}\n</document>')
         used += len(snippet)
@@ -178,7 +176,7 @@ def synthesize_summary(
     )
     try:
         text = generator.complete(_SUMMARY_SYSTEM, prompt).strip()
-        if not text or has_active_content(text):
+        if not text or has_active_content(text) or contains_secret_leak(text):
             return None
         return text
     except Exception as exc:  # pragma: no cover - graceful fallback to deterministic summary

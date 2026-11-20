@@ -11,6 +11,7 @@ citation with a document and a page >= 1, or it is an explicit abstention with n
 third state in which text is returned without a source.
 """
 
+import logging
 import math
 import re
 import time
@@ -26,7 +27,9 @@ from app.rag import conflicts as conflict_detection
 from app.rag import lexical
 from app.rag import rerank as reranking
 from app.rag.fusion import reciprocal_rank_fusion
-from app.rag.safety import has_active_content
+from app.rag.safety import detect_prompt_injection, has_active_content
+
+logger = logging.getLogger("docmind.rag")
 
 ABSTENTION = "No encontré información sobre eso en los documentos disponibles."
 _STOP = frozenset(
@@ -370,12 +373,25 @@ def _generative(
     position of the citation in ``Answer.citations``."""
     from app.rag.entities import missing_terms
     from app.rag.generation import generate_verified
+    from app.rag.reasoning import is_reasoning_llm
 
     if generator is None:
         raise ValueError("GENERATOR_REQUIRED")
     if not hits or missing_terms(question, [str(h.get("text", "")) for h in hits]):
         return Answer(question, ABSTENTION, (), True, mode="generative")
-    result = generate_verified(question, hits, generator, max_chars=context_chars, threshold=threshold, memory=memory)
+    injection_hits = sum(1 for h in hits if detect_prompt_injection(str(h.get("text", ""))))
+    if injection_hits:
+        # Counts only: never log document text.
+        logger.warning("prompt injection pattern detected in retrieved passages", extra={"passages": injection_hits})
+    pre_conflicts = (
+        conflict_detection.detect(question, hits)
+        if detect_conflicts and is_reasoning_llm(generator)
+        else []
+    )
+    result = generate_verified(
+        question, hits, generator, max_chars=context_chars, threshold=threshold,
+        memory=memory, conflicts=pre_conflicts,
+    )
     if not result.text:
         return Answer(question, ABSTENTION, (), True, mode="generative", dropped_claims=result.dropped)
     citations: list[Citation] = []
