@@ -428,9 +428,15 @@ def extract_pages_windowed(
     with the highest confidence.
     """
     budget = max_chars if max_chars is not None else settings().openai_max_input_chars
-    full_text = format_pages_for_extraction(pages_text) or "\n".join(pages_text)
+    raw_joined = "\n".join(pages_text)
+    full_text = format_pages_for_extraction(pages_text) or raw_joined
     if len(full_text) <= budget or len(pages_text) <= 1:
-        return provider.extract(full_text, schema, prompt_instructions=prompt_instructions)
+        use_markers = isinstance(provider, (OpenAIProvider, GeminiProvider)) and len(pages_text) > 1
+        return provider.extract(
+            full_text if use_markers else raw_joined,
+            schema,
+            prompt_instructions=prompt_instructions,
+        )
 
     windows: list[tuple[int, list[str]]] = []
     idx = 0
