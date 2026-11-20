@@ -178,7 +178,7 @@ def export_my_data(
             "created_at": user.created_at.isoformat(),
         },
         "organization_id": str(org_id),
-        "role": member.role.value,
+        "role": member.role.value if member is not None else "member",
         "documents_accessible": [
             {
                 "id": str(d.id),

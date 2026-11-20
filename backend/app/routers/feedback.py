@@ -98,7 +98,7 @@ def list_feedback(
     org_id = api_support.organization_id(organization_id)
     member = membership(org_id, principal, db, scope="documents:read")
     stmt = select(AnswerFeedback).where(AnswerFeedback.organization_id == org_id)
-    if isinstance(principal, User) and member.role not in (Role.owner, Role.admin):
+    if isinstance(principal, User) and (member is None or member.role not in (Role.owner, Role.admin)):
         stmt = stmt.where(AnswerFeedback.user_id == principal.id)
     rows = db.scalars(stmt.order_by(AnswerFeedback.created_at.desc()).limit(max(1, min(limit, 100)))).all()
     return [
