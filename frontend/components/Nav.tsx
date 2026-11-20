@@ -36,6 +36,9 @@ export default function Nav({ current }: { current?: string }) {
       <Link href="/billing" aria-current={current === "billing" ? "page" : undefined}>
         Billing
       </Link>
+      <Link href="/privacy" aria-current={current === "privacy" ? "page" : undefined}>
+        Privacy
+      </Link>
       <button type="button" className="linkbutton" onClick={logout}>
         Sign out
       </button>

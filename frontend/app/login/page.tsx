@@ -72,7 +72,8 @@ function LoginForm() {
           </button>
         </form>
         <p>
-          New to DocMind? <Link href="/register">Create an account</Link>
+          New to DocMind? <Link href="/register">Create an account</Link> ·{" "}
+          <Link href="/privacy">Privacy &amp; Ley N° 21.719</Link>
         </p>
       </section>
     </main>

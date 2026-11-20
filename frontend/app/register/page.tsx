@@ -85,7 +85,8 @@ export default function Register() {
           </button>
         </form>
         <p>
-          Already registered? <Link href="/login">Sign in</Link>
+          Already registered? <Link href="/login">Sign in</Link> ·{" "}
+          <Link href="/privacy">Privacy &amp; Ley N° 21.719</Link>
         </p>
       </section>
     </main>
